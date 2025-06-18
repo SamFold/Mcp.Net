@@ -1,3 +1,4 @@
+using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Interfaces;
@@ -30,34 +31,34 @@ public class ChatFactory : IChatFactory
     private readonly ILogger<ChatFactory> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly IHubContext<ChatHub> _hubContext;
-    private readonly IMcpClient _mcpClient;
     private readonly ToolRegistry _toolRegistry;
     private readonly LlmClientFactory _clientFactory;
     private readonly DefaultLlmSettings _defaultSettings;
+    private readonly IConfiguration _configuration;
 
     public ChatFactory(
         ILogger<ChatFactory> logger,
         ILoggerFactory loggerFactory,
         IHubContext<ChatHub> hubContext,
-        IMcpClient mcpClient,
         ToolRegistry toolRegistry,
         LlmClientFactory clientFactory,
-        DefaultLlmSettings defaultSettings
+        DefaultLlmSettings defaultSettings,
+        IConfiguration configuration
     )
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
         _hubContext = hubContext;
-        _mcpClient = mcpClient;
         _toolRegistry = toolRegistry;
         _clientFactory = clientFactory;
         _defaultSettings = defaultSettings;
+        _configuration = configuration;
     }
 
     /// <summary>
     /// Create a new SignalR chat adapter with its own dedicated LLM client
     /// </summary>
-    public ISignalRChatAdapter CreateSignalRAdapter(
+    public async Task<ISignalRChatAdapter> CreateSignalRAdapterAsync(
         string sessionId,
         string? model = null,
         string? provider = null,
@@ -79,10 +80,13 @@ public class ChatFactory : IChatFactory
             sessionClient.SetSystemPrompt(effectiveSystemPrompt);
         }
 
+        // Create dedicated MCP client for this session
+        var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
+
         // Create core chat session (no longer needs inputProvider)
         var chatSession = new ChatSession(
             sessionClient,
-            _mcpClient,
+            sessionMcpClient,
             _toolRegistry,
             chatSessionLogger
         );
@@ -94,6 +98,46 @@ public class ChatFactory : IChatFactory
         var adapter = new SignalRChatAdapter(chatSession, _hubContext, adapterLogger, sessionId);
 
         _logger.LogInformation("Created SignalRChatAdapter for session {SessionId}", sessionId);
+
+        return adapter;
+    }
+
+    /// <summary>
+    /// Create a new SignalR chat adapter from an agent definition
+    /// </summary>
+    public async Task<ISignalRChatAdapter> CreateSignalRAdapterFromAgentAsync(
+        string sessionId,
+        AgentDefinition agent
+    )
+    {
+        // Create chat session logger for this session
+        var chatSessionLogger = _loggerFactory.CreateLogger<ChatSession>();
+
+        // Create a new dedicated LLM client for this chat session based on the agent definition
+        IChatClient sessionClient = CreateClientFromAgent(sessionId, agent);
+
+        // Create dedicated MCP client for this session
+        var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
+
+        // Create core chat session
+        var chatSession = new ChatSession(
+            sessionClient,
+            sessionMcpClient,
+            _toolRegistry,
+            chatSessionLogger
+        );
+
+        // Create adapter logger
+        var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
+
+        // Create SignalR adapter
+        var adapter = new SignalRChatAdapter(chatSession, _hubContext, adapterLogger, sessionId);
+
+        _logger.LogInformation(
+            "Created SignalRChatAdapter for session {SessionId} using agent {AgentName}",
+            sessionId,
+            agent.Name
+        );
 
         return adapter;
     }
@@ -147,6 +191,131 @@ public class ChatFactory : IChatFactory
     }
 
     /// <summary>
+    /// Creates a new LLM client instance from an agent definition
+    /// </summary>
+    private IChatClient CreateClientFromAgent(string sessionId, AgentDefinition agent)
+    {
+        _logger.LogDebug(
+            "Creating client for session {SessionId} using agent {AgentName} ({AgentId})",
+            sessionId,
+            agent.Name,
+            agent.Id
+        );
+
+        // Create client options with parameters from the agent definition
+        var options = new ChatClientOptions { Model = agent.ModelName };
+
+        // Apply additional parameters from the agent definition
+        if (agent.Parameters != null)
+        {
+            // Temperature
+            if (
+                agent.Parameters.TryGetValue("temperature", out var temperatureValue)
+                && temperatureValue is float or double or int
+            )
+            {
+                options.Temperature = Convert.ToSingle(temperatureValue);
+                _logger.LogDebug(
+                    "Set temperature to {Temperature} from agent definition",
+                    options.Temperature
+                );
+            }
+        }
+
+        // Create LLM client through factory
+        var client = _clientFactory.Create(agent.Provider, options);
+
+        // Set system prompt from agent
+        client.SetSystemPrompt(agent.SystemPrompt);
+
+        // Register specific tools from agent (if any)
+        if (agent.ToolIds != null && agent.ToolIds.Any())
+        {
+            var tools = _toolRegistry
+                .EnabledTools.Where(t => agent.ToolIds.Contains(t.Name))
+                .ToList();
+
+            if (tools.Any())
+            {
+                _logger.LogDebug("Registering {Count} tools from agent definition", tools.Count);
+                client.RegisterTools(tools);
+            }
+            else
+            {
+                // Fall back to all tools if none of the specified tools are found
+                _logger.LogWarning(
+                    "None of the {0} specified tools in agent {1} were found, using all enabled tools",
+                    agent.ToolIds.Count,
+                    agent.Id
+                );
+                client.RegisterTools(_toolRegistry.EnabledTools);
+            }
+        }
+        else
+        {
+            // Register all available tools as fallback
+            client.RegisterTools(_toolRegistry.EnabledTools);
+        }
+
+        _logger.LogInformation(
+            "Created new {Provider} client with model {Model} for session {SessionId} using agent {AgentName}",
+            agent.Provider,
+            agent.ModelName,
+            sessionId,
+            agent.Name
+        );
+
+        return client;
+    }
+
+    /// <summary>
+    /// Creates a dedicated MCP client instance for a specific chat session
+    /// </summary>
+    private async Task<IMcpClient> CreateMcpClientForSessionAsync(string sessionId)
+    {
+        var mcpServerUrl = _configuration["McpServer:Url"] ?? "http://localhost:5000/";
+        var mcpServerApiKey = _configuration["McpServer:ApiKey"];
+
+        // Check for no-auth configuration
+        var noAuth = _configuration.GetValue<bool>("McpServer:NoAuth", false);
+
+        try
+        {
+            var clientBuilder = new McpClientBuilder().UseSseTransport(mcpServerUrl);
+
+            if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
+            {
+                _logger.LogDebug(
+                    "Creating MCP client for session {SessionId} with authentication",
+                    sessionId
+                );
+                clientBuilder.WithApiKey(mcpServerApiKey);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Creating MCP client for session {SessionId} without authentication",
+                    sessionId
+                );
+            }
+
+            var mcpClient = await clientBuilder.BuildAndInitializeAsync();
+
+            _logger.LogInformation(
+                "Created dedicated MCP client for session {SessionId}",
+                sessionId
+            );
+
+            return mcpClient;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create MCP client for session {SessionId}", sessionId);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Create session metadata for a new chat
     /// </summary>
     public ChatSessionMetadata CreateSessionMetadata(
@@ -185,6 +354,37 @@ public class ChatFactory : IChatFactory
             "Created chat session metadata for session {SessionId} with model {Model}",
             sessionId,
             modelName
+        );
+
+        return metadata;
+    }
+
+    /// <summary>
+    /// Create session metadata from an agent definition
+    /// </summary>
+    public ChatSessionMetadata CreateSessionMetadataFromAgent(
+        string sessionId,
+        AgentDefinition agent
+    )
+    {
+        // Create session metadata from agent
+        var metadata = new ChatSessionMetadata
+        {
+            Id = sessionId,
+            Title = $"Chat with {agent.Name}",
+            CreatedAt = DateTime.UtcNow,
+            LastUpdatedAt = DateTime.UtcNow,
+            Model = agent.ModelName,
+            Provider = agent.Provider,
+            SystemPrompt = agent.SystemPrompt,
+            AgentId = agent.Id,
+            AgentName = agent.Name,
+        };
+
+        _logger.LogInformation(
+            "Created chat session metadata for session {SessionId} with agent {AgentName}",
+            sessionId,
+            agent.Name
         );
 
         return metadata;

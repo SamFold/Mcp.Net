@@ -34,10 +34,12 @@ public static class AgentServiceCollectionExtensions
 
         // Register API key providers
         services.AddSingleton<IApiKeyProvider, DefaultApiKeyProvider>();
-        
+
         // Register tool registry
         services.AddSingleton<IToolRegistry, ToolRegistry>();
-        services.AddSingleton<ToolRegistry>(sp => (ToolRegistry)sp.GetRequiredService<IToolRegistry>());
+        services.AddSingleton<ToolRegistry>(sp =>
+            (ToolRegistry)sp.GetRequiredService<IToolRegistry>()
+        );
 
         return services;
     }

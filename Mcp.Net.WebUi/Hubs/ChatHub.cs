@@ -278,7 +278,7 @@ public class ChatHub : Hub
                 }
 
                 // Create a new adapter
-                var newAdapter = _chatFactory.CreateSignalRAdapter(
+                var newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
                     sid,
                     metadata.Model,
                     metadata.Provider.ToString(),

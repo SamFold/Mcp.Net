@@ -16,11 +16,22 @@ public interface IChatFactory
     /// <param name="provider">LLM provider to use</param>
     /// <param name="systemPrompt">Optional system prompt</param>
     /// <returns>A configured SignalR chat adapter</returns>
-    ISignalRChatAdapter CreateSignalRAdapter(
+    Task<ISignalRChatAdapter> CreateSignalRAdapterAsync(
         string sessionId,
         string? model = null,
         string? provider = null,
         string? systemPrompt = null
+    );
+
+    /// <summary>
+    /// Create a new SignalR chat adapter from an agent definition
+    /// </summary>
+    /// <param name="sessionId">Unique identifier for the chat session</param>
+    /// <param name="agent">Agent definition to use for configuration</param>
+    /// <returns>A configured SignalR chat adapter</returns>
+    Task<ISignalRChatAdapter> CreateSignalRAdapterFromAgentAsync(
+        string sessionId,
+        AgentDefinition agent
     );
 
     /// <summary>
@@ -37,4 +48,12 @@ public interface IChatFactory
         string? provider = null,
         string? systemPrompt = null
     );
+
+    /// <summary>
+    /// Create session metadata from an agent definition
+    /// </summary>
+    /// <param name="sessionId">Unique identifier for the chat session</param>
+    /// <param name="agent">Agent definition to use for configuration</param>
+    /// <returns>Configured ChatSessionMetadata</returns>
+    ChatSessionMetadata CreateSessionMetadataFromAgent(string sessionId, AgentDefinition agent);
 }

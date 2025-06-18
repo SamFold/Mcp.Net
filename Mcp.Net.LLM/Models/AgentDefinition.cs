@@ -68,4 +68,24 @@ public class AgentDefinition
     /// User ID of the last person who modified this agent
     /// </summary>
     public string ModifiedBy { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Indicates whether this is a system default agent that should not be deleted
+    /// </summary>
+    public bool IsSystemDefault { get; set; } = false;
+
+    /// <summary>
+    /// For system default agents, indicates which model this is the default for (if any)
+    /// </summary>
+    public string? DefaultForModel { get; set; }
+
+    /// <summary>
+    /// For system default agents, indicates which provider this is the default for (if any)
+    /// </summary>
+    public LlmProvider? DefaultForProvider { get; set; }
+
+    /// <summary>
+    /// Indicates whether this is the global system-wide default agent
+    /// </summary>
+    public bool IsGlobalDefault { get; set; } = false;
 }

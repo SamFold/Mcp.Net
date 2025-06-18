@@ -106,8 +106,7 @@ public class ToolsController : ControllerBase
 
             var toolIds = await _agentManager.GetToolsByCategoryAsync(category);
 
-            // Get the actual tool details for these IDs
-            var tools = _toolRegistry.AllTools.Where(t => toolIds.Contains(t.Id)).ToList();
+            var tools = _toolRegistry.AllTools.Where(t => toolIds.Contains(t.Name)).ToList();
 
             return Ok(tools);
         }

@@ -136,6 +136,22 @@ public class AgentsController : ControllerBase
                 return NotFound(new { error = "Agent not found" });
             }
 
+            // Prevent modification of system default agents
+            if (existingAgent.IsSystemDefault)
+            {
+                _logger.LogWarning(
+                    "Attempt to update system default agent {AgentId} was blocked",
+                    id
+                );
+                return BadRequest(
+                    new
+                    {
+                        error = "Cannot modify system default agents",
+                        message = "System default agents cannot be modified. Create a clone if you wish to customize it.",
+                    }
+                );
+            }
+
             // Apply updates to the existing agent
             updateDto.UpdateAgentDefinition(existingAgent, userId);
 
@@ -165,12 +181,35 @@ public class AgentsController : ControllerBase
     {
         try
         {
-            var success = await _agentManager.DeleteAgentAsync(id);
-
-            if (!success)
+            // Fetch the agent first to check if it's a system default
+            var agent = await _agentManager.GetAgentByIdAsync(id);
+            if (agent == null)
             {
                 _logger.LogWarning("Agent {AgentId} not found for deletion", id);
                 return NotFound(new { error = "Agent not found" });
+            }
+
+            // Prevent deletion of system default agents
+            if (agent.IsSystemDefault)
+            {
+                _logger.LogWarning(
+                    "Attempt to delete system default agent {AgentId} was blocked",
+                    id
+                );
+                return BadRequest(
+                    new
+                    {
+                        error = "Cannot delete system default agents",
+                        message = "System default agents cannot be deleted. Create a clone if you wish to modify it.",
+                    }
+                );
+            }
+
+            var success = await _agentManager.DeleteAgentAsync(id);
+            if (!success)
+            {
+                _logger.LogWarning("Failed to delete agent {AgentId}", id);
+                return StatusCode(500, new { error = "Failed to delete agent" });
             }
 
             _logger.LogInformation("Deleted agent {AgentId}", id);

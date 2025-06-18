@@ -1,3 +1,5 @@
+using Mcp.Net.LLM.Agents;
+using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -18,18 +20,24 @@ public class ChatController : ControllerBase
     private readonly IChatFactory _chatFactory;
     private readonly ITitleGenerationService _titleGenerationService;
     private readonly Dictionary<string, ISignalRChatAdapter> _activeAdapters = new();
+    private readonly IAgentManager? _agentManager;
+    private readonly DefaultAgentManager? _defaultAgentManager;
 
     public ChatController(
         ILogger<ChatController> logger,
         IChatRepository chatRepository,
         IChatFactory chatFactory,
-        ITitleGenerationService titleGenerationService
+        ITitleGenerationService titleGenerationService,
+        IAgentManager? agentManager = null,
+        DefaultAgentManager? defaultAgentManager = null
     )
     {
         _logger = logger;
         _chatRepository = chatRepository;
         _chatFactory = chatFactory;
         _titleGenerationService = titleGenerationService;
+        _agentManager = agentManager;
+        _defaultAgentManager = defaultAgentManager;
     }
 
     /// <summary>
@@ -62,20 +70,31 @@ public class ChatController : ControllerBase
             // Generate a session ID
             var sessionId = Guid.NewGuid().ToString();
 
-            // Log model selection info
-            _logger.LogInformation(
-                "Creating session with model: {Model}, provider: {Provider}",
-                options?.Model ?? "default",
-                options?.Provider ?? "default"
-            );
-
             // Create session metadata
-            var metadata = _chatFactory.CreateSessionMetadata(
-                sessionId,
-                options?.Model,
-                options?.Provider,
-                options?.SystemPrompt
-            );
+            ChatSessionMetadata metadata;
+
+            // Check if we're using the agent-centric approach
+            if (_agentManager != null && _defaultAgentManager != null)
+            {
+                // Agent-centric approach with default agent management
+                metadata = await CreateSessionFromAgentAsync(sessionId, options);
+            }
+            else
+            {
+                // Legacy approach (non-agent-centric)
+                _logger.LogInformation(
+                    "Creating session with model: {Model}, provider: {Provider}",
+                    options?.Model ?? "default",
+                    options?.Provider ?? "default"
+                );
+
+                metadata = _chatFactory.CreateSessionMetadata(
+                    sessionId,
+                    options?.Model,
+                    options?.Provider,
+                    options?.SystemPrompt
+                );
+            }
 
             // Store in repository
             await _chatRepository.CreateChatAsync(metadata);
@@ -92,6 +111,107 @@ public class ChatController : ControllerBase
             _logger.LogError(ex, "Error creating session");
             return StatusCode(500, new { error = "Error creating session", message = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Creates a session using the agent-centric approach with fallback strategy
+    /// </summary>
+    private async Task<ChatSessionMetadata> CreateSessionFromAgentAsync(
+        string sessionId,
+        SessionCreateDto? options = null
+    )
+    {
+        if (_agentManager == null || _defaultAgentManager == null)
+        {
+            throw new InvalidOperationException("Agent services are not properly configured");
+        }
+
+        // Agent selection logic:
+        _logger.LogInformation("Using agent-centric approach for session creation");
+
+        // Try to use explicitly specified agent if provided
+        if (!string.IsNullOrEmpty(options?.AgentId))
+        {
+            _logger.LogInformation("Looking up specified agent: {AgentId}", options.AgentId);
+            var agent = await _agentManager.GetAgentByIdAsync(options.AgentId);
+
+            if (agent != null)
+            {
+                _logger.LogInformation("Using explicitly specified agent: {AgentName}", agent.Name);
+                return _chatFactory.CreateSessionMetadataFromAgent(sessionId, agent);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Specified agent not found: {AgentId}, falling back to defaults",
+                    options.AgentId
+                );
+            }
+        }
+
+        // Fall back to model-specific default agent
+        if (!string.IsNullOrEmpty(options?.Model))
+        {
+            LlmProvider? provider = null;
+
+            if (!string.IsNullOrEmpty(options.Provider))
+            {
+                if (Enum.TryParse<LlmProvider>(options.Provider, true, out var parsedProvider))
+                {
+                    provider = parsedProvider;
+                }
+            }
+
+            var agent = await _defaultAgentManager.GetDefaultAgentForModelAsync(
+                options.Model,
+                provider ?? LlmProvider.OpenAI
+            );
+
+            if (agent != null)
+            {
+                _logger.LogInformation(
+                    "Using model-specific default agent: {AgentName}",
+                    agent.Name
+                );
+                return _chatFactory.CreateSessionMetadataFromAgent(sessionId, agent);
+            }
+        }
+
+        // Fall back to provider-specific default agent
+        if (!string.IsNullOrEmpty(options?.Provider))
+        {
+            if (Enum.TryParse<LlmProvider>(options.Provider, true, out var provider))
+            {
+                var agent = await _defaultAgentManager.GetDefaultAgentForProviderAsync(provider);
+
+                if (agent != null)
+                {
+                    _logger.LogInformation(
+                        "Using provider-specific default agent: {AgentName}",
+                        agent.Name
+                    );
+                    return _chatFactory.CreateSessionMetadataFromAgent(sessionId, agent);
+                }
+            }
+        }
+
+        // Fall back to global system default agent
+        var defaultAgent = await _defaultAgentManager.GetSystemDefaultAgentAsync();
+
+        if (defaultAgent != null)
+        {
+            _logger.LogInformation("Using global default agent: {AgentName}", defaultAgent.Name);
+            return _chatFactory.CreateSessionMetadataFromAgent(sessionId, agent: defaultAgent);
+        }
+
+        // If no agents exist, fall back to classic non-agent mode
+        _logger.LogInformation("No agents found, falling back to classic session creation");
+        return _chatFactory.CreateSessionMetadata(
+            sessionId,
+            options?.Model,
+            options?.Provider,
+            options?.SystemPrompt
+        );
     }
 
     /// <summary>
@@ -462,23 +582,66 @@ public class ChatController : ControllerBase
         }
 
         // Create a new adapter
-        adapter = _chatFactory.CreateSignalRAdapter(
-            sessionId,
-            metadata.Model,
-            metadata.Provider.ToString(),
-            metadata.SystemPrompt
-        );
+        ISignalRChatAdapter newAdapter;
+
+        // Check if we're using the agent-centric approach and have an agent ID
+        if (_agentManager != null && !string.IsNullOrEmpty(metadata.AgentId))
+        {
+            // Get the agent definition
+            var agent = await _agentManager.GetAgentByIdAsync(metadata.AgentId);
+
+            if (agent != null)
+            {
+                _logger.LogInformation(
+                    "Creating adapter for session {SessionId} using agent {AgentName}",
+                    sessionId,
+                    agent.Name
+                );
+
+                // Create adapter using the agent
+                newAdapter = await _chatFactory.CreateSignalRAdapterFromAgentAsync(
+                    sessionId,
+                    agent
+                );
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Agent {AgentId} for session {SessionId} not found, falling back to standard creation",
+                    metadata.AgentId,
+                    sessionId
+                );
+
+                // Fall back to standard creation
+                newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
+                    sessionId,
+                    metadata.Model,
+                    metadata.Provider.ToString(),
+                    metadata.SystemPrompt
+                );
+            }
+        }
+        else
+        {
+            // Use standard adapter creation approach
+            newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
+                sessionId,
+                metadata.Model,
+                metadata.Provider.ToString(),
+                metadata.SystemPrompt
+            );
+        }
 
         // Subscribe to message events
-        adapter.MessageReceived += OnChatMessageReceived;
+        newAdapter.MessageReceived += OnChatMessageReceived;
 
         // Store in active adapters
-        _activeAdapters[sessionId] = adapter;
+        _activeAdapters[sessionId] = newAdapter;
 
         // Start the adapter
-        adapter.Start();
+        newAdapter.Start();
 
-        return adapter;
+        return newAdapter;
     }
 
     /// <summary>
