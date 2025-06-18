@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
@@ -10,13 +9,11 @@
     <RootNamespace>Mcp.Net.Examples.SimpleServer</RootNamespace>
     <AssemblyName>Mcp.Net.Examples.SimpleServer</AssemblyName>
   </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\Mcp.Net.Core\Mcp.Net.Core.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.ExternalTools\Mcp.Net.Examples.ExternalTools.csproj" />
     <ProjectReference Include="..\Mcp.Net.Server\Mcp.Net.Server.csproj" />
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.3" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.3" />
@@ -24,5 +21,4 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.11.59" />
     <PackageReference Include="AngleSharp" Version="1.1.0" />
   </ItemGroup>
-
 </Project>

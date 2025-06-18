@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Server;
 using Mcp.Net.Server.Extensions;
+using Mcp.Net.Server.Options;
 using Mcp.Net.Server.ServerBuilder;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,25 +18,29 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        // Create a CommandLineOptions object to parse args
+        // Check if --stdio flag is present before doing ANY console output
+        bool useStdio = Array.Exists(args, arg => arg == "--stdio");
+
+        if (useStdio)
+        {
+            // When using stdio mode, we need to use a special server implementation
+            // that prevents ANY console output which would interfere with JSON-RPC
+            await StrictStdioServer.RunAsync(args);
+            return;
+        }
+
+        // Non-stdio mode continues with normal execution
         var options = CommandLineOptions.Parse(args);
 
         // Set log level based on command line option, or default to Information
-        LogLevel logLevel = string.IsNullOrEmpty(options.LogLevel) 
-            ? LogLevel.Information 
+        LogLevel logLevel = string.IsNullOrEmpty(options.LogLevel)
+            ? LogLevel.Information
             : Enum.Parse<LogLevel>(options.LogLevel);
 
         // Display all registered tools at startup for easier debugging
         Environment.SetEnvironmentVariable("MCP_DEBUG_TOOLS", "true");
 
-        if (options.UseStdio)
-        {
-            await RunWithStdioTransport(options, logLevel);
-        }
-        else
-        {
-            await RunWithSseTransport(options, logLevel);
-        }
+        await RunWithSseTransport(options, logLevel);
     }
 
     /// <summary>
@@ -267,13 +274,56 @@ class Program
     /// </summary>
     static async Task RunWithStdioTransport(CommandLineOptions options, LogLevel logLevel)
     {
-        Console.WriteLine("Starting MCP server with stdio transport...");
+        // Set up silent logging (no console output to avoid interfering with stdio transport)
+        StreamWriter? logWriter = null;
+        string? logFilePath = null;
+
+        try
+        {
+            // Try to use temp directory for logs (should work in most environments)
+            string tempDir = Path.GetTempPath();
+            string logsDir = Path.Combine(tempDir, "mcp_logs");
+
+            try
+            {
+                Directory.CreateDirectory(logsDir);
+                logFilePath = Path.Combine(
+                    logsDir,
+                    $"server_stdio_log_{DateTime.Now:yyyyMMdd_HHmmss}.txt"
+                );
+                logWriter = new StreamWriter(logFilePath, true);
+            }
+            catch (IOException)
+            {
+                // If we can't create the directory or file, we'll operate with null logging
+                // This ensures the server still works even in restricted environments
+            }
+        }
+        catch
+        {
+            // Fallback if temp directory access fails
+            logWriter = null;
+        }
+
+        // Helper method to log silently (to file if available, otherwise no-op)
+        void LogToFile(string message)
+        {
+            if (logWriter != null)
+            {
+                string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                logWriter.WriteLine($"[{timestamp}] {message}");
+                logWriter.Flush();
+            }
+            // If logWriter is null, this becomes a no-op (silent logging)
+        }
+
+        LogToFile("Starting MCP server with stdio transport...");
 
         // Create a cancellation token source for graceful shutdown
         var cancellationSource = new CancellationTokenSource();
         Console.CancelKeyPress += (sender, e) =>
         {
-            Console.WriteLine("Shutdown signal received, beginning graceful shutdown");
+            LogToFile("Shutdown signal received, beginning graceful shutdown");
             e.Cancel = true; // Prevent immediate termination
             cancellationSource.Cancel();
         };
@@ -290,13 +340,13 @@ class Program
         Assembly? entryAssembly = Assembly.GetEntryAssembly();
         if (entryAssembly != null)
         {
-            Console.WriteLine($"Scanning entry assembly for tools: {entryAssembly.FullName}");
+            LogToFile($"Scanning entry assembly for tools: {entryAssembly.FullName}");
         }
 
         // Add external tools assembly
-        serverBuilder.WithAdditionalAssembly(
-            typeof(Mcp.Net.Examples.ExternalTools.UtilityTools).Assembly
-        );
+        var externalToolsAssembly = typeof(Mcp.Net.Examples.ExternalTools.UtilityTools).Assembly;
+        LogToFile($"Adding external tools assembly: {externalToolsAssembly.GetName().Name}");
+        serverBuilder.WithAdditionalAssembly(externalToolsAssembly);
 
         // Add custom tool assemblies if specified
         if (options.ToolAssemblies != null)
@@ -307,11 +357,11 @@ class Program
                 {
                     var assembly = Assembly.LoadFrom(assemblyPath);
                     serverBuilder.WithAdditionalAssembly(assembly);
-                    Console.WriteLine($"Added tool assembly: {assembly.GetName().Name}");
+                    LogToFile($"Added tool assembly: {assembly.GetName().Name}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to load assembly {assemblyPath}: {ex.Message}");
+                    LogToFile($"Failed to load assembly {assemblyPath}: {ex.Message}");
                 }
             }
         }
@@ -328,7 +378,7 @@ class Program
         {
             // Disable authentication completely
             serverBuilder.WithAuthentication(auth => auth.WithNoAuth());
-            Console.WriteLine("Authentication disabled via --no-auth flag");
+            LogToFile("Authentication disabled via --no-auth flag");
         }
         else
         {
@@ -360,11 +410,93 @@ class Program
             });
         }
 
-        // Start the server
-        var server = await serverBuilder.StartAsync();
+        if (logFilePath != null)
+        {
+            LogToFile($"Logs will be written to: {logFilePath}");
+            serverBuilder.WithLogFile(logFilePath);
+        }
+        else
+        {
+            // When running in a restricted environment, don't configure file logging
+            LogToFile("File logging disabled - unable to create log directory");
+        }
 
-        Console.WriteLine("Server started with stdio transport");
-        Console.WriteLine("Press Ctrl+C to stop the server.");
+        // Build the server with all configuration in place
+        var server = serverBuilder.Build();
+
+        // Create a ServiceCollection for dependency injection that matches what ASP.NET Core would do
+        var services = new ServiceCollection();
+
+        // Configure the logging
+        services.AddLogging(logging =>
+        {
+            logging.SetMinimumLevel(logLevel);
+        });
+
+        // Register a logger factory
+        var loggingOptions = new LoggingOptions
+        {
+            MinimumLogLevel = logLevel,
+            UseConsoleLogging = false, // Don't use console output since we're using stdio
+            LogFilePath = logFilePath, // This may be null, which is handled gracefully
+            UseStdio = true,
+        };
+        var loggingProvider = new LoggingProvider(loggingOptions);
+        var loggerFactory = loggingProvider.CreateLoggerFactory();
+        services.AddSingleton<ILoggerFactory>(loggerFactory);
+
+        // Build the service provider
+        var serviceProvider = services.BuildServiceProvider();
+
+        // Create a tool registry to discover and register tools
+        var logger = loggerFactory.CreateLogger<ToolRegistry>();
+        var toolRegistry = new ToolRegistry(serviceProvider, logger);
+
+        // Add assemblies to the tool registry
+        if (entryAssembly != null)
+        {
+            toolRegistry.AddAssembly(entryAssembly);
+            LogToFile($"Adding entry assembly to tool registry: {entryAssembly.GetName().Name}");
+        }
+
+        toolRegistry.AddAssembly(externalToolsAssembly);
+        LogToFile(
+            $"Adding external tools assembly to tool registry: {externalToolsAssembly.GetName().Name}"
+        );
+
+        // Add any custom tool assemblies from command line options
+        if (options.ToolAssemblies != null)
+        {
+            foreach (var assemblyPath in options.ToolAssemblies)
+            {
+                try
+                {
+                    var assembly = Assembly.LoadFrom(assemblyPath);
+                    toolRegistry.AddAssembly(assembly);
+                    LogToFile(
+                        $"Adding custom tool assembly to tool registry: {assembly.GetName().Name}"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    LogToFile($"Failed to load assembly {assemblyPath}: {ex.Message}");
+                }
+            }
+        }
+
+        // Register tools with the server before connecting to the transport
+        toolRegistry.RegisterToolsWithServer(server);
+
+        // Get a builder specific to the Stdio transport - we need to use the correct type
+        var stdioBuilder = new StdioServerBuilder(loggerFactory);
+
+        LogToFile("Starting server using StdioServerBuilder...");
+
+        // Start the server using the Stdio builder with our pre-configured server
+        await stdioBuilder.StartAsync(server);
+
+        LogToFile("Server started with stdio transport");
+        LogToFile("Waiting for cancellation token...");
 
         // Wait for cancellation
         try
@@ -373,7 +505,16 @@ class Program
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("Server shutdown complete");
+            LogToFile("Server shutdown complete");
+        }
+        finally
+        {
+            // Properly dispose the log writer if it exists
+            if (logWriter != null)
+            {
+                await logWriter.FlushAsync();
+                await logWriter.DisposeAsync();
+            }
         }
     }
 }
