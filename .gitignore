@@ -178,3 +178,5 @@ Mcp.Net.Examples.WebUI/Architecture.md
 Mcp.Net.Examples.WebUI/WebUI_Implementation_Plan.md
 Mcp.Net.Examples.ExternalTools/ElasticsearchHackerNewsTool.cs
 Mcp.Net.Examples.ExternalTools/HackerNewsModels.cs
+Mcp.Net.WebUi/Data/Agents/*
+Mcp.Net.Examples.ExternalTools/GoogleSearchTool.cs
