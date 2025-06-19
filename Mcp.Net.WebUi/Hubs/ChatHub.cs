@@ -204,24 +204,21 @@ public class ChatHub : Hub
             _logger.LogInformation("Setting system prompt for session {SessionId}", sessionId);
             await _chatRepository.SetSystemPromptAsync(sessionId, systemPrompt);
 
-            // If we have an active adapter, update its system prompt too
-            if (_adapterManager.GetActiveSessions().Contains(sessionId))
+            // Try to get existing adapter first (don't create a new one)
+            var adapter = await GetExistingAdapterAsync(sessionId);
+            if (adapter != null)
             {
-                var adapter = await _adapterManager.GetOrCreateAdapterAsync(
-                    sessionId,
-                    (sid) =>
-                    {
-                        // This shouldn't be reached since we just checked that the session exists
-                        throw new InvalidOperationException("Adapter should already exist");
-                    }
-                );
-
                 if (adapter.GetLlmClient() is var client && client != null)
                 {
+                    _logger.LogInformation("Updating system prompt in existing adapter for session {SessionId}", sessionId);
                     client.SetSystemPrompt(systemPrompt);
                     // Mark as active since we just used it
                     _adapterManager.MarkAdapterAsActive(sessionId);
                 }
+            }
+            else
+            {
+                _logger.LogDebug("No active adapter found for session {SessionId}, system prompt will be applied when adapter is created", sessionId);
             }
 
             // Notify clients
@@ -254,6 +251,24 @@ public class ChatHub : Hub
     {
         _logger.LogInformation("Client {ConnectionId} disconnected", Context.ConnectionId);
         return base.OnDisconnectedAsync(exception);
+    }
+
+    /// <summary>
+    /// Helper method to get an existing adapter without creating a new one
+    /// </summary>
+    private async Task<ISignalRChatAdapter?> GetExistingAdapterAsync(string sessionId)
+    {
+        // Check if adapter exists in the manager
+        if (!_adapterManager.GetActiveSessions().Contains(sessionId))
+        {
+            return null;
+        }
+
+        // Get the adapter without creating a new one
+        return await _adapterManager.GetOrCreateAdapterAsync(
+            sessionId,
+            (sid) => Task.FromResult<ISignalRChatAdapter>(null!)
+        );
     }
 
     /// <summary>

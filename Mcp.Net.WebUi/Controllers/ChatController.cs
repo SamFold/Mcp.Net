@@ -6,6 +6,7 @@ using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Chat.Extensions;
 using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.DTOs;
+using Mcp.Net.WebUi.Infrastructure.Services;
 using Mcp.Net.WebUi.LLM.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,7 +20,7 @@ public class ChatController : ControllerBase
     private readonly IChatRepository _chatRepository;
     private readonly IChatFactory _chatFactory;
     private readonly ITitleGenerationService _titleGenerationService;
-    private readonly Dictionary<string, ISignalRChatAdapter> _activeAdapters = new();
+    private readonly IChatAdapterManager _adapterManager;
     private readonly IAgentManager? _agentManager;
     private readonly DefaultAgentManager? _defaultAgentManager;
 
@@ -28,6 +29,7 @@ public class ChatController : ControllerBase
         IChatRepository chatRepository,
         IChatFactory chatFactory,
         ITitleGenerationService titleGenerationService,
+        IChatAdapterManager adapterManager,
         IAgentManager? agentManager = null,
         DefaultAgentManager? defaultAgentManager = null
     )
@@ -36,6 +38,7 @@ public class ChatController : ControllerBase
         _chatRepository = chatRepository;
         _chatFactory = chatFactory;
         _titleGenerationService = titleGenerationService;
+        _adapterManager = adapterManager;
         _agentManager = agentManager;
         _defaultAgentManager = defaultAgentManager;
     }
@@ -218,16 +221,12 @@ public class ChatController : ControllerBase
     /// End a chat session
     /// </summary>
     [HttpDelete("sessions/{sessionId}")]
-    public IActionResult EndSession(string sessionId)
+    public async Task<IActionResult> EndSession(string sessionId)
     {
         try
         {
-            // If we have an active adapter, dispose it
-            if (_activeAdapters.TryGetValue(sessionId, out var adapter))
-            {
-                adapter.Dispose();
-                _activeAdapters.Remove(sessionId);
-            }
+            // Remove adapter from the shared manager
+            await _adapterManager.RemoveAdapterAsync(sessionId);
 
             // Note: We don't delete the session from the repository here
             // That would be handled by a separate "delete" endpoint
@@ -250,12 +249,8 @@ public class ChatController : ControllerBase
     {
         try
         {
-            // If we have an active adapter, dispose it
-            if (_activeAdapters.TryGetValue(sessionId, out var adapter))
-            {
-                adapter.Dispose();
-                _activeAdapters.Remove(sessionId);
-            }
+            // Remove adapter from the shared manager
+            await _adapterManager.RemoveAdapterAsync(sessionId);
 
             // Delete the session from the repository
             await _chatRepository.DeleteChatAsync(sessionId);
@@ -409,14 +404,24 @@ public class ChatController : ControllerBase
         {
             await _chatRepository.SetSystemPromptAsync(sessionId, systemPromptDto.Prompt);
 
-            // If we have an active adapter, update its system prompt too
-            if (
-                _activeAdapters.TryGetValue(sessionId, out var adapter)
-                && adapter.GetLlmClient() is var client
-                && client != null
-            )
+            // Try to get existing adapter from the shared manager
+            if (_adapterManager.GetActiveSessions().Contains(sessionId))
             {
-                client.SetSystemPrompt(systemPromptDto.Prompt);
+                var adapter = await _adapterManager.GetOrCreateAdapterAsync(
+                    sessionId,
+                    (sid) => Task.FromResult<ISignalRChatAdapter>(null!)
+                );
+
+                if (adapter?.GetLlmClient() is var client && client != null)
+                {
+                    _logger.LogInformation("Updating system prompt in existing adapter for session {SessionId}", sessionId);
+                    client.SetSystemPrompt(systemPromptDto.Prompt);
+                    _adapterManager.MarkAdapterAsActive(sessionId);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("No active adapter found for session {SessionId}, system prompt will be applied when adapter is created", sessionId);
             }
 
             _logger.LogInformation("Set system prompt for session {SessionId} via API", sessionId);
@@ -489,9 +494,14 @@ public class ChatController : ControllerBase
             await _chatRepository.ClearChatMessagesAsync(sessionId);
 
             // If we have an active adapter, reset its conversation
-            if (_activeAdapters.TryGetValue(sessionId, out var adapter))
+            if (_adapterManager.GetActiveSessions().Contains(sessionId))
             {
-                adapter.ResetConversation();
+                var adapter = await _adapterManager.GetOrCreateAdapterAsync(
+                    sessionId,
+                    (sid) => Task.FromResult<ISignalRChatAdapter>(null!)
+                );
+
+                adapter?.ResetConversation();
             }
 
             _logger.LogInformation("Cleared messages for session {SessionId} via API", sessionId);
@@ -568,80 +578,77 @@ public class ChatController : ControllerBase
     /// </summary>
     private async Task<ISignalRChatAdapter> GetOrCreateAdapterAsync(string sessionId)
     {
-        // Try to get an existing adapter
-        if (_activeAdapters.TryGetValue(sessionId, out var adapter))
-        {
-            return adapter;
-        }
-
-        // Get the session metadata
-        var metadata = await _chatRepository.GetChatMetadataAsync(sessionId);
-        if (metadata == null)
-        {
-            throw new KeyNotFoundException($"Session {sessionId} not found");
-        }
-
-        // Create a new adapter
-        ISignalRChatAdapter newAdapter;
-
-        // Check if we're using the agent-centric approach and have an agent ID
-        if (_agentManager != null && !string.IsNullOrEmpty(metadata.AgentId))
-        {
-            // Get the agent definition
-            var agent = await _agentManager.GetAgentByIdAsync(metadata.AgentId);
-
-            if (agent != null)
+        return await _adapterManager.GetOrCreateAdapterAsync(
+            sessionId,
+            async (sid) =>
             {
-                _logger.LogInformation(
-                    "Creating adapter for session {SessionId} using agent {AgentName}",
-                    sessionId,
-                    agent.Name
-                );
+                // Get the session metadata
+                var metadata = await _chatRepository.GetChatMetadataAsync(sid);
+                if (metadata == null)
+                {
+                    throw new KeyNotFoundException($"Session {sid} not found");
+                }
 
-                // Create adapter using the agent
-                newAdapter = await _chatFactory.CreateSignalRAdapterFromAgentAsync(
-                    sessionId,
-                    agent
-                );
+                // Create a new adapter
+                ISignalRChatAdapter newAdapter;
+
+                // Check if we're using the agent-centric approach and have an agent ID
+                if (_agentManager != null && !string.IsNullOrEmpty(metadata.AgentId))
+                {
+                    // Get the agent definition
+                    var agent = await _agentManager.GetAgentByIdAsync(metadata.AgentId);
+
+                    if (agent != null)
+                    {
+                        _logger.LogInformation(
+                            "Creating adapter for session {SessionId} using agent {AgentName}",
+                            sid,
+                            agent.Name
+                        );
+
+                        // Create adapter using the agent
+                        newAdapter = await _chatFactory.CreateSignalRAdapterFromAgentAsync(
+                            sid,
+                            agent
+                        );
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Agent {AgentId} for session {SessionId} not found, falling back to standard creation",
+                            metadata.AgentId,
+                            sid
+                        );
+
+                        // Fall back to standard creation
+                        newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
+                            sid,
+                            metadata.Model,
+                            metadata.Provider.ToString(),
+                            metadata.SystemPrompt
+                        );
+                    }
+                }
+                else
+                {
+                    // Use standard adapter creation approach
+                    newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
+                        sid,
+                        metadata.Model,
+                        metadata.Provider.ToString(),
+                        metadata.SystemPrompt
+                    );
+                }
+
+                // Subscribe to message events
+                newAdapter.MessageReceived += OnChatMessageReceived;
+
+                // Start the adapter
+                newAdapter.Start();
+
+                return newAdapter;
             }
-            else
-            {
-                _logger.LogWarning(
-                    "Agent {AgentId} for session {SessionId} not found, falling back to standard creation",
-                    metadata.AgentId,
-                    sessionId
-                );
-
-                // Fall back to standard creation
-                newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
-                    sessionId,
-                    metadata.Model,
-                    metadata.Provider.ToString(),
-                    metadata.SystemPrompt
-                );
-            }
-        }
-        else
-        {
-            // Use standard adapter creation approach
-            newAdapter = await _chatFactory.CreateSignalRAdapterAsync(
-                sessionId,
-                metadata.Model,
-                metadata.Provider.ToString(),
-                metadata.SystemPrompt
-            );
-        }
-
-        // Subscribe to message events
-        newAdapter.MessageReceived += OnChatMessageReceived;
-
-        // Store in active adapters
-        _activeAdapters[sessionId] = newAdapter;
-
-        // Start the adapter
-        newAdapter.Start();
-
-        return newAdapter;
+        );
     }
 
     /// <summary>
