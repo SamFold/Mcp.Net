@@ -4,6 +4,7 @@ using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server;
@@ -53,7 +54,7 @@ public class McpServerTests
             {
                 clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
                 capabilities = new object(),
-                protocolVersion = "2024-11-05",
+                protocolVersion = McpServer.LatestProtocolVersion,
             }
         );
 
@@ -76,7 +77,60 @@ public class McpServerTests
             .Be("Test Server");
         resultObj.GetProperty("serverInfo").GetProperty("version").GetString().Should().Be("1.0.0");
         resultObj.GetProperty("instructions").GetString().Should().Be("Test server instructions");
-        resultObj.GetProperty("protocolVersion").GetString().Should().Be("2024-11-05");
+        resultObj
+            .GetProperty("protocolVersion")
+            .GetString()
+            .Should()
+            .Be(McpServer.LatestProtocolVersion);
+        _server.NegotiatedProtocolVersion.Should().Be(McpServer.LatestProtocolVersion);
+    }
+
+    [Fact]
+    public async Task ProcessJsonRpcRequest_Initialize_Should_Fallback_To_Latest_When_Unsupported()
+    {
+        var paramsElement = JsonSerializer.SerializeToElement(
+            new
+            {
+                clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                capabilities = new object(),
+                protocolVersion = "2023-01-01",
+            }
+        );
+
+        var request = new JsonRpcRequestMessage("2.0", "test-id", "initialize", paramsElement);
+
+        var response = await _server.ProcessJsonRpcRequest(request);
+
+        response.Error.Should().BeNull();
+        var resultObj = JsonSerializer.SerializeToElement(response.Result);
+        resultObj
+            .GetProperty("protocolVersion")
+            .GetString()
+            .Should()
+            .Be(McpServer.LatestProtocolVersion);
+        _server.NegotiatedProtocolVersion.Should().Be(McpServer.LatestProtocolVersion);
+    }
+
+    [Fact]
+    public async Task ProcessJsonRpcRequest_Initialize_Should_Return_Error_When_ProtocolVersion_Missing()
+    {
+        var paramsElement = JsonSerializer.SerializeToElement(
+            new
+            {
+                clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                capabilities = new object(),
+            }
+        );
+
+        var request = new JsonRpcRequestMessage("2.0", "test-id", "initialize", paramsElement);
+
+        var response = await _server.ProcessJsonRpcRequest(request);
+
+        response.Result.Should().BeNull();
+        response.Error.Should().NotBeNull();
+        response.Error!.Code.Should().Be((int)ErrorCode.InvalidParams);
+        response.Error!.Message.Should().Be("protocolVersion is required");
+        _server.NegotiatedProtocolVersion.Should().BeNull();
     }
 
     [Fact]

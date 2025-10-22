@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.JsonRpc;
@@ -15,6 +16,14 @@ using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
 public class McpServer : IMcpServer
 {
+    public const string LatestProtocolVersion = "2025-06-18";
+
+    private static readonly IReadOnlyList<string> s_supportedProtocolVersions = new[]
+    {
+        LatestProtocolVersion,
+        "2024-11-05",
+    };
+
     // Dictionary to store method handlers that take a JSON string parameter
     private readonly Dictionary<string, Func<string, Task<object>>> _methodHandlers = new();
     private readonly Dictionary<string, Tool> _tools = new();
@@ -26,6 +35,7 @@ public class McpServer : IMcpServer
     private readonly ServerCapabilities _capabilities;
     private readonly string? _instructions;
     private readonly ILogger<McpServer> _logger;
+    private string? _negotiatedProtocolVersion;
 
     public McpServer(ServerInfo serverInfo, ServerOptions? options = null)
         : this(serverInfo, options, new LoggerFactory()) { }
@@ -56,9 +66,14 @@ public class McpServer : IMcpServer
         );
     }
 
+    public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
+
+    public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
+
     public async Task ConnectAsync(IServerTransport transport)
     {
         _transport = transport;
+        _negotiatedProtocolVersion = null;
 
         // Set up event handlers
         transport.OnRequest += HandleRequest;
@@ -169,10 +184,35 @@ public class McpServer : IMcpServer
     {
         _logger.LogInformation("Handling initialize request");
 
+        if (string.IsNullOrWhiteSpace(request.ProtocolVersion))
+        {
+            _logger.LogWarning("Initialize request missing required protocolVersion");
+            throw new McpException(ErrorCode.InvalidParams, "protocolVersion is required");
+        }
+
+        var requestedVersion = request.ProtocolVersion;
+        string negotiatedVersion;
+
+        if (s_supportedProtocolVersions.Contains(requestedVersion))
+        {
+            negotiatedVersion = requestedVersion;
+        }
+        else
+        {
+            negotiatedVersion = LatestProtocolVersion;
+            _logger.LogInformation(
+                "Client requested unsupported protocol version {RequestedVersion}; responding with {NegotiatedVersion}",
+                requestedVersion,
+                negotiatedVersion
+            );
+        }
+
+        _negotiatedProtocolVersion = negotiatedVersion;
+
         return Task.FromResult<object>(
             new
             {
-                protocolVersion = "2024-11-05", // Using latest from spec
+                protocolVersion = negotiatedVersion,
                 capabilities = _capabilities,
                 serverInfo = _serverInfo,
                 instructions = _instructions,
