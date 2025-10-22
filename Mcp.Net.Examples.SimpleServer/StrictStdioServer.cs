@@ -211,7 +211,7 @@ internal static class StrictStdioServer
                     new Dictionary<string, string> { ["role"] = "user" }
                 );
 
-                auth.WithSecuredPaths("/sse", "/messages");
+                auth.WithSecuredPaths("/mcp");
             });
             
             LogToFile("Authentication configured with API keys");

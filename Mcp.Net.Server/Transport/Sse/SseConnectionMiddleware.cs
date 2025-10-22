@@ -36,28 +36,49 @@ public class SseConnectionMiddleware
     /// <param name="context">The HTTP context for the request</param>
     public async Task InvokeAsync(HttpContext context)
     {
+        var isGet = HttpMethods.IsGet(context.Request.Method);
+        var isPost = HttpMethods.IsPost(context.Request.Method);
+
+        if (!(isGet || isPost))
+        {
+            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+            context.Response.Headers.Append("Allow", "GET, POST");
+            return;
+        }
+
         var connectionId = context.Connection.Id;
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userAgent = context.Request.Headers.UserAgent.ToString();
-        
+
         // Create a logging scope for the entire connection lifecycle
+        var requestDescription = isGet ? "SSE connection" : "JSON-RPC POST";
+
         using (_logger.BeginConnectionScope(connectionId, clientIp))
         {
             _logger.LogInformation(
-                "New SSE connection from {ClientIp} with User-Agent: {UserAgent}", 
+                "Handling {RequestDescription} from {ClientIp} with User-Agent: {UserAgent}",
+                requestDescription,
                 clientIp,
                 string.IsNullOrEmpty(userAgent) ? "not provided" : userAgent);
-            
+
             var stopwatch = Stopwatch.StartNew();
-            
+
             try
             {
                 // Authentication is already performed by McpAuthenticationMiddleware
-                await _connectionManager.HandleSseConnectionAsync(context);
-                
+                if (isGet)
+                {
+                    await _connectionManager.HandleSseConnectionAsync(context);
+                }
+                else
+                {
+                    await _connectionManager.HandleMessageAsync(context);
+                }
+
                 stopwatch.Stop();
                 _logger.LogInformation(
-                    "SSE connection {ConnectionId} from {ClientIp} completed after {ConnectionDurationMs}ms", 
+                    "{RequestDescription} {ConnectionId} from {ClientIp} completed after {DurationMs}ms", 
+                    requestDescription,
                     connectionId, 
                     clientIp,
                     stopwatch.ElapsedMilliseconds);
@@ -65,7 +86,7 @@ public class SseConnectionMiddleware
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                _logger.LogConnectionException(ex, connectionId, "SSE connection handling");
+                _logger.LogConnectionException(ex, connectionId, $"{requestDescription} handling");
                 throw; // Rethrow so the ASP.NET Core pipeline can handle it
             }
         }

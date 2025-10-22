@@ -127,10 +127,11 @@ In upcoming releases, we plan to implement:
 When running in SSE mode, the server:
 
 1. Listens on the configured address (default: `http://localhost:5000`)
-2. Clients connect to `/sse` endpoint to establish an SSE stream
-3. Server sends an `endpoint` event with a message channel URL
-4. Clients POST requests to this URL and receive responses via the SSE stream
-5. Inactive connections are detected and managed
+2. Clients interact with the unified `/mcp` endpoint
+   - `GET /mcp` opens the SSE stream for server initiated messages
+   - `POST /mcp` submits JSON-RPC messages from the client
+3. Responses are streamed back over SSE (GET connection) or returned inline depending on negotiated capabilities
+4. Inactive connections are detected and managed
 
 ### stdio Transport (Command-line Clients)
 

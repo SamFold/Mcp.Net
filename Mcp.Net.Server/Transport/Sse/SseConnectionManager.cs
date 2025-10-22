@@ -264,13 +264,18 @@ public class SseConnectionManager
     public async Task HandleMessageAsync(HttpContext context)
     {
         var logger = _loggerFactory.CreateLogger("MessageEndpoint");
-        var sessionId = context.Request.Query["sessionId"].ToString();
+        var sessionId = context.Request.Headers["Mcp-Session-Id"].ToString();
+
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            sessionId = context.Request.Query["sessionId"].ToString();
+        }
 
         if (string.IsNullOrEmpty(sessionId))
         {
             logger.LogWarning("Message received without session ID");
             context.Response.StatusCode = 400;
-            await context.Response.WriteAsJsonAsync(new { error = "Missing sessionId" });
+            await context.Response.WriteAsJsonAsync(new { error = "Missing session ID" });
             return;
         }
 

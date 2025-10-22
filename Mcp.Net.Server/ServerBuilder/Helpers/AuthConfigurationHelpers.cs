@@ -48,7 +48,7 @@ internal static class AuthConfigurationHelpers
         return new AuthOptions
         {
             Enabled = true,
-            SecuredPaths = new List<string> { "/sse", "/messages" },
+            SecuredPaths = new List<string> { "/mcp" },
             EnableLogging = true,
         };
     }

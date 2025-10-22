@@ -153,7 +153,7 @@ class Program
                     );
 
                     // Configure secured paths if needed
-                    auth.WithSecuredPaths("/sse", "/messages");
+                    auth.WithSecuredPaths("/mcp");
                 });
             }
         });
@@ -200,7 +200,7 @@ class Program
             auth.AddApiKey("api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b", "user2", new Dictionary<string, string> { ["role"] = "user" });
             
             // Add secured paths
-            auth.AddSecuredPaths("/sse", "/messages");
+            auth.AddSecuredPaths("/mcp");
         });
         
         */
@@ -233,8 +233,7 @@ class Program
             app,
             options =>
             {
-                options.SsePath = "/sse";
-                options.MessagesPath = "/messages";
+                options.SsePath = "/mcp";
                 options.HealthCheckPath = "/health";
                 options.EnableCors = true;
                 // Allow all origins by default, or specify allowed origins
@@ -243,8 +242,7 @@ class Program
         );
 
         Console.WriteLine("Health check endpoint enabled at /health");
-        Console.WriteLine("SSE endpoint enabled at /sse");
-        Console.WriteLine("Messages endpoint enabled at /messages");
+        Console.WriteLine("MCP endpoint enabled at /mcp (GET for SSE, POST for JSON-RPC)");
 
         // Display the server URL
         // Updated to use the new type after refactoring
@@ -406,7 +404,7 @@ class Program
                 );
 
                 // Configure secured paths if needed
-                auth.WithSecuredPaths("/sse", "/messages");
+                auth.WithSecuredPaths("/mcp");
             });
         }
 

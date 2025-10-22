@@ -30,7 +30,7 @@ public class AuthOptions
     /// Paths matching these patterns will require authentication.
     /// For example, "/api/protected/*" would require authentication for all paths starting with "/api/protected/".
     /// </remarks>
-    public List<string> SecuredPaths { get; set; } = new() { "/sse", "/messages" };
+    public List<string> SecuredPaths { get; set; } = new() { "/mcp" };
 
     /// <summary>
     /// Gets or sets whether to log authentication events

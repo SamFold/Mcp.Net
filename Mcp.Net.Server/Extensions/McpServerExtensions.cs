@@ -24,14 +24,19 @@ public static class McpServerExtensions
     public class McpMiddlewareOptions
     {
         /// <summary>
-        /// Gets or sets the path for SSE connections.
+        /// Gets or sets the path for MCP HTTP/SSE endpoint.
         /// </summary>
-        public string SsePath { get; set; } = "/sse";
+        public string SsePath { get; set; } = "/mcp";
 
         /// <summary>
         /// Gets or sets the path for message endpoints.
         /// </summary>
-        public string MessagesPath { get; set; } = "/messages";
+        [Obsolete("MCP now uses a single endpoint. Configure SsePath instead.")]
+        public string MessagesPath
+        {
+            get => SsePath;
+            set => SsePath = value;
+        }
 
         /// <summary>
         /// Gets or sets the path for health checks.
@@ -91,14 +96,8 @@ public static class McpServerExtensions
         // Add authentication middleware using options from the DI container
         app.UseMiddleware<Authentication.McpAuthenticationMiddleware>();
 
-        // Add SSE connection endpoint
+        // Add unified MCP endpoint
         app.Map(options.SsePath, sseApp => sseApp.UseMiddleware<SseConnectionMiddleware>());
-
-        // Add messaging endpoint
-        app.Map(
-            options.MessagesPath,
-            messagesApp => messagesApp.UseMiddleware<SseMessageMiddleware>()
-        );
 
         return app;
     }

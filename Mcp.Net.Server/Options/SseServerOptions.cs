@@ -40,14 +40,19 @@ public class SseServerOptions : McpServerOptions
     public string BaseUrl => $"{Scheme}://{Hostname}:{Port}";
 
     /// <summary>
-    /// Gets or sets the path for SSE connections.
+    /// Gets or sets the path for MCP HTTP/SSE transport.
     /// </summary>
-    public string SsePath { get; set; } = "/sse";
+    public string SsePath { get; set; } = "/mcp";
 
     /// <summary>
     /// Gets or sets the path for message endpoints.
     /// </summary>
-    public string MessagesPath { get; set; } = "/messages";
+    [Obsolete("MCP now uses a single endpoint. Use SsePath instead.")]
+    public string MessagesPath
+    {
+        get => SsePath;
+        set => SsePath = value;
+    }
 
     /// <summary>
     /// Gets or sets the path for health checks.

@@ -11,9 +11,8 @@ namespace Mcp.Net.Server.Transport.Sse;
 /// </summary>
 public class SseTransport : ServerTransportBase
 {
-    // Cache the SSE event format for better performance
+    // Cache the SSE data format for better performance
     private const string SSE_DATA_FORMAT = "data: {0}\n\n";
-    private const string SSE_EVENT_FORMAT = "event: {0}\ndata: {1}\n\n";
     private const string TRANSPORT_TYPE = "SSE";
 
     protected readonly IResponseWriter ResponseWriter;
@@ -66,6 +65,7 @@ public class SseTransport : ServerTransportBase
             writer.SetHeader("Content-Type", "text/event-stream");
             writer.SetHeader("Cache-Control", "no-cache");
             writer.SetHeader("Connection", "keep-alive");
+            writer.SetHeader("Mcp-Session-Id", SessionId);
 
             // Get client info and log connection
             var clientInfo = new Dictionary<string, string?>();
@@ -98,8 +98,8 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <inheritdoc />
-    /// <remarks>Negotiates the SSE connection and emits an endpoint event that clients can use for subsequent POSTs.</remarks>
-    public override async Task StartAsync()
+    /// <remarks>Marks the transport as started and logs connection startup.</remarks>
+    public override Task StartAsync()
     {
         if (_isStarted)
         {
@@ -109,26 +109,11 @@ public class SseTransport : ServerTransportBase
         using (Logger.BeginConnectionScope(SessionId))
         using (Logger.BeginTimingScope("SseTransportStartup"))
         {
-            try
-            {
-                // Send the endpoint URL as the first message
-                var endpointUrl = $"/messages?sessionId={SessionId}";
-
-                // Format as SSE event
-                await SendEventAsync("endpoint", endpointUrl);
-
-                Logger.LogInformation(
-                    "SSE transport started, sent endpoint: {Endpoint}",
-                    endpointUrl
-                );
-                _isStarted = true;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogTransportError(ex, SessionId, "StartAsync", TRANSPORT_TYPE);
-                throw;
-            }
+            _isStarted = true;
+            Logger.LogInformation("SSE transport started for session {SessionId}", SessionId);
         }
+
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
@@ -203,18 +188,6 @@ public class SseTransport : ServerTransportBase
     {
         string sseData = string.Format(SSE_DATA_FORMAT, data);
         await ResponseWriter.WriteAsync(sseData, CancellationTokenSource.Token);
-        await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
-    }
-
-    /// <summary>
-    /// Sends data as a named SSE event.
-    /// </summary>
-    /// <param name="eventName">The event name</param>
-    /// <param name="data">The event data</param>
-    private async Task SendEventAsync(string eventName, string data)
-    {
-        string sseEvent = string.Format(SSE_EVENT_FORMAT, eventName, data);
-        await ResponseWriter.WriteAsync(sseEvent, CancellationTokenSource.Token);
         await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
     }
 
