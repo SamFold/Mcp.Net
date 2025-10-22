@@ -129,94 +129,21 @@ class Program
             }
             else
             {
-                // Configure standard authentication with API keys
-                mcpBuilder.WithAuthentication(auth =>
-                {
-                    // Configure API key options
-                    auth.WithApiKeyOptions(options =>
-                    {
-                        options.HeaderName = "X-API-Key";
-                        options.QueryParamName = "api_key";
-                        options.DevelopmentApiKey = "dev-only-api-key"; // Only for dev/testing
-                    });
-
-                    // Add API keys with user IDs and claims (use realistic GUIDs for real keys)
-                    auth.WithApiKey(
-                        "api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c", // Real API key example
-                        "user1",
-                        new Dictionary<string, string> { ["role"] = "admin" }
-                    );
-                    auth.WithApiKey(
-                        "api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b", // Real API key example
-                        "user2",
-                        new Dictionary<string, string> { ["role"] = "user" }
-                    );
-
-                    // Configure secured paths if needed
-                    auth.WithSecuredPaths("/mcp");
-                });
+                // TODO: Configure OAuth-based authorization here once the authorization server metadata is available.
+                // For now, fall back to unauthenticated mode so the sample remains runnable.
+                mcpBuilder.WithAuthentication(auth => auth.WithNoAuth());
+                Console.WriteLine("Authentication defaults to disabled until OAuth is configured.");
             }
         });
-
-        // ========================================================================================
-        // AUTHENTICATION CONFIGURATION - OPTION 2 (Alternative)
-        // Using the ASP.NET Core DI extensions directly
-        // This shows how to use the new ASP.NET Core authentication extensions if you
-        // need more control or want to configure authentication separately from the server
-        // ========================================================================================
-
-        /* Uncomment this section to use the ASP.NET Core DI extensions approach instead
-        
-        // Register MCP server without authentication
-        builder.Services.AddMcpServer(mcpBuilder =>
-        {
-            mcpBuilder
-                .WithName(options.ServerName ?? "Simple MCP Server")
-                .WithVersion("1.0.0")
-                .WithInstructions("Example server with calculator and Warhammer 40k tools")
-                .WithLogLevel(logLevel)
-                .WithPort(port)
-                .WithHostname(hostname);
-                
-            // Add tool assemblies
-            mcpBuilder.WithAdditionalAssembly(
-                typeof(Mcp.Net.Examples.ExternalTools.UtilityTools).Assembly
-            );
-        });
-        
-        // Add API key authentication using the new ASP.NET Core extensions
-        builder.Services.AddApiKeyAuthentication(auth =>
-        {
-            // Configure API key options
-            auth.ConfigureOptions(options =>
-            {
-                options.HeaderName = "X-API-Key";
-                options.QueryParamName = "api_key";
-                options.DevelopmentApiKey = "dev-only-api-key"; // Only for dev/testing
-            });
-            
-            // Add API keys (use realistic GUIDs for real keys)
-            auth.AddApiKey("api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c", "user1", new Dictionary<string, string> { ["role"] = "admin" });
-            auth.AddApiKey("api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b", "user2", new Dictionary<string, string> { ["role"] = "user" });
-            
-            // Add secured paths
-            auth.AddSecuredPaths("/mcp");
-        });
-        
-        */
-
         var app = builder.Build();
 
         if (options.NoAuth)
         {
-            Console.WriteLine("Authentication is DISABLED - no API key required");
+            Console.WriteLine("Authentication is DISABLED - server allows anonymous access.");
         }
         else
         {
-            Console.WriteLine("Using API keys for authentication:");
-            Console.WriteLine("  - api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c (user1, admin)");
-            Console.WriteLine("  - api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b (user2, user)");
-            Console.WriteLine("  - dev-only-api-key (dev-user) - DEVELOPMENT USE ONLY");
+            Console.WriteLine("Authentication currently defaults to disabled; configure OAuth to enable protection.");
         }
 
         // Create a cancellation token source for graceful shutdown
@@ -380,32 +307,8 @@ class Program
         }
         else
         {
-            // Configure standard authentication with API keys
-            serverBuilder.WithAuthentication(auth =>
-            {
-                // Configure API key options
-                auth.WithApiKeyOptions(options =>
-                {
-                    options.HeaderName = "X-API-Key";
-                    options.QueryParamName = "api_key";
-                    options.DevelopmentApiKey = "dev-only-api-key"; // Only for dev/testing
-                });
-
-                // Add API keys with user IDs and claims (use realistic GUIDs for real keys)
-                auth.WithApiKey(
-                    "api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c", // Real API key example
-                    "user1",
-                    new Dictionary<string, string> { ["role"] = "admin" }
-                );
-                auth.WithApiKey(
-                    "api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b", // Real API key example
-                    "user2",
-                    new Dictionary<string, string> { ["role"] = "user" }
-                );
-
-                // Configure secured paths if needed
-                auth.WithSecuredPaths("/mcp");
-            });
+            serverBuilder.WithAuthentication(auth => auth.WithNoAuth());
+            LogToFile("Authentication defaults to disabled in stdio sample");
         }
 
         if (logFilePath != null)

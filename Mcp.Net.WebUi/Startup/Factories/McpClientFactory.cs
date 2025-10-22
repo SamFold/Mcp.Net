@@ -23,19 +23,16 @@ public static class McpClientFactory
 
             if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
             {
-                logger.LogInformation(
-                    "Connecting to MCP server at {Url} with API key",
-                    mcpServerUrl
-                );
-                clientBuilder.WithApiKey(mcpServerApiKey);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "Connecting to MCP server at {Url} without authentication",
+                logger.LogWarning(
+                    "API key authentication is no longer supported; connecting to {Url} without credentials.",
                     mcpServerUrl
                 );
             }
+
+            logger.LogInformation(
+                "Connecting to MCP server at {Url} without authentication",
+                mcpServerUrl
+            );
 
             return clientBuilder.BuildAndInitializeAsync().GetAwaiter().GetResult();
         }

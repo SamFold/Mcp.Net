@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -30,6 +31,7 @@ public class SseConnectionManager
     private readonly ILoggerFactory _loggerFactory;
     private readonly McpServer _server;
     private readonly IAuthHandler? _authHandler;
+    private readonly HashSet<string> _allowedOrigins;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SseConnectionManager"/> class.
@@ -38,11 +40,15 @@ public class SseConnectionManager
     /// <param name="loggerFactory">Factory used to create scoped loggers for transports.</param>
     /// <param name="connectionTimeout">Optional idle timeout window for transports.</param>
     /// <param name="authHandler">Optional authentication handler applied to HTTP requests.</param>
+    /// <param name="allowedOrigins">Optional set of allowed origins that may access the HTTP endpoint.</param>
+    /// <param name="canonicalOrigin">Canonical origin derived from the server's MCP endpoint.</param>
     public SseConnectionManager(
         McpServer server,
         ILoggerFactory loggerFactory,
         TimeSpan? connectionTimeout = null,
-        IAuthHandler? authHandler = null
+        IAuthHandler? authHandler = null,
+        IEnumerable<string>? allowedOrigins = null,
+        string? canonicalOrigin = null
     )
     {
         _server = server ?? throw new ArgumentNullException(nameof(server));
@@ -50,7 +56,25 @@ public class SseConnectionManager
         _logger = loggerFactory.CreateLogger<SseConnectionManager>();
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromMinutes(30);
         _authHandler = authHandler;
+        _allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        if (allowedOrigins != null)
+        {
+            foreach (var origin in allowedOrigins)
+            {
+                var normalized = NormalizeOrigin(origin);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    _allowedOrigins.Add(normalized);
+                }
+            }
+        }
+
+        var normalizedCanonical = NormalizeOrigin(canonicalOrigin);
+        if (_allowedOrigins.Count == 0 && !string.IsNullOrEmpty(normalizedCanonical))
+        {
+            _allowedOrigins.Add(normalizedCanonical);
+        }
     }
 
     /// <summary>
@@ -174,6 +198,11 @@ public class SseConnectionManager
         string clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         logger.LogInformation("New SSE connection from {ClientIp}", clientIp);
 
+        if (!await EnsureValidOriginAsync(context, logger))
+        {
+            return;
+        }
+
         // Authenticate the connection if authentication is configured
         if (_authHandler != null)
         {
@@ -265,6 +294,11 @@ public class SseConnectionManager
     {
         var logger = _loggerFactory.CreateLogger("MessageEndpoint");
 
+        if (!await EnsureValidOriginAsync(context, logger))
+        {
+            return;
+        }
+
         var sessionId = await ResolveSessionIdAsync(context, logger);
         if (sessionId == null)
         {
@@ -343,6 +377,95 @@ public class SseConnectionManager
                 );
             }
         }
+    }
+
+    /// <summary>
+    /// Validates the Origin header for the incoming request, enforcing the allowed origin list.
+    /// </summary>
+    private async Task<bool> EnsureValidOriginAsync(HttpContext context, ILogger logger)
+    {
+        var originHeader = context.Request.Headers["Origin"].ToString();
+        var normalizedOrigin = NormalizeOrigin(originHeader);
+
+        if (!string.IsNullOrEmpty(normalizedOrigin) && IsOriginAllowed(normalizedOrigin))
+        {
+            return true;
+        }
+
+        var hostHeader = context.Request.Headers.Host.ToString();
+        if (!string.IsNullOrWhiteSpace(hostHeader))
+        {
+            var scheme = !string.IsNullOrWhiteSpace(context.Request.Scheme)
+                ? context.Request.Scheme
+                : "http";
+            var hostCandidate = NormalizeOrigin($"{scheme}://{hostHeader}");
+            if (!string.IsNullOrEmpty(hostCandidate) && IsOriginAllowed(hostCandidate))
+            {
+                if (string.IsNullOrEmpty(originHeader))
+                {
+                    logger.LogDebug(
+                        "Origin header missing; accepted request because host {Host} is permitted.",
+                        hostHeader
+                    );
+                }
+
+                return true;
+            }
+        }
+
+        if (_allowedOrigins.Count == 0)
+        {
+            logger.LogWarning(
+                "No allowed origins configured; allowing request from {Origin} to preserve compatibility.",
+                string.IsNullOrWhiteSpace(originHeader) ? "<missing>" : originHeader
+            );
+            return true;
+        }
+
+        var message = string.IsNullOrWhiteSpace(originHeader)
+            ? "Origin header is required for MCP HTTP requests."
+            : $"Origin '{originHeader}' is not permitted.";
+
+        logger.LogWarning(
+            "Rejecting request due to invalid origin {Origin}. Allowed origins: {AllowedOrigins}",
+            string.IsNullOrWhiteSpace(originHeader) ? "<missing>" : originHeader,
+            string.Join(", ", _allowedOrigins)
+        );
+
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(
+                new { error = "invalid_origin", message },
+                cancellationToken: context.RequestAborted
+            );
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether an origin value exists in the allowed origin list.
+    /// </summary>
+    private bool IsOriginAllowed(string origin) => _allowedOrigins.Contains(origin);
+
+    /// <summary>
+    /// Normalizes an origin into a lower-case scheme/host/port string.
+    /// </summary>
+    private static string? NormalizeOrigin(string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            return null;
+        }
+
+        if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+        {
+            var leftPart = uri.GetLeftPart(UriPartial.Authority);
+            return leftPart.TrimEnd('/').ToLowerInvariant();
+        }
+
+        return origin.Trim().TrimEnd('/').ToLowerInvariant();
     }
 
     /// <summary>

@@ -32,19 +32,21 @@ app.UseMcpServer();
 ### Authentication Extensions
 
 ```csharp
-// Configure authentication with options
-services.AddMcpAuthentication(options => 
+// Configure OAuth authentication via the server builder
+services.AddMcpServer(mcpBuilder =>
 {
-    options.Enabled = true;
-    options.ApiKeyOptions = new ApiKeyAuthOptions
+    mcpBuilder.WithAuthentication(auth =>
     {
-        HeaderName = "X-API-Key",
-        QueryParamName = "api_key"
-    };
+        auth.WithOAuth(options =>
+        {
+            options.Authority = "https://auth.example.com";
+            options.Resource = "https://mcp.example.com/mcp";
+        });
+    });
 });
 
-// Or disable authentication
-services.AddMcpAuthenticationNone();
+// Disable authentication (development only)
+services.AddMcpServer(mcpBuilder => mcpBuilder.WithAuthentication(auth => auth.WithNoAuth()));
 ```
 
 ### Logging Extensions

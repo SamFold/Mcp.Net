@@ -244,13 +244,11 @@ public class Program
 
     private static async Task<IMcpClient> ConnectToMcpServer()
     {
-        // Use the admin API key for full access to all tools
         var mcpClient = await new McpClientBuilder()
             .UseSseTransport("http://localhost:5000/")
-            .WithApiKey("api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c") // Admin user key
             .BuildAndInitializeAsync();
 
-        _logger.LogInformation("Connected to MCP server with admin API key");
+        _logger.LogInformation("Connected to MCP server");
         return mcpClient;
     }
 

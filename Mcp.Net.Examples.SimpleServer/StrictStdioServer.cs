@@ -181,7 +181,7 @@ internal static class StrictStdioServer
             jsonRpcLevel: LogLevel.Error
         );
 
-        // Configure auth
+        // Configure auth (disabled by default until OAuth configuration is supplied)
         if (options.NoAuth)
         {
             serverBuilder.WithAuthentication(auth => auth.WithNoAuth());
@@ -189,32 +189,8 @@ internal static class StrictStdioServer
         }
         else
         {
-            // Set up API key auth
-            serverBuilder.WithAuthentication(auth =>
-            {
-                auth.WithApiKeyOptions(options =>
-                {
-                    options.HeaderName = "X-API-Key";
-                    options.QueryParamName = "api_key";
-                    options.DevelopmentApiKey = "dev-only-api-key"; 
-                });
-
-                auth.WithApiKey(
-                    "api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c",
-                    "user1",
-                    new Dictionary<string, string> { ["role"] = "admin" }
-                );
-                
-                auth.WithApiKey(
-                    "api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b",
-                    "user2",
-                    new Dictionary<string, string> { ["role"] = "user" }
-                );
-
-                auth.WithSecuredPaths("/mcp");
-            });
-            
-            LogToFile("Authentication configured with API keys");
+            serverBuilder.WithAuthentication(auth => auth.WithNoAuth());
+            LogToFile("Authentication defaults to disabled in stdio sample");
         }
 
         // Configure file logging if available

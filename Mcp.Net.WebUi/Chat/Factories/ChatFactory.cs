@@ -285,19 +285,16 @@ public class ChatFactory : IChatFactory
 
             if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
             {
-                _logger.LogDebug(
-                    "Creating MCP client for session {SessionId} with authentication",
-                    sessionId
-                );
-                clientBuilder.WithApiKey(mcpServerApiKey);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "Creating MCP client for session {SessionId} without authentication",
+                _logger.LogWarning(
+                    "API key authentication is no longer supported; creating MCP client for session {SessionId} without credentials.",
                     sessionId
                 );
             }
+
+            _logger.LogDebug(
+                "Creating MCP client for session {SessionId} without authentication",
+                sessionId
+            );
 
             var mcpClient = await clientBuilder.BuildAndInitializeAsync();
 

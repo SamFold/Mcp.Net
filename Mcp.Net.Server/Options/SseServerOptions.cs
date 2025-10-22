@@ -70,6 +70,11 @@ public class SseServerOptions : McpServerOptions
     public string[]? AllowedOrigins { get; set; }
 
     /// <summary>
+    /// Gets the canonical origin (scheme + host + port) for the MCP endpoint.
+    /// </summary>
+    public string? CanonicalOrigin { get; internal set; }
+
+    /// <summary>
     /// Gets or sets the command-line arguments.
     /// </summary>
     public string[] Args { get; set; } = Array.Empty<string>();
@@ -112,63 +117,4 @@ public class SseServerOptions : McpServerOptions
         }
     }
 
-    // Backward compatibility properties
-    /// <summary>
-    /// Gets or sets the authentication handler.
-    /// This property is obsolete. Use Authentication.AuthHandler instead.
-    /// </summary>
-    [Obsolete("Use Authentication.AuthHandler instead")]
-    public IAuthHandler? AuthHandler
-    {
-        get => Authentication.AuthHandler;
-        set => Authentication.AuthHandler = value;
-    }
-
-    /// <summary>
-    /// Gets or sets the API key validator.
-    /// This property is obsolete. Use Authentication.ApiKeyValidator instead.
-    /// </summary>
-    [Obsolete("Use Authentication.ApiKeyValidator instead")]
-    public IApiKeyValidator? ApiKeyValidator
-    {
-        get => Authentication.ApiKeyValidator;
-        set => Authentication.ApiKeyValidator = value;
-    }
-
-    /// <summary>
-    /// Gets or sets the API key options when using API key authentication.
-    /// This property is obsolete. Use Authentication as ApiKeyAuthOptions instead.
-    /// </summary>
-    [Obsolete("Use Authentication as ApiKeyAuthOptions instead")]
-    public ApiKeyAuthOptions? ApiKeyOptions
-    {
-        get => Authentication as ApiKeyAuthOptions;
-        set
-        {
-            if (value != null)
-            {
-                Authentication = value;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Configures the server with the specified API key.
-    /// This method is obsolete. Use Authentication.WithApiKey instead.
-    /// </summary>
-    /// <param name="apiKey">The API key</param>
-    /// <returns>The options instance for chaining</returns>
-    [Obsolete("Use Authentication.WithApiKey instead")]
-    public SseServerOptions WithApiKey(string apiKey)
-    {
-        if (Authentication is ApiKeyAuthOptions apiKeyAuth)
-        {
-            apiKeyAuth.WithApiKey(apiKey);
-        }
-        else
-        {
-            Authentication = new ApiKeyAuthOptions().WithApiKey(apiKey);
-        }
-        return this;
-    }
 }

@@ -15,45 +15,34 @@ namespace Mcp.Net.Tests.Server.Transport;
 
 public class SseConnectionManagerTests
 {
+    private const string DefaultOrigin = "http://localhost:5000";
+
     [Fact]
     public async Task HandleMessageAsync_Should_Use_Header_Session_Id()
     {
         // Arrange
-        var serverInfo = new ServerInfo { Name = "Test Server", Version = "1.0.0" };
-        var server = new McpServer(
-            serverInfo,
-            new ServerOptions { Capabilities = new ServerCapabilities() },
-            new LoggerFactory()
-        );
-        var loggerFactory = LoggerFactory.Create(builder => { });
-        var connectionManager = new SseConnectionManager(server, loggerFactory);
-
-        var writer = new TestResponseWriter();
-        var transport = new SseTransport(
-            writer,
-            loggerFactory.CreateLogger<SseTransport>()
-        );
-
-        connectionManager.RegisterTransport(transport);
-        await server.ConnectAsync(transport);
+        var (connectionManager, transport, writer) = CreateManagerWithTransport();
 
         // Verify session header exposed on SSE response
-        writer.Headers.Should().ContainKey("Mcp-Session-Id").WhoseValue.Should().Be(transport.SessionId);
+        writer
+            .Headers.Should()
+            .ContainKey("Mcp-Session-Id")
+            .WhoseValue.Should()
+            .Be(transport.SessionId);
 
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Post;
+        context.Request.Scheme = "http";
+        context.Request.Host = HostString.FromUriComponent(DefaultOrigin);
         context.Request.Headers["Mcp-Session-Id"] = transport.SessionId;
         context.Response.Body = new MemoryStream();
 
-        var request = new JsonRpcRequestMessage(
-            "2.0",
-            "list-1",
-            "tools/list",
-            null
-        );
+        var request = new JsonRpcRequestMessage("2.0", "list-1", "tools/list", null);
         var requestJson = JsonSerializer.Serialize(request);
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(requestJson));
         context.Request.Body.Position = 0;
+        context.Request.Headers["MCP-Protocol-Version"] = McpServer.LatestProtocolVersion;
+        context.Request.Headers["Origin"] = DefaultOrigin;
 
         // Act
         await connectionManager.HandleMessageAsync(context);
@@ -89,7 +78,11 @@ public class SseConnectionManagerTests
         await connectionManager.HandleMessageAsync(requestContext);
 
         requestContext.Response.StatusCode.Should().Be(202);
-        requestContext.Response.Headers["MCP-Protocol-Version"].ToString().Should().Be(McpServer.LatestProtocolVersion);
+        requestContext
+            .Response.Headers["MCP-Protocol-Version"]
+            .ToString()
+            .Should()
+            .Be(McpServer.LatestProtocolVersion);
         requestContext.Response.Body.Length.Should().Be(0);
     }
 
@@ -108,7 +101,11 @@ public class SseConnectionManagerTests
 
         requestContext.Response.StatusCode.Should().Be(400);
         requestContext.Response.Body.Position = 0;
-        using var reader = new StreamReader(requestContext.Response.Body, Encoding.UTF8, leaveOpen: true);
+        using var reader = new StreamReader(
+            requestContext.Response.Body,
+            Encoding.UTF8,
+            leaveOpen: true
+        );
         var responseBody = await reader.ReadToEndAsync();
         responseBody.Should().Contain("Missing MCP-Protocol-Version header");
     }
@@ -130,7 +127,11 @@ public class SseConnectionManagerTests
 
         requestContext.Response.StatusCode.Should().Be(400);
         requestContext.Response.Body.Position = 0;
-        using var reader = new StreamReader(requestContext.Response.Body, Encoding.UTF8, leaveOpen: true);
+        using var reader = new StreamReader(
+            requestContext.Response.Body,
+            Encoding.UTF8,
+            leaveOpen: true
+        );
         var responseBody = await reader.ReadToEndAsync();
         responseBody.Should().Contain("Unsupported MCP-Protocol-Version");
     }
@@ -143,8 +144,12 @@ public class SseConnectionManagerTests
 
         var notificationContext = new DefaultHttpContext();
         notificationContext.Request.Method = HttpMethods.Post;
+        notificationContext.Request.Scheme = "http";
+        notificationContext.Request.Host = HostString.FromUriComponent(DefaultOrigin);
         notificationContext.Request.Headers["Mcp-Session-Id"] = transport.SessionId;
-        notificationContext.Request.Headers["MCP-Protocol-Version"] = McpServer.LatestProtocolVersion;
+        notificationContext.Request.Headers["MCP-Protocol-Version"] =
+            McpServer.LatestProtocolVersion;
+        notificationContext.Request.Headers["Origin"] = DefaultOrigin;
         notificationContext.Response.Body = new MemoryStream();
 
         var notificationJson = JsonSerializer.Serialize(
@@ -155,7 +160,9 @@ public class SseConnectionManagerTests
                 @params = new { },
             }
         );
-        notificationContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(notificationJson));
+        notificationContext.Request.Body = new MemoryStream(
+            Encoding.UTF8.GetBytes(notificationJson)
+        );
         notificationContext.Request.Body.Position = 0;
 
         writer.Reset();
@@ -167,9 +174,36 @@ public class SseConnectionManagerTests
         writer.WrittenPayloads.Should().BeEmpty();
     }
 
-    private static (SseConnectionManager Manager, SseTransport Transport, TestResponseWriter Writer)
-        CreateManagerWithTransport()
+    [Fact]
+    public async Task HandleMessageAsync_Should_Reject_Invalid_Origin()
     {
+        var (connectionManager, transport, _) = CreateManagerWithTransport();
+        await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
+
+        var request = new JsonRpcRequestMessage("2.0", "list-5", "tools/list", null);
+        var context = CreatePostContext(transport, request);
+        context.Request.Headers["MCP-Protocol-Version"] = McpServer.LatestProtocolVersion;
+        context.Request.Headers["Origin"] = "https://malicious.example";
+
+        await connectionManager.HandleMessageAsync(context);
+
+        context.Response.StatusCode.Should().Be(403);
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8, leaveOpen: true);
+        var responseBody = await reader.ReadToEndAsync();
+        responseBody.Should().Contain("invalid_origin");
+    }
+
+    private static (
+        SseConnectionManager Manager,
+        SseTransport Transport,
+        TestResponseWriter Writer
+    ) CreateManagerWithTransport(
+        string[]? allowedOrigins = null,
+        string? canonicalOrigin = DefaultOrigin
+    )
+    {
+        allowedOrigins ??= new[] { DefaultOrigin };
         var serverInfo = new ServerInfo { Name = "Test Server", Version = "1.0.0" };
         var server = new McpServer(
             serverInfo,
@@ -177,13 +211,17 @@ public class SseConnectionManagerTests
             new LoggerFactory()
         );
         var loggerFactory = LoggerFactory.Create(builder => { });
-        var connectionManager = new SseConnectionManager(server, loggerFactory);
+        var connectionManager = new SseConnectionManager(
+            server,
+            loggerFactory,
+            TimeSpan.FromMinutes(30),
+            authHandler: null,
+            allowedOrigins,
+            canonicalOrigin
+        );
 
         var writer = new TestResponseWriter();
-        var transport = new SseTransport(
-            writer,
-            loggerFactory.CreateLogger<SseTransport>()
-        );
+        var transport = new SseTransport(writer, loggerFactory.CreateLogger<SseTransport>());
 
         connectionManager.RegisterTransport(transport);
         server.ConnectAsync(transport).GetAwaiter().GetResult();
@@ -198,6 +236,9 @@ public class SseConnectionManagerTests
     {
         var context = new DefaultHttpContext();
         context.Request.Method = HttpMethods.Post;
+        context.Request.Scheme = "http";
+        context.Request.Host = HostString.FromUriComponent(DefaultOrigin);
+        context.Request.Headers["Origin"] = DefaultOrigin;
         context.Request.Headers["Mcp-Session-Id"] = transport.SessionId;
         context.Response.Body = new MemoryStream();
 
@@ -233,12 +274,14 @@ public class SseConnectionManagerTests
 
         if (includeProtocolHeader)
         {
-            initializeContext.Request.Headers["MCP-Protocol-Version"] = McpServer.LatestProtocolVersion;
+            initializeContext.Request.Headers["MCP-Protocol-Version"] =
+                McpServer.LatestProtocolVersion;
         }
 
         await connectionManager.HandleMessageAsync(initializeContext);
         initializeContext.Response.StatusCode.Should().Be(202);
-        initializeContext.Response.Headers["MCP-Protocol-Version"]
+        initializeContext
+            .Response.Headers["MCP-Protocol-Version"]
             .ToString()
             .Should()
             .Be(McpServer.LatestProtocolVersion);

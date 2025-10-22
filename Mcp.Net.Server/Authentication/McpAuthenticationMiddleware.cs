@@ -176,7 +176,27 @@ public class McpAuthenticationMiddleware
         context.Response.StatusCode = 401; // Default to 401 Unauthorized
 
         // Add WWW-Authenticate header to suggest to clients how to authenticate
-        context.Response.Headers.Append("WWW-Authenticate", $"{_authHandler?.SchemeName ?? "MCP"}");
+        var scheme =
+            _authHandler?.SchemeName
+            ?? (!string.IsNullOrWhiteSpace(_options.SchemeName) ? _options.SchemeName : "MCP");
+
+        if (_options is OAuthResourceServerOptions oauthOptions)
+        {
+            var metadataUrl = BuildMetadataUrl(context, oauthOptions);
+            if (!string.IsNullOrEmpty(metadataUrl))
+            {
+                context.Response.Headers["WWW-Authenticate"] =
+                    $"Bearer resource_metadata=\"{metadataUrl}\"";
+            }
+            else
+            {
+                context.Response.Headers.Append("WWW-Authenticate", scheme);
+            }
+        }
+        else
+        {
+            context.Response.Headers.Append("WWW-Authenticate", scheme);
+        }
 
         // Write a structured error response
         await WriteErrorResponse(context, "Unauthorized", reason);
@@ -261,6 +281,43 @@ public class McpAuthenticationMiddleware
                 "No authentication handler configured. Authentication will be skipped."
             );
         }
+    }
+
+    private static string? BuildMetadataUrl(
+        HttpContext context,
+        OAuthResourceServerOptions oauthOptions
+    )
+    {
+        if (
+            Uri.TryCreate(oauthOptions.ResourceMetadataPath, UriKind.Absolute, out var absoluteUri)
+        )
+        {
+            return absoluteUri.ToString();
+        }
+
+        string? authority = null;
+        if (
+            !string.IsNullOrWhiteSpace(oauthOptions.Resource)
+            && Uri.TryCreate(oauthOptions.Resource, UriKind.Absolute, out var resourceUri)
+        )
+        {
+            authority = resourceUri.GetLeftPart(UriPartial.Authority);
+        }
+        else if (context.Request.Host.HasValue)
+        {
+            authority = $"{context.Request.Scheme}://{context.Request.Host}";
+        }
+
+        if (authority == null)
+        {
+            return null;
+        }
+
+        var path = oauthOptions.ResourceMetadataPath.StartsWith("/")
+            ? oauthOptions.ResourceMetadataPath
+            : "/" + oauthOptions.ResourceMetadataPath;
+
+        return $"{authority.TrimEnd('/')}{path}";
     }
 
     private void LogUnsecuredAccess(string path, string method)

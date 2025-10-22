@@ -40,7 +40,14 @@ public static class SseTransportExtensions
             // Get auth handler from service provider
             var authHandler = sp.GetService<IAuthHandler>();
 
-            return new SseConnectionManager(server, loggerFactory, connectionTimeout, authHandler);
+            return new SseConnectionManager(
+                server,
+                loggerFactory,
+                connectionTimeout,
+                authHandler,
+                options.AllowedOrigins,
+                options.CanonicalOrigin
+            );
         });
 
         // Add transport factory
@@ -78,7 +85,6 @@ public static class SseTransportExtensions
             opt.Hostname = options.Hostname;
             opt.Port = options.Port;
             opt.ConnectionTimeout = options.ConnectionTimeout;
-            opt.ApiKeyOptions = options.ApiKeyOptions;
             opt.LogLevel = options.LogLevel;
             opt.LogFilePath = options.LogFilePath;
             opt.UseConsoleLogging = options.UseConsoleLogging;

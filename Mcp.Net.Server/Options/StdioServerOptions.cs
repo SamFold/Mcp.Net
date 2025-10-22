@@ -48,26 +48,4 @@ public class StdioServerOptions : McpServerOptions
         }
     }
 
-    // Backward compatibility properties
-    /// <summary>
-    /// Gets or sets the authentication handler.
-    /// This property is obsolete. Use Authentication.AuthHandler instead.
-    /// </summary>
-    [Obsolete("Use Authentication.AuthHandler instead")]
-    public IAuthHandler? AuthHandler
-    {
-        get => Authentication.AuthHandler;
-        set => Authentication.AuthHandler = value;
-    }
-
-    /// <summary>
-    /// Gets or sets the API key validator.
-    /// This property is obsolete. Use Authentication.ApiKeyValidator instead.
-    /// </summary>
-    [Obsolete("Use Authentication.ApiKeyValidator instead")]
-    public IApiKeyValidator? ApiKeyValidator
-    {
-        get => Authentication.ApiKeyValidator;
-        set => Authentication.ApiKeyValidator = value;
-    }
 }

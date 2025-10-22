@@ -48,15 +48,9 @@ public class AuthOptions
     public IAuthHandler? AuthHandler { get; set; }
 
     /// <summary>
-    /// Gets or sets the API key validator.
-    /// </summary>
-    public IApiKeyValidator? ApiKeyValidator { get; set; }
-
-    /// <summary>
     /// Gets whether security is configured.
     /// </summary>
-    public virtual bool IsSecurityConfigured =>
-        NoAuthExplicitlyConfigured || AuthHandler != null || ApiKeyValidator != null;
+    public virtual bool IsSecurityConfigured => NoAuthExplicitlyConfigured || AuthHandler != null;
 
     /// <summary>
     /// Configures the options with a custom authentication handler.
@@ -66,17 +60,6 @@ public class AuthOptions
     public AuthOptions WithAuthentication(IAuthHandler authHandler)
     {
         AuthHandler = authHandler;
-        return this;
-    }
-
-    /// <summary>
-    /// Configures the options with a custom API key validator.
-    /// </summary>
-    /// <param name="validator">The API key validator</param>
-    /// <returns>The options instance for chaining</returns>
-    public AuthOptions WithApiKeyValidator(IApiKeyValidator validator)
-    {
-        ApiKeyValidator = validator;
         return this;
     }
 

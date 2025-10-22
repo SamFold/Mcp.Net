@@ -20,7 +20,7 @@ public class McpServerBuilder
     private ServerOptions? _options;
     private readonly ServiceCollection _services = new();
     private IAuthHandler? _authHandler;
-    private IApiKeyValidator? _apiKeyValidator;
+    private AuthOptions? _configuredAuthOptions;
     private ILoggerFactory? _loggerFactory;
     private bool _securityConfigured = false;
     private bool _noAuthExplicitlyConfigured = false;
@@ -89,14 +89,11 @@ public class McpServerBuilder
     public IAuthHandler? AuthHandler => _authHandler;
 
     /// <summary>
-    /// Gets the API key validator configured for this server.
-    /// </summary>
-    public IApiKeyValidator? ApiKeyValidator => _apiKeyValidator;
-
-    /// <summary>
     /// Gets the log level configured for this server.
     /// </summary>
     public LogLevel LogLevel => _logLevel;
+
+    internal AuthOptions? ConfiguredAuthOptions => _configuredAuthOptions;
 
     /// <summary>
     /// Gets whether console logging is enabled for this server.
@@ -245,30 +242,18 @@ public class McpServerBuilder
             return this;
         }
 
-        // Store the auth handler
+        // Store the resolved options and handler
         _authHandler = authHandler;
-
-        // Store API key validator if created
-        if (authBuilder.ApiKeyValidator != null)
-        {
-            _apiKeyValidator = authBuilder.ApiKeyValidator;
-        }
+        _configuredAuthOptions = authBuilder.ConfiguredOptions;
 
         // Configure the SSE builder with the same authentication
         if (_transportBuilder is SseServerBuilder sseBuilder)
         {
             sseBuilder.WithAuthentication(builder =>
             {
-                // Pass the handler if created
                 if (authHandler != null)
                 {
                     builder.WithHandler(authHandler);
-                }
-
-                // Also set the API key validator if configured
-                if (authBuilder.ApiKeyValidator != null)
-                {
-                    builder.WithApiKeyValidator(authBuilder.ApiKeyValidator);
                 }
 
                 // If auth is disabled, disable it in the SSE builder too
@@ -279,20 +264,13 @@ public class McpServerBuilder
             });
         }
 
-        // Configure services for DI
-        _services.AddSingleton(authBuilder.ApiKeyOptions ?? new ApiKeyAuthOptions());
-        _services.AddSingleton(
-            new AuthOptions
-            {
-                Enabled = !authBuilder.IsAuthDisabled,
-                SecuredPaths = authBuilder.ApiKeyOptions?.SecuredPaths ?? new List<string>(),
-                EnableLogging = true,
-            }
-        );
-
-        if (_apiKeyValidator != null)
+        if (_configuredAuthOptions != null)
         {
-            _services.AddSingleton<IApiKeyValidator>(_apiKeyValidator);
+            _services.AddSingleton(typeof(AuthOptions), _configuredAuthOptions);
+            if (_configuredAuthOptions is OAuthResourceServerOptions oauthOptions)
+            {
+                _services.AddSingleton(oauthOptions);
+            }
         }
 
         if (_authHandler != null)
@@ -492,11 +470,11 @@ public class McpServerBuilder
                     _authHandler.GetType().Name
                 );
             }
-            else if (_apiKeyValidator != null)
+            else if (_configuredAuthOptions != null)
             {
                 logger.LogInformation(
-                    "Using API key authentication with validator: {ValidatorType}",
-                    _apiKeyValidator.GetType().Name
+                    "Authentication configured with scheme: {Scheme}",
+                    _configuredAuthOptions.SchemeName
                 );
             }
         }

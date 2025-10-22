@@ -1,3 +1,4 @@
+using System.Linq;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ConnectionManagers;
@@ -91,7 +92,7 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     }
 
     // Removed old authentication methods in favor of WithAuthentication(Action<AuthBuilder>)
-    
+
     /// <summary>
     /// Configures authentication using a fluent builder for the SSE server
     /// </summary>
@@ -101,29 +102,24 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     {
         if (configure == null)
             throw new ArgumentNullException(nameof(configure));
-            
+
         // Create and configure the auth builder
         var authBuilder = new AuthBuilder(_loggerFactory);
         configure(authBuilder);
-        
+
         // Get the configured auth handler
         var authHandler = authBuilder.Build();
-        
-        // Store the auth handler if one was created
+
+        _options.Authentication = authBuilder.ConfiguredOptions;
+
         if (authHandler != null)
         {
-            _options.AuthHandler = authHandler;
+            _options.Authentication.WithAuthentication(authHandler);
         }
-        
-        // Store API key validator if created
-        if (authBuilder.ApiKeyValidator != null)
-        {
-            _options.ApiKeyValidator = authBuilder.ApiKeyValidator;
-        }
-        
+
         return this;
     }
-    
+
     /// <summary>
     /// Configures the SSE server to not use any authentication
     /// </summary>
@@ -174,15 +170,14 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
         _options.LogLevel = options.LogLevel;
         _options.UseConsoleLogging = options.UseConsoleLogging;
         _options.LogFilePath = options.LogFilePath;
-        _options.ApiKeyValidator = options.ApiKeyValidator;
-        _options.AuthHandler = options.AuthHandler;
-        _options.ApiKeyOptions = options.ApiKeyOptions;
+        _options.Authentication = options.Authentication;
         _options.SsePath = options.SsePath;
         _options.MessagesPath = options.MessagesPath;
         _options.HealthCheckPath = options.HealthCheckPath;
         _options.EnableCors = options.EnableCors;
         _options.AllowedOrigins = options.AllowedOrigins;
         _options.ConnectionTimeoutMinutes = options.ConnectionTimeoutMinutes;
+        _options.CanonicalOrigin = options.CanonicalOrigin;
 
         // Copy custom settings
         foreach (var setting in options.CustomSettings)
@@ -303,6 +298,17 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     {
         // Register server in DI
         builder.Services.AddSingleton(server);
+        builder.Services.AddSingleton(_options);
+
+        if (_options.Authentication is not null)
+        {
+            builder.Services.AddSingleton(typeof(AuthOptions), _options.Authentication);
+
+            if (_options.Authentication is OAuthResourceServerOptions oauthOptions)
+            {
+                builder.Services.AddSingleton(oauthOptions);
+            }
+        }
 
         // Register connection managers
         builder.Services.AddSingleton<IConnectionManager, InMemoryConnectionManager>(
@@ -313,34 +319,17 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
             provider => new SseConnectionManagerType(
                 server,
                 _loggerFactory,
-                TimeSpan.FromMinutes(30)
+                TimeSpan.FromMinutes(30),
+                _options.Authentication?.AuthHandler,
+                _options.AllowedOrigins,
+                _options.CanonicalOrigin
             )
         );
 
         // Register authentication if configured
-        if (_options.AuthHandler != null)
+        if (_options.Authentication?.AuthHandler != null)
         {
-            builder.Services.AddSingleton(_options.AuthHandler);
-        }
-        else if (_options.ApiKeyValidator != null)
-        {
-            builder.Services.AddSingleton(_options.ApiKeyValidator);
-            
-            // Register with the new interface
-            builder.Services.AddSingleton<IAuthHandler>(provider =>
-            {
-                var options = new ApiKeyAuthOptions
-                {
-                    HeaderName = "X-API-Key",
-                    QueryParamName = "api_key",
-                };
-
-                return new ApiKeyAuthenticationHandler(
-                    options,
-                    _options.ApiKeyValidator,
-                    _loggerFactory.CreateLogger<ApiKeyAuthenticationHandler>()
-                );
-            });
+            builder.Services.AddSingleton(_options.Authentication.AuthHandler);
         }
 
         // Add health checks
@@ -382,9 +371,48 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     /// </summary>
     private void ConfigureEndpoints(WebApplication app)
     {
+        if (_options.Authentication is OAuthResourceServerOptions oauthOptions)
+        {
+            var metadataPath = EnsureLeadingSlash(oauthOptions.ResourceMetadataPath);
+
+            app.MapGet(
+                metadataPath,
+                async context =>
+                {
+                    if (string.IsNullOrWhiteSpace(oauthOptions.Resource))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                        await context.Response.WriteAsJsonAsync(
+                            new
+                            {
+                                error = "resource_unavailable",
+                                message = "OAuth resource metadata is not configured.",
+                            }
+                        );
+                        return;
+                    }
+
+                    var document = new OAuthProtectedResourceMetadataDocument
+                    {
+                        Resource = oauthOptions.Resource!,
+                        AuthorizationServers =
+                            oauthOptions.AuthorizationServers.Count > 0
+                                ? oauthOptions.AuthorizationServers.ToArray()
+                                : null,
+                        ResourceName = _options.Name,
+                    };
+
+                    await context.Response.WriteAsJsonAsync(document);
+                }
+            );
+        }
+
         // SSE and message endpoints are configured by UseMcpServer middleware
         _logger.LogDebug("SSE endpoints configured");
     }
+
+    private static string EnsureLeadingSlash(string path) =>
+        path.StartsWith("/", StringComparison.Ordinal) ? path : "/" + path;
 
     /// <summary>
     /// Configures server endpoints using the configuration.
@@ -405,6 +433,36 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
 
         // Update the configuration with command line args and other sources
         serverConfig.Configure(args);
+
+        var canonicalResource = $"{serverConfig.ServerUrl.TrimEnd('/')}{_options.SsePath}";
+
+        if (Uri.TryCreate(canonicalResource, UriKind.Absolute, out var canonicalUri))
+        {
+            var canonicalOrigin = canonicalUri.GetLeftPart(UriPartial.Authority);
+            _options.CanonicalOrigin = canonicalOrigin;
+
+            if (_options.AllowedOrigins is null || _options.AllowedOrigins.Length == 0)
+            {
+                _options.AllowedOrigins = new[] { canonicalOrigin };
+            }
+        }
+
+        if (_options.Authentication is OAuthResourceServerOptions oauthOptions)
+        {
+            if (string.IsNullOrWhiteSpace(oauthOptions.Resource))
+            {
+                oauthOptions.Resource = canonicalResource;
+            }
+
+            if (
+                oauthOptions.ValidateAudience
+                && !oauthOptions.ValidAudiences.Any()
+                && !string.IsNullOrWhiteSpace(oauthOptions.Resource)
+            )
+            {
+                oauthOptions.AddValidAudience(oauthOptions.Resource);
+            }
+        }
 
         return serverConfig;
     }
