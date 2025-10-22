@@ -1,4 +1,5 @@
 using Mcp.Net.Core.JsonRpc;
+using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
@@ -25,6 +26,26 @@ public interface IMcpClient : IDisposable
     /// Event raised when the connection is closed.
     /// </summary>
     event Action? OnClose;
+
+    /// <summary>
+    /// The protocol version negotiated with the server during initialization.
+    /// </summary>
+    string? NegotiatedProtocolVersion { get; }
+
+    /// <summary>
+    /// Instructions returned by the server during initialization.
+    /// </summary>
+    string? Instructions { get; }
+
+    /// <summary>
+    /// Capabilities advertised by the connected server.
+    /// </summary>
+    ServerCapabilities? ServerCapabilities { get; }
+
+    /// <summary>
+    /// Information about the connected server.
+    /// </summary>
+    ServerInfo? ServerInfo { get; }
 
     /// <summary>
     /// Initializes the connection to the server.

@@ -20,14 +20,16 @@ public class SseMcpClient : McpClient
     /// <param name="clientVersion">The version of the client.</param>
     /// <param name="apiKey">Optional API key for authentication.</param>
     /// <param name="logger">Optional logger for client events.</param>
+    /// <param name="clientTitle">Optional display title reported during initialize.</param>
     public SseMcpClient(
         string serverUrl,
         string clientName = "SseClient",
         string clientVersion = "1.0.0",
         string? apiKey = null,
-        ILogger? logger = null
+        ILogger? logger = null,
+        string? clientTitle = null
     )
-        : base(clientName, clientVersion, logger)
+        : base(clientName, clientVersion, logger, clientTitle)
     {
         _apiKey = apiKey;
         _transport = new SseClientTransport(serverUrl, logger, apiKey);
@@ -42,14 +44,16 @@ public class SseMcpClient : McpClient
     /// <param name="clientVersion">The version of the client.</param>
     /// <param name="apiKey">Optional API key for authentication.</param>
     /// <param name="logger">Optional logger for client events.</param>
+    /// <param name="clientTitle">Optional display title reported during initialize.</param>
     public SseMcpClient(
         HttpClient httpClient,
         string clientName = "SseClient",
         string clientVersion = "1.0.0",
         string? apiKey = null,
-        ILogger? logger = null
+        ILogger? logger = null,
+        string? clientTitle = null
     )
-        : base(clientName, clientVersion, logger)
+        : base(clientName, clientVersion, logger, clientTitle)
     {
         _apiKey = apiKey;
         _transport = new SseClientTransport(httpClient, logger, apiKey);

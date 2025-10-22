@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Interfaces;
@@ -18,12 +19,26 @@ namespace Mcp.Net.Client;
 /// </summary>
 public abstract class McpClient : IMcpClient, IDisposable
 {
+    /// <summary>
+    /// The latest MCP protocol revision supported by this client.
+    /// </summary>
+    public const string LatestProtocolVersion = "2025-06-18";
+
     protected readonly ClientInfo _clientInfo;
+    private readonly ClientCapabilities _clientCapabilities;
+    private static readonly string[] s_supportedProtocolVersions =
+    {
+        LatestProtocolVersion,
+        "2024-11-05",
+    };
     protected readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
     };
     protected ServerCapabilities? _serverCapabilities;
+    private ServerInfo? _serverInfo;
+    private string? _instructions;
+    private string? _negotiatedProtocolVersion;
     protected readonly ILogger? _logger;
 
     // These are implemented as regular fields rather than auto-properties to allow derived classes to invoke them
@@ -50,11 +65,53 @@ public abstract class McpClient : IMcpClient, IDisposable
         remove => _onClose -= value;
     }
 
-    protected McpClient(string clientName, string clientVersion, ILogger? logger = null)
+    protected McpClient(
+        string clientName,
+        string clientVersion,
+        ILogger? logger = null,
+        string? clientTitle = null
+    )
     {
-        _clientInfo = new ClientInfo { Name = clientName, Version = clientVersion };
+        var resolvedTitle = string.IsNullOrWhiteSpace(clientTitle) ? clientName : clientTitle;
+        _clientInfo = new ClientInfo
+        {
+            Name = clientName,
+            Version = clientVersion,
+            Title = resolvedTitle,
+        };
+        _clientCapabilities = new ClientCapabilities
+        {
+            Roots = new RootsCapabilities { ListChanged = true },
+            Sampling = new { },
+            Elicitation = new { },
+        };
         _logger = logger;
     }
+
+    /// <summary>
+    /// The protocol version negotiated with the server during initialization.
+    /// </summary>
+    public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
+
+    /// <summary>
+    /// Instructions returned by the server during initialization.
+    /// </summary>
+    public string? Instructions => _instructions;
+
+    /// <summary>
+    /// Capabilities advertised by the connected server.
+    /// </summary>
+    public ServerCapabilities? ServerCapabilities => _serverCapabilities;
+
+    /// <summary>
+    /// Information about the connected server.
+    /// </summary>
+    public ServerInfo? ServerInfo => _serverInfo;
+
+    /// <summary>
+    /// The set of protocol revisions recognised by this client.
+    /// </summary>
+    public IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
 
     /// <summary>
     /// Initialize the MCP protocol connection.
@@ -74,16 +131,11 @@ public abstract class McpClient : IMcpClient, IDisposable
         transport.OnClose += () => _onClose?.Invoke();
 
         // Send initialize request with client info
-        var initializeParams = new
+        var initializeParams = new InitializeRequest
         {
-            protocolVersion = "2024-11-05",
-            capabilities = new
-            {
-                tools = new { },
-                resources = new { },
-                prompts = new { },
-            },
-            clientInfo = _clientInfo,
+            ProtocolVersion = LatestProtocolVersion,
+            Capabilities = _clientCapabilities,
+            ClientInfo = _clientInfo,
         };
 
         var response = await SendRequest("initialize", initializeParams);
@@ -93,7 +145,24 @@ public abstract class McpClient : IMcpClient, IDisposable
             var initializeResponse = DeserializeResponse<InitializeResponse>(response);
             if (initializeResponse != null)
             {
-                _serverCapabilities = initializeResponse.Capabilities;
+                if (
+                    string.IsNullOrWhiteSpace(initializeResponse.ProtocolVersion)
+                    || !s_supportedProtocolVersions.Contains(initializeResponse.ProtocolVersion)
+                )
+                {
+                    throw new InvalidOperationException(
+                        $"Server negotiated unsupported MCP protocol version \"{initializeResponse?.ProtocolVersion}\"."
+                    );
+                }
+
+                _serverCapabilities = initializeResponse.Capabilities ?? new ServerCapabilities();
+                _serverInfo = initializeResponse.ServerInfo ?? new ServerInfo();
+                _instructions = initializeResponse.Instructions;
+                _negotiatedProtocolVersion = initializeResponse.ProtocolVersion;
+                if (!string.IsNullOrWhiteSpace(_instructions))
+                {
+                    _logger?.LogDebug("Server instructions: {Instructions}", _instructions);
+                }
                 _logger?.LogInformation(
                     "Connected to server: {ServerName} {ServerVersion}",
                     initializeResponse.ServerInfo?.Name,
@@ -110,6 +179,11 @@ public abstract class McpClient : IMcpClient, IDisposable
         }
         catch (Exception ex)
         {
+            if (ex is InvalidOperationException)
+            {
+                throw;
+            }
+
             throw new Exception($"Failed to parse initialization response: {ex.Message}", ex);
         }
     }

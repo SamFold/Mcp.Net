@@ -18,12 +18,14 @@ public class StdioMcpClient : McpClient
     /// <param name="clientName">The name of the client.</param>
     /// <param name="clientVersion">The version of the client.</param>
     /// <param name="logger">Optional logger for client events.</param>
+    /// <param name="clientTitle">Optional display title reported during initialize.</param>
     public StdioMcpClient(
         string clientName = "StdioClient",
         string clientVersion = "1.0.0",
-        ILogger? logger = null
+        ILogger? logger = null,
+        string? clientTitle = null
     )
-        : base(clientName, clientVersion, logger)
+        : base(clientName, clientVersion, logger, clientTitle)
     {
         _transport = new StdioClientTransport(logger);
         InitializeTransport();
@@ -37,14 +39,16 @@ public class StdioMcpClient : McpClient
     /// <param name="clientName">The name of the client.</param>
     /// <param name="clientVersion">The version of the client.</param>
     /// <param name="logger">Optional logger for client events.</param>
+    /// <param name="clientTitle">Optional display title reported during initialize.</param>
     public StdioMcpClient(
         Stream inputStream,
         Stream outputStream,
         string clientName = "StdioClient",
         string clientVersion = "1.0.0",
-        ILogger? logger = null
+        ILogger? logger = null,
+        string? clientTitle = null
     )
-        : base(clientName, clientVersion, logger)
+        : base(clientName, clientVersion, logger, clientTitle)
     {
         _transport = new StdioClientTransport(inputStream, outputStream, logger);
         InitializeTransport();
@@ -57,13 +61,15 @@ public class StdioMcpClient : McpClient
     /// <param name="clientName">The name of the client.</param>
     /// <param name="clientVersion">The version of the client.</param>
     /// <param name="logger">Optional logger for client events.</param>
+    /// <param name="clientTitle">Optional display title reported during initialize.</param>
     public StdioMcpClient(
         string serverCommand,
         string clientName = "StdioClient",
         string clientVersion = "1.0.0",
-        ILogger? logger = null
+        ILogger? logger = null,
+        string? clientTitle = null
     )
-        : base(clientName, clientVersion, logger)
+        : base(clientName, clientVersion, logger, clientTitle)
     {
         _transport = new StdioClientTransport(serverCommand, logger);
         InitializeTransport();

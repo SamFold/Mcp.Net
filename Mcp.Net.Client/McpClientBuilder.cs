@@ -19,6 +19,7 @@ public class McpClientBuilder
     private HttpClient? _httpClient;
     private TransportType _transportType = TransportType.SSE;
     private string? _apiKey;
+    private string? _clientTitle;
 
     public McpClientBuilder() { }
 
@@ -46,6 +47,15 @@ public class McpClientBuilder
     public McpClientBuilder WithLogger(ILogger logger)
     {
         _logger = logger;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the client title displayed during initialization.
+    /// </summary>
+    public McpClientBuilder WithTitle(string title)
+    {
+        _clientTitle = title;
         return this;
     }
 
@@ -120,7 +130,8 @@ public class McpClientBuilder
                 _clientName,
                 _clientVersion,
                 _apiKey,
-                _logger
+                _logger,
+                clientTitle: _clientTitle
             ),
 
             TransportType.SSE when !string.IsNullOrEmpty(_serverUrl) => new SseMcpClient(
@@ -128,11 +139,18 @@ public class McpClientBuilder
                 _clientName,
                 _clientVersion,
                 _apiKey,
-                _logger
+                _logger,
+                clientTitle: _clientTitle
             ),
 
             TransportType.ServerCommand when !string.IsNullOrEmpty(_serverCommand) =>
-                new StdioMcpClient(_serverCommand!, _clientName, _clientVersion, _logger),
+                new StdioMcpClient(
+                    _serverCommand!,
+                    _clientName,
+                    _clientVersion,
+                    _logger,
+                    _clientTitle
+                ),
 
             TransportType.CustomIO when _inputStream != null && _outputStream != null =>
                 new StdioMcpClient(
@@ -140,10 +158,16 @@ public class McpClientBuilder
                     _outputStream,
                     _clientName,
                     _clientVersion,
-                    _logger
+                    _logger,
+                    _clientTitle
                 ),
 
-            TransportType.StandardIO => new StdioMcpClient(_clientName, _clientVersion, _logger),
+            TransportType.StandardIO => new StdioMcpClient(
+                _clientName,
+                _clientVersion,
+                _logger,
+                _clientTitle
+            ),
 
             _ => throw new InvalidOperationException("Transport not properly configured"),
         };
