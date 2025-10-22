@@ -1,3 +1,4 @@
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Client.Transport;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,7 @@ public class McpClientBuilder
     private TransportType _transportType = TransportType.SSE;
     private string? _apiKey;
     private string? _clientTitle;
+    private IOAuthTokenProvider? _tokenProvider;
 
     public McpClientBuilder() { }
 
@@ -56,6 +58,15 @@ public class McpClientBuilder
     public McpClientBuilder WithTitle(string title)
     {
         _clientTitle = title;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the client to use a custom OAuth token provider.
+    /// </summary>
+    public McpClientBuilder WithOAuthTokenProvider(IOAuthTokenProvider tokenProvider)
+    {
+        _tokenProvider = tokenProvider;
         return this;
     }
 
@@ -131,7 +142,8 @@ public class McpClientBuilder
                 _clientVersion,
                 _apiKey,
                 _logger,
-                clientTitle: _clientTitle
+                clientTitle: _clientTitle,
+                tokenProvider: _tokenProvider
             ),
 
             TransportType.SSE when !string.IsNullOrEmpty(_serverUrl) => new SseMcpClient(
@@ -140,7 +152,8 @@ public class McpClientBuilder
                 _clientVersion,
                 _apiKey,
                 _logger,
-                clientTitle: _clientTitle
+                clientTitle: _clientTitle,
+                tokenProvider: _tokenProvider
             ),
 
             TransportType.ServerCommand when !string.IsNullOrEmpty(_serverCommand) =>

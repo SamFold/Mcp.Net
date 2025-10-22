@@ -1,3 +1,4 @@
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Transport;
 using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging;
@@ -21,18 +22,20 @@ public class SseMcpClient : McpClient
     /// <param name="apiKey">Optional API key for authentication.</param>
     /// <param name="logger">Optional logger for client events.</param>
     /// <param name="clientTitle">Optional display title reported during initialize.</param>
+    /// <param name="tokenProvider">Optional OAuth token provider used to satisfy bearer challenges.</param>
     public SseMcpClient(
         string serverUrl,
         string clientName = "SseClient",
         string clientVersion = "1.0.0",
         string? apiKey = null,
         ILogger? logger = null,
-        string? clientTitle = null
+        string? clientTitle = null,
+        IOAuthTokenProvider? tokenProvider = null
     )
         : base(clientName, clientVersion, logger, clientTitle)
     {
         _apiKey = apiKey;
-        _transport = new SseClientTransport(serverUrl, logger, apiKey);
+        _transport = new SseClientTransport(serverUrl, logger, apiKey, tokenProvider);
         InitializeTransport();
     }
 
@@ -45,18 +48,20 @@ public class SseMcpClient : McpClient
     /// <param name="apiKey">Optional API key for authentication.</param>
     /// <param name="logger">Optional logger for client events.</param>
     /// <param name="clientTitle">Optional display title reported during initialize.</param>
+    /// <param name="tokenProvider">Optional OAuth token provider used to satisfy bearer challenges.</param>
     public SseMcpClient(
         HttpClient httpClient,
         string clientName = "SseClient",
         string clientVersion = "1.0.0",
         string? apiKey = null,
         ILogger? logger = null,
-        string? clientTitle = null
+        string? clientTitle = null,
+        IOAuthTokenProvider? tokenProvider = null
     )
         : base(clientName, clientVersion, logger, clientTitle)
     {
         _apiKey = apiKey;
-        _transport = new SseClientTransport(httpClient, logger, apiKey);
+        _transport = new SseClientTransport(httpClient, logger, apiKey, tokenProvider);
         InitializeTransport();
     }
 

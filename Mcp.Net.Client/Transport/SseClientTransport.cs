@@ -1,9 +1,11 @@
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging;
@@ -22,6 +24,7 @@ public class SseClientTransport : ClientTransportBase
     private readonly bool _ownsHttpClient;
     private readonly Uri _endpointUri;
     private readonly string? _apiKey;
+    private readonly OAuthTokenManager _tokenManager;
 
     private Task? _sseListenTask;
     private HttpResponseMessage? _sseResponse;
@@ -35,12 +38,19 @@ public class SseClientTransport : ClientTransportBase
     /// <param name="baseUrl">The base URL or MCP endpoint URL of the server.</param>
     /// <param name="logger">Optional logger.</param>
     /// <param name="apiKey">Optional API key for authentication.</param>
-    public SseClientTransport(string baseUrl, ILogger? logger = null, string? apiKey = null)
+    /// <param name="tokenProvider">Optional OAuth token provider used to acquire bearer tokens.</param>
+    public SseClientTransport(
+        string baseUrl,
+        ILogger? logger = null,
+        string? apiKey = null,
+        IOAuthTokenProvider? tokenProvider = null
+    )
         : this(
             CreateHttpClient(baseUrl, out var endpointUri),
             logger,
             apiKey,
             endpointUri,
+            tokenProvider,
             ownsClient: true
         ) { }
 
@@ -50,12 +60,19 @@ public class SseClientTransport : ClientTransportBase
     /// <param name="httpClient">The HTTP client to use for communication.</param>
     /// <param name="logger">Optional logger.</param>
     /// <param name="apiKey">Optional API key for authentication.</param>
-    public SseClientTransport(HttpClient httpClient, ILogger? logger = null, string? apiKey = null)
+    /// <param name="tokenProvider">Optional OAuth token provider used to acquire bearer tokens.</param>
+    public SseClientTransport(
+        HttpClient httpClient,
+        ILogger? logger = null,
+        string? apiKey = null,
+        IOAuthTokenProvider? tokenProvider = null
+    )
         : this(
             httpClient ?? throw new ArgumentNullException(nameof(httpClient)),
             logger,
             apiKey,
             ResolveEndpointUri(httpClient.BaseAddress),
+            tokenProvider,
             ownsClient: false
         ) { }
 
@@ -64,6 +81,7 @@ public class SseClientTransport : ClientTransportBase
         ILogger? logger,
         string? apiKey,
         Uri endpointUri,
+        IOAuthTokenProvider? tokenProvider,
         bool ownsClient
     )
         : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
@@ -72,6 +90,7 @@ public class SseClientTransport : ClientTransportBase
         _endpointUri = endpointUri;
         _ownsHttpClient = ownsClient;
         _apiKey = apiKey;
+        _tokenManager = new OAuthTokenManager(tokenProvider, logger);
 
         if (
             !string.IsNullOrEmpty(_apiKey)
@@ -97,14 +116,7 @@ public class SseClientTransport : ClientTransportBase
 
         Logger.LogDebug("Opening SSE stream at {Endpoint}", _endpointUri);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, _endpointUri);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-
-        var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            CancellationTokenSource.Token
-        );
+        var response = await OpenSseStreamAsync();
 
         if (!response.IsSuccessStatusCode)
         {
@@ -183,32 +195,33 @@ public class SseClientTransport : ClientTransportBase
     private async Task SendJsonRpcPayloadAsync(object payload)
     {
         var payloadJson = SerializeMessage(payload);
-        using var content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, _endpointUri)
-        {
-            Content = content,
-        };
+        var response = await SendWithAuthenticationAsync(
+            () =>
+            {
+                var content = new StringContent(payloadJson, Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(HttpMethod.Post, _endpointUri)
+                {
+                    Content = content,
+                };
 
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-        if (!string.IsNullOrWhiteSpace(_sessionId))
-        {
-            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId);
-        }
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+                if (!string.IsNullOrWhiteSpace(_sessionId))
+                {
+                    request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId);
+                }
 
-        if (!string.IsNullOrWhiteSpace(_negotiatedProtocolVersion))
-        {
-            request.Headers.TryAddWithoutValidation(
-                "MCP-Protocol-Version",
-                _negotiatedProtocolVersion
-            );
-        }
+                if (!string.IsNullOrWhiteSpace(_negotiatedProtocolVersion))
+                {
+                    request.Headers.TryAddWithoutValidation(
+                        "MCP-Protocol-Version",
+                        _negotiatedProtocolVersion
+                    );
+                }
 
-        var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            CancellationTokenSource.Token
+                return request;
+            }
         );
 
         await HandleHttpResponseAsync(response);
@@ -244,6 +257,109 @@ public class SseClientTransport : ClientTransportBase
         {
             response.Dispose();
         }
+    }
+
+    private async Task<HttpResponseMessage> OpenSseStreamAsync()
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, _endpointUri);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+            await AttachAuthorizationAsync(request);
+
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                CancellationTokenSource.Token
+            );
+
+            if (
+                response.StatusCode == HttpStatusCode.Unauthorized
+                && await TryHandleUnauthorizedAsync(response)
+                && attempt < maxAttempts - 1
+            )
+            {
+                response.Dispose();
+                continue;
+            }
+
+            return response;
+        }
+
+        throw new HttpRequestException(
+            "Unable to satisfy authorization challenge for SSE stream."
+        );
+    }
+
+    private async Task<HttpResponseMessage> SendWithAuthenticationAsync(
+        Func<HttpRequestMessage> requestFactory
+    )
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            using var request = requestFactory();
+            await AttachAuthorizationAsync(request);
+
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                CancellationTokenSource.Token
+            );
+
+            if (
+                response.StatusCode == HttpStatusCode.Unauthorized
+                && await TryHandleUnauthorizedAsync(response)
+                && attempt < maxAttempts - 1
+            )
+            {
+                response.Dispose();
+                continue;
+            }
+
+            return response;
+        }
+
+        throw new HttpRequestException("Unable to satisfy authorization challenge for request.");
+    }
+
+    private async Task AttachAuthorizationAsync(HttpRequestMessage request)
+    {
+        var token = await _tokenManager.GetAccessTokenAsync(
+            _endpointUri,
+            CancellationTokenSource.Token
+        );
+
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+    }
+
+    private async Task<bool> TryHandleUnauthorizedAsync(HttpResponseMessage response)
+    {
+        if (response.StatusCode != HttpStatusCode.Unauthorized)
+        {
+            return false;
+        }
+
+        var challenge = OAuthChallengeParser.Parse(
+            response.Headers.WwwAuthenticate.Select(v => v.ToString())
+        );
+        if (challenge == null)
+        {
+            Logger.LogWarning("Received 401 without parsable WWW-Authenticate challenge.");
+            return false;
+        }
+
+        return await _tokenManager.HandleUnauthorizedAsync(
+            _endpointUri,
+            challenge,
+            CancellationTokenSource.Token
+        );
     }
 
     private async Task ListenToServerEventsAsync()

@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.IO.Pipelines;
 using FluentAssertions;
 using Mcp.Net.Client;
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Transport;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -128,6 +129,118 @@ public class SseClientTransportTests
         await transport.CloseAsync();
     }
 
+    [Fact]
+    public async Task StartAsync_ShouldRetryWithOAuthTokenOnUnauthorized()
+    {
+        var sseStream = new TestSseStream();
+        var handler = new TestMessageHandler();
+
+        handler.EnqueueResponse(request =>
+        {
+            request.Headers.Authorization.Should().BeNull();
+            var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            response.Headers.WwwAuthenticate.ParseAdd(
+                "Bearer resource_metadata=\"https://auth.example.com/.well-known/oauth-protected-resource\""
+            );
+            response.Content = new StringContent(string.Empty);
+            return response;
+        });
+
+        handler.EnqueueResponse(request =>
+        {
+            request.Headers.Authorization.Should().NotBeNull();
+            request.Headers.Authorization!.Parameter.Should().Be("token-123");
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-789");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        var tokenProvider = new TestTokenProvider("token-123");
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, tokenProvider);
+
+        await transport.StartAsync();
+        tokenProvider.AcquireCount.Should().Be(1);
+
+        await sseStream.CompleteAsync();
+        await transport.CloseAsync();
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldRetryWithOAuthTokenOnUnauthorized()
+    {
+        var sseStream = new TestSseStream();
+        var handler = new TestMessageHandler();
+        string? initializeRequestId = null;
+
+        handler.EnqueueResponse(request =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-abc");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        handler.EnqueueResponse(request =>
+        {
+            request.Headers.Authorization.Should().BeNull();
+            var body = request.Content!.ReadAsStringAsync().Result;
+            using var doc = JsonDocument.Parse(body);
+            initializeRequestId = doc.RootElement.GetProperty("id").GetString();
+            var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            response.Headers.WwwAuthenticate.ParseAdd(
+                "Bearer resource_metadata=\"https://auth.example.com/.well-known/oauth-protected-resource\""
+            );
+            response.Content = new StringContent(string.Empty);
+            return response;
+        });
+
+        handler.EnqueueResponse(request =>
+        {
+            request.Headers.Authorization.Should().NotBeNull();
+            request.Headers.Authorization!.Scheme.Should().Be("Bearer");
+            request.Headers.Authorization.Parameter.Should().Be("token-post");
+            var response = new HttpResponseMessage(HttpStatusCode.Accepted);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-abc");
+            response.Headers.TryAddWithoutValidation("MCP-Protocol-Version", McpClient.LatestProtocolVersion);
+            response.Content = new StringContent(string.Empty);
+            return response;
+        });
+
+        var tokenProvider = new TestTokenProvider("token-post");
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, tokenProvider);
+
+        await transport.StartAsync();
+
+        var initializeTask = transport.SendRequestAsync("initialize", new { });
+
+        tokenProvider.AcquireCount.Should().Be(1);
+        initializeRequestId.Should().NotBeNull();
+
+        var initializeResponse = new
+        {
+            jsonrpc = "2.0",
+            id = initializeRequestId,
+            result = new
+            {
+                protocolVersion = McpClient.LatestProtocolVersion,
+                capabilities = new { },
+                serverInfo = new { name = "server", version = "1.0.0" },
+            },
+        };
+
+        await sseStream.WriteEventAsync(
+            $"data: {JsonSerializer.Serialize(initializeResponse)}\n\n"
+        );
+
+        await initializeTask;
+
+        await sseStream.CompleteAsync();
+        await transport.CloseAsync();
+    }
+
     private sealed class TestMessageHandler : HttpMessageHandler
     {
         private readonly ConcurrentQueue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
@@ -239,5 +352,34 @@ public class SseClientTransportTests
 
         public override void Write(byte[] buffer, int offset, int count) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class TestTokenProvider : IOAuthTokenProvider
+    {
+        private readonly string _token;
+
+        public TestTokenProvider(string token)
+        {
+            _token = token;
+        }
+
+        public int AcquireCount { get; private set; }
+
+        public Task<OAuthTokenResponse?> AcquireTokenAsync(
+            OAuthTokenRequestContext context,
+            CancellationToken cancellationToken
+        )
+        {
+            AcquireCount++;
+            return Task.FromResult<OAuthTokenResponse?>(
+                new OAuthTokenResponse(_token, DateTimeOffset.UtcNow.AddMinutes(30))
+            );
+        }
+
+        public Task<OAuthTokenResponse?> RefreshTokenAsync(
+            OAuthTokenRequestContext context,
+            OAuthTokenResponse currentToken,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<OAuthTokenResponse?>(null);
     }
 }
