@@ -58,6 +58,7 @@ public class StdioTransport : ServerMessageTransportBase
     }
 
     /// <inheritdoc />
+    /// <remarks>Stdio initialisation simply kicks off the background read loop; the transport is fully duplex once this returns.</remarks>
     public override Task StartAsync()
     {
         if (IsStarted)
@@ -73,6 +74,9 @@ public class StdioTransport : ServerMessageTransportBase
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Continuously reads newline-delimited JSON-RPC messages from the input pipe.
+    /// </summary>
     private async Task ProcessMessagesAsync()
     {
         try
@@ -146,6 +150,9 @@ public class StdioTransport : ServerMessageTransportBase
         }
     }
 
+    /// <summary>
+    /// Attempts to slice the buffer up to the next newline character.
+    /// </summary>
     private static bool TryReadLine(
         ref ReadOnlySequence<byte> buffer,
         out ReadOnlySequence<byte> line
@@ -194,7 +201,7 @@ public class StdioTransport : ServerMessageTransportBase
     }
 
     /// <summary>
-    /// Writes raw data to the output pipe
+    /// Writes raw data to the output pipe.
     /// </summary>
     protected override async Task WriteRawAsync(byte[] data)
     {

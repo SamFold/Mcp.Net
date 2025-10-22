@@ -27,6 +27,11 @@ internal sealed class ToolInvocationFactory
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    /// <summary>
+    /// Produces a delegate capable of executing the tool described by <paramref name="descriptor"/>.
+    /// </summary>
+    /// <param name="descriptor">Descriptor that contains the tool metadata and invocation information.</param>
+    /// <returns>Delegate that accepts optional JSON arguments and yields a <see cref="ToolCallResult"/>.</returns>
     public Func<JsonElement?, Task<ToolCallResult>> CreateHandler(ToolDescriptor descriptor)
     {
         return async arguments =>

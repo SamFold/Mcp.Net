@@ -7,7 +7,7 @@ using Mcp.Net.Server.Logging;
 namespace Mcp.Net.Server.Transport.Sse;
 
 /// <summary>
-/// Transport implementation for Server-Sent Events (SSE)
+/// Implements the MCP server transport over Server-Sent Events (SSE), including connection metadata and per-session metrics.
 /// </summary>
 public class SseTransport : ServerTransportBase
 {
@@ -25,17 +25,17 @@ public class SseTransport : ServerTransportBase
     private int _bytesSent;
 
     /// <summary>
-    /// Gets the unique identifier for this transport session
+    /// Gets the unique identifier for this transport session.
     /// </summary>
     public string SessionId => ResponseWriter.Id;
 
     /// <summary>
-    /// Gets a value indicating whether this transport has been started
+    /// Gets a value indicating whether this transport has been started.
     /// </summary>
     public new bool IsStarted => _isStarted;
 
     /// <summary>
-    /// Gets or sets the metadata dictionary for this transport
+    /// Gets the per-connection metadata captured during authentication or handshake.
     /// </summary>
     public Dictionary<string, string> Metadata { get; } = new();
 
@@ -98,6 +98,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <inheritdoc />
+    /// <remarks>Negotiates the SSE connection and emits an endpoint event that clients can use for subsequent POSTs.</remarks>
     public override async Task StartAsync()
     {
         if (_isStarted)
@@ -131,6 +132,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <inheritdoc />
+    /// <remarks>Serialises the response into SSE frames and tracks throughput in the transport metrics.</remarks>
     public override async Task SendAsync(JsonRpcResponseMessage responseMessage)
     {
         if (IsClosed)
@@ -194,7 +196,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Sends data as an SSE data-only event
+    /// Sends data as an SSE data-only event.
     /// </summary>
     /// <param name="data">The data to send</param>
     private async Task SendDataAsync(string data)
@@ -205,7 +207,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Sends data as a named SSE event
+    /// Sends data as a named SSE event.
     /// </summary>
     /// <param name="eventName">The event name</param>
     /// <param name="data">The event data</param>
@@ -217,7 +219,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Handles an HTTP-based JSON-RPC request message
+    /// Handles an HTTP-based JSON-RPC request message.
     /// </summary>
     /// <param name="requestMessage">The JSON-RPC request message</param>
     public void HandleRequest(JsonRpcRequestMessage requestMessage)
@@ -268,7 +270,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Handles an HTTP-based JSON-RPC notification message
+    /// Handles an HTTP-based JSON-RPC notification message.
     /// </summary>
     /// <param name="notificationMessage">The JSON-RPC notification message</param>
     public void HandleNotification(JsonRpcNotificationMessage notificationMessage)
@@ -313,7 +315,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Log transport metrics periodically
+    /// Emits the latest connection metrics through the logging extensions.
     /// </summary>
     private void LogMetrics()
     {

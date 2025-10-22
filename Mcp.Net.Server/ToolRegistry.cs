@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Mcp.Net.Server;
 
 /// <summary>
-/// Registry for MCP tools that handles discovery and registration.
+/// Central registry responsible for discovering tool implementations and wiring them into an <see cref="McpServer"/>.
 /// </summary>
 public class ToolRegistry
 {
@@ -78,8 +78,9 @@ public class ToolRegistry
     }
 
     /// <summary>
-    /// Scans all registered assemblies for tools and registers them with the provided server.
+    /// Discovers tools from the configured assemblies and registers them with the supplied server instance.
     /// </summary>
+    /// <param name="server">The target server that should expose the discovered tools.</param>
     public void RegisterToolsWithServer(McpServer server)
     {
         if (server == null)
@@ -107,6 +108,9 @@ public class ToolRegistry
         }
     }
 
+    /// <summary>
+    /// Discovers tools from the assemblies tracked by this registry.
+    /// </summary>
     private void DiscoverTools()
     {
         if (_assemblies.Count == 0)

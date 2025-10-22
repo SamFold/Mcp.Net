@@ -18,6 +18,11 @@ internal sealed class ToolDiscoveryService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    /// <summary>
+    /// Scans the provided assemblies and returns descriptors for each discovered MCP tool.
+    /// </summary>
+    /// <param name="assemblies">Assemblies that should be inspected for <see cref="McpToolAttribute"/> decorations.</param>
+    /// <returns>Immutable collection of tool descriptors.</returns>
     public IReadOnlyCollection<ToolDescriptor> DiscoverTools(IEnumerable<Assembly> assemblies)
     {
         if (assemblies == null)
