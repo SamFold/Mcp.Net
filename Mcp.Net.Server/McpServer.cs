@@ -72,7 +72,7 @@ public class McpServer : IMcpServer
         await transport.StartAsync();
     }
 
-    private void HandleRequest(JsonRpcRequestMessage request)
+    private async void HandleRequest(JsonRpcRequestMessage request)
     {
         using (_logger.BeginRequestScope(request.Id, request.Method))
         {
@@ -81,7 +81,19 @@ public class McpServer : IMcpServer
                 request.Id,
                 request.Method
             );
-            _ = ProcessRequestAsync(request);
+            try
+            {
+                await ProcessRequestAsync(request).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Unhandled exception processing request: ID={RequestId}, Method={Method}",
+                    request.Id,
+                    request.Method
+                );
+            }
         }
     }
 
