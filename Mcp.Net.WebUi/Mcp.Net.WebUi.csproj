@@ -6,7 +6,7 @@
     <ProjectReference Include="..\Mcp.Net.LLM\Mcp.Net.LLM.csproj" />
   </ItemGroup>
   <PropertyGroup>
-      <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

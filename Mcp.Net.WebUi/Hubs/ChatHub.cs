@@ -74,6 +74,15 @@ public class ChatHub : Hub
             // Get or create adapter for this session
             var adapter = await GetOrCreateAdapterAsync(sessionId);
 
+            // Log the current system prompt to debug the issue
+            if (adapter?.GetLlmClient() is var client && client != null)
+            {
+                _logger.LogDebug(
+                    "Current system prompt when sending message: {SystemPrompt}",
+                    client.GetSystemPrompt()
+                );
+            }
+
             // Mark the adapter as active
             _adapterManager.MarkAdapterAsActive(sessionId);
 
@@ -107,7 +116,8 @@ public class ChatHub : Hub
                         await _chatRepository.UpdateChatMetadataAsync(metadata);
 
                         // Notify clients of the title change
-                        await adapter.NotifyMetadataUpdated(metadata);
+                        if (adapter != null)
+                            await adapter.NotifyMetadataUpdated(metadata);
 
                         _logger.LogInformation(
                             "Generated title '{Title}' for session {SessionId}",
@@ -128,7 +138,8 @@ public class ChatHub : Hub
             }
 
             // Process the message
-            adapter.ProcessUserInput(message);
+            if (adapter != null)
+                adapter.ProcessUserInput(message);
         }
         catch (Exception ex)
         {
@@ -210,7 +221,10 @@ public class ChatHub : Hub
             {
                 if (adapter.GetLlmClient() is var client && client != null)
                 {
-                    _logger.LogInformation("Updating system prompt in existing adapter for session {SessionId}", sessionId);
+                    _logger.LogInformation(
+                        "Updating system prompt in existing adapter for session {SessionId}",
+                        sessionId
+                    );
                     client.SetSystemPrompt(systemPrompt);
                     // Mark as active since we just used it
                     _adapterManager.MarkAdapterAsActive(sessionId);
@@ -218,7 +232,10 @@ public class ChatHub : Hub
             }
             else
             {
-                _logger.LogDebug("No active adapter found for session {SessionId}, system prompt will be applied when adapter is created", sessionId);
+                _logger.LogDebug(
+                    "No active adapter found for session {SessionId}, system prompt will be applied when adapter is created",
+                    sessionId
+                );
             }
 
             // Notify clients

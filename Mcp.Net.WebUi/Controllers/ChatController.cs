@@ -405,23 +405,43 @@ public class ChatController : ControllerBase
             await _chatRepository.SetSystemPromptAsync(sessionId, systemPromptDto.Prompt);
 
             // Try to get existing adapter from the shared manager
-            if (_adapterManager.GetActiveSessions().Contains(sessionId))
+            // We need to use GetOrCreateAdapterAsync with the proper creation function
+            // to ensure we can actually retrieve the adapter if it exists
+            try
             {
-                var adapter = await _adapterManager.GetOrCreateAdapterAsync(
-                    sessionId,
-                    (sid) => Task.FromResult<ISignalRChatAdapter>(null!)
-                );
+                var adapter = await GetOrCreateAdapterAsync(sessionId);
 
                 if (adapter?.GetLlmClient() is var client && client != null)
                 {
-                    _logger.LogInformation("Updating system prompt in existing adapter for session {SessionId}", sessionId);
+                    _logger.LogInformation(
+                        "Updating system prompt in existing adapter for session {SessionId}",
+                        sessionId
+                    );
+                    _logger.LogDebug(
+                        "Previous system prompt: {PreviousPrompt}",
+                        client.GetSystemPrompt()
+                    );
                     client.SetSystemPrompt(systemPromptDto.Prompt);
+                    _logger.LogDebug("New system prompt: {NewPrompt}", client.GetSystemPrompt());
                     _adapterManager.MarkAdapterAsActive(sessionId);
                 }
             }
-            else
+            catch (KeyNotFoundException)
             {
-                _logger.LogDebug("No active adapter found for session {SessionId}, system prompt will be applied when adapter is created", sessionId);
+                // Session doesn't exist, which shouldn't happen since we just saved the system prompt
+                _logger.LogWarning(
+                    "Session {SessionId} not found when trying to update adapter",
+                    sessionId
+                );
+            }
+            catch (Exception ex)
+            {
+                // Log but don't fail - the system prompt is saved and will be used when adapter is created
+                _logger.LogDebug(
+                    ex,
+                    "Could not update adapter for session {SessionId}, system prompt will be applied when adapter is created",
+                    sessionId
+                );
             }
 
             _logger.LogInformation("Set system prompt for session {SessionId} via API", sessionId);
