@@ -210,6 +210,88 @@ namespace Mcp.Net.Examples.SimpleServer
             "Purged a corrupted Space Marine chapter",
         };
 
+        private static readonly string[] _retinueRaces =
+        {
+            "Human",
+            "Abhuman - Ogryn",
+            "Abhuman - Ratling",
+            "Abhuman - Squat",
+            "Voidborn",
+            "Feral Worlder",
+            "Hive Worlder",
+            "Forge Worlder",
+            "Death Worlder",
+            "Navigator",
+            "Sanctioned Psyker",
+            "Tech-Priest",
+            "Ministorum Priest",
+            "Sister of Battle",
+            "Storm Trooper",
+            "Arbites",
+            "Assassin",
+            "Savant",
+            "Chirurgeon",
+            "Servo-Skull (Sentient)",
+        };
+
+        private static readonly string[] _femaleRetinueNames =
+        {
+            "Anastasia",
+            "Seraphina",
+            "Valeria",
+            "Octavia",
+            "Lydia",
+            "Celestine",
+            "Aurelia",
+            "Maximilia",
+            "Cordelia",
+            "Evangeline",
+            "Isadora",
+            "Rosalind",
+            "Beatrix",
+            "Minerva",
+            "Portia",
+            "Lavinia",
+            "Cassandra",
+            "Agatha",
+            "Desdemona",
+            "Ophelia",
+            "Hermione",
+            "Julianna",
+            "Persephone",
+            "Theodora",
+            "Zenobia",
+        };
+
+        private static readonly string[] _maleRetinueNames =
+        {
+            "Marcus",
+            "Gaius",
+            "Lucius",
+            "Viktor",
+            "Alexei",
+            "Dmitri",
+            "Sebastian",
+            "Konrad",
+            "Wilhelm",
+            "Friedrich",
+            "Magnus",
+            "Ragnar",
+            "Bjorn",
+            "Erik",
+            "Gunther",
+            "Hadrian",
+            "Maximus",
+            "Augustus",
+            "Quintus",
+            "Tiberius",
+            "Leopold",
+            "Wolfgang",
+            "Sigmund",
+            "Otto",
+            "Heinrich",
+        };
+
         /// <summary>
         /// Generates a name and title for a Warhammer 40k Inquisitor character.
         /// </summary>
@@ -271,6 +353,68 @@ namespace Mcp.Net.Examples.SimpleServer
                 YearsOfService = yearsOfService,
                 SignatureWeapon = weapon,
                 NotableAchievement = achievement,
+            };
+        }
+
+        /// <summary>
+        /// Generates a random retinue member for a Warhammer 40k Inquisitor.
+        /// </summary>
+        /// <returns>Information about the generated retinue member.</returns>
+        [McpTool("wh40k_retinue_member", "Generate a random retinue member for an Inquisitor")]
+        public static RetinueMemberInfo GenerateRetinueMember()
+        {
+            // Determine gender (50/50 chance)
+            bool isFemale = _random.Next(2) == 0;
+            string gender = isFemale ? "Female" : "Male";
+
+            // Select name based on gender
+            string[] namePool = isFemale ? _femaleRetinueNames : _maleRetinueNames;
+            string name = namePool[_random.Next(namePool.Length)];
+
+            // Add a surname
+            string surname = _lastNames[_random.Next(_lastNames.Length)];
+            string fullName = $"{name} {surname}";
+
+            // Select race
+            string race = _retinueRaces[_random.Next(_retinueRaces.Length)];
+
+            // Generate age based on race
+            int minAge,
+                maxAge;
+            switch (race)
+            {
+                case "Abhuman - Ogryn":
+                    minAge = 20;
+                    maxAge = 50; // Shorter lifespan
+                    break;
+                case "Navigator":
+                case "Tech-Priest":
+                    minAge = 30;
+                    maxAge = 300; // Extended by augmetics/warp exposure
+                    break;
+                case "Servo-Skull (Sentient)":
+                    minAge = 1;
+                    maxAge = 100; // Age since reanimation
+                    break;
+                case "Sister of Battle":
+                case "Storm Trooper":
+                case "Arbites":
+                    minAge = 25;
+                    maxAge = 60;
+                    break;
+                default:
+                    minAge = 20;
+                    maxAge = 120; // Rejuvenat treatments
+                    break;
+            }
+            int age = _random.Next(minAge, maxAge + 1);
+
+            return new RetinueMemberInfo
+            {
+                Name = fullName,
+                Gender = gender,
+                Race = race,
+                Age = age,
             };
         }
 
@@ -400,5 +544,16 @@ namespace Mcp.Net.Examples.SimpleServer
         public string Battlefield { get; set; } = string.Empty;
         public bool IsImperialVictory { get; set; }
         public string BattleReport { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Information about a generated retinue member.
+    /// </summary>
+    public class RetinueMemberInfo
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Gender { get; set; } = string.Empty;
+        public string Race { get; set; } = string.Empty;
+        public int Age { get; set; }
     }
 }
