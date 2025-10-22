@@ -8,12 +8,13 @@ namespace Mcp.Net.LLM.Agents;
 /// <summary>
 /// Service for managing system default agents and agent selection
 /// </summary>
-public class DefaultAgentManager
+public class DefaultAgentManager : IDisposable
 {
     private readonly IAgentRegistry _agentRegistry;
     private readonly IAgentFactory _agentFactory;
     private readonly IToolRegistry _toolsRegistry;
     private readonly ILogger<DefaultAgentManager> _logger;
+    private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
 
     public DefaultAgentManager(
         IAgentRegistry agentRegistry,
@@ -255,42 +256,50 @@ public class DefaultAgentManager
     /// </summary>
     public async Task<AgentDefinition> EnsureGlobalDefaultAgentAsync()
     {
-        // IMPORTANT: Don't call GetSystemDefaultAgentAsync here to avoid recursion
-        var agents = await _agentRegistry.GetAllAgentsAsync();
-        var existingAgent = agents.FirstOrDefault(a => a.IsSystemDefault && a.IsGlobalDefault);
-        if (existingAgent != null)
+        await _semaphore.WaitAsync();
+        try
         {
-            return existingAgent;
+            // IMPORTANT: Don't call GetSystemDefaultAgentAsync here to avoid recursion
+            var agents = await _agentRegistry.GetAllAgentsAsync();
+            var existingAgent = agents.FirstOrDefault(a => a.IsSystemDefault && a.IsGlobalDefault);
+            if (existingAgent != null)
+            {
+                return existingAgent;
+            }
+
+            // Use OpenAI GPT-4 as the default global model
+            var agent = await _agentFactory.CreateAgentAsync(
+                LlmProvider.OpenAI,
+                "gpt-4o",
+                "System" // createdByUserId
+            );
+
+            // Set default properties
+            agent.Name = "Default System Agent";
+            agent.Description = "Global system default agent";
+            agent.Category = AgentCategory.General;
+            agent.IsSystemDefault = true;
+            agent.IsGlobalDefault = true;
+            agent.ModifiedBy = "System";
+
+            // Set a generic default system prompt
+            agent.SystemPrompt =
+                "You are a helpful, harmless, and honest assistant. "
+                + "Answer questions accurately and concisely.";
+
+            // Add basic default tools
+            await AddDefaultToolsAsync(agent);
+
+            // Register the agent
+            await _agentRegistry.RegisterAgentAsync(agent, "System");
+            _logger.LogInformation("Created global default agent: {AgentId}", agent.Id);
+
+            return agent;
         }
-
-        // Use OpenAI GPT-4 as the default global model
-        var agent = await _agentFactory.CreateAgentAsync(
-            LlmProvider.OpenAI,
-            "gpt-4o",
-            "System" // createdByUserId
-        );
-
-        // Set default properties
-        agent.Name = "Default System Agent";
-        agent.Description = "Global system default agent";
-        agent.Category = AgentCategory.General;
-        agent.IsSystemDefault = true;
-        agent.IsGlobalDefault = true;
-        agent.ModifiedBy = "System";
-
-        // Set a generic default system prompt
-        agent.SystemPrompt =
-            "You are a helpful, harmless, and honest assistant. "
-            + "Answer questions accurately and concisely.";
-
-        // Add basic default tools
-        await AddDefaultToolsAsync(agent);
-
-        // Register the agent
-        await _agentRegistry.RegisterAgentAsync(agent, "System");
-        _logger.LogInformation("Created global default agent: {AgentId}", agent.Id);
-
-        return agent;
+        finally
+        {
+            _semaphore.Release();
+        }
     }
 
     /// <summary>
@@ -337,5 +346,13 @@ public class DefaultAgentManager
             var searchTools = await _agentFactory.GetToolsByCategoryAsync("search");
             agent.ToolIds.AddRange(searchTools.Take(1));
         }
+    }
+
+    /// <summary>
+    /// Dispose of resources
+    /// </summary>
+    public void Dispose()
+    {
+        _semaphore?.Dispose();
     }
 }
