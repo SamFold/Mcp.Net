@@ -327,6 +327,9 @@ public class ToolRegistry
         }
     }
 
+    private static string ResolveParameterBindingKey(ParameterInfo parameter) =>
+        parameter.Name ?? string.Empty;
+
     /// <summary>
     /// Registers a discovered tool with the server.
     /// </summary>
@@ -355,12 +358,13 @@ public class ToolRegistry
                     for (int i = 0; i < methodParams.Length; i++)
                     {
                         var param = methodParams[i];
-                        var paramName = param.Name?.ToLowerInvariant() ?? "";
+                        var bindingKey = ResolveParameterBindingKey(param);
+                        var displayName = param.Name ?? bindingKey;
 
                         if (
                             arguments.HasValue
-                            && !string.IsNullOrEmpty(paramName)
-                            && arguments.Value.TryGetProperty(paramName, out var paramValue)
+                            && !string.IsNullOrEmpty(bindingKey)
+                            && arguments.Value.TryGetProperty(bindingKey, out var paramValue)
                         )
                         {
                             try
@@ -374,7 +378,7 @@ public class ToolRegistry
                             {
                                 throw new McpException(
                                     ErrorCode.InvalidParams,
-                                    $"Invalid value for parameter '{paramName}': {ex.Message}"
+                                    $"Invalid value for parameter '{displayName}': {ex.Message}"
                                 );
                             }
                         }
@@ -388,7 +392,7 @@ public class ToolRegistry
                         {
                             throw new McpException(
                                 ErrorCode.InvalidParams,
-                                $"Required parameter '{paramName}' was not provided"
+                                $"Required parameter '{displayName}' was not provided"
                             );
                         }
                         else
