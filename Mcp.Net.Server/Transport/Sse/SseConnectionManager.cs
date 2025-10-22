@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
@@ -14,21 +16,28 @@ namespace Mcp.Net.Server.Transport.Sse;
 /// </summary>
 public class SseConnectionManager
 {
+    /// <summary>
+    /// Shared serializer options that allow case-insensitive property matching.
+    /// </summary>
+    private static readonly JsonSerializerOptions s_jsonSerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     private readonly ConcurrentDictionary<string, SseTransport> _connections = new();
     private readonly ILogger<SseConnectionManager> _logger;
-    private readonly Timer _cleanupTimer;
     private readonly TimeSpan _connectionTimeout;
     private readonly ILoggerFactory _loggerFactory;
     private readonly McpServer _server;
     private readonly IAuthHandler? _authHandler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="SseConnectionManager"/> class
+    /// Initializes a new instance of the <see cref="SseConnectionManager"/> class.
     /// </summary>
-    /// <param name="server">The MCP server instance</param>
-    /// <param name="loggerFactory">Logger factory for creating loggers</param>
-    /// <param name="connectionTimeout">Optional timeout for stale connections</param>
-    /// <param name="authHandler">Optional authentication handler</param>
+    /// <param name="server">The MCP server instance that will execute JSON-RPC requests.</param>
+    /// <param name="loggerFactory">Factory used to create scoped loggers for transports.</param>
+    /// <param name="connectionTimeout">Optional idle timeout window for transports.</param>
+    /// <param name="authHandler">Optional authentication handler applied to HTTP requests.</param>
     public SseConnectionManager(
         McpServer server,
         ILoggerFactory loggerFactory,
@@ -42,19 +51,13 @@ public class SseConnectionManager
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromMinutes(30);
         _authHandler = authHandler;
 
-        _cleanupTimer = new Timer(
-            CleanupStaleConnections,
-            null,
-            TimeSpan.FromMinutes(5),
-            TimeSpan.FromMinutes(5)
-        );
     }
 
     /// <summary>
-    /// Gets a transport by session ID
+    /// Retrieves a transport by its session identifier.
     /// </summary>
-    /// <param name="sessionId">The session ID</param>
-    /// <returns>The transport, or null if not found</returns>
+    /// <param name="sessionId">The session identifier associated with the SSE connection.</param>
+    /// <returns>The registered transport, or <c>null</c> when no transport exists for the session.</returns>
     public SseTransport? GetTransport(string sessionId)
     {
         if (_connections.TryGetValue(sessionId, out var transport))
@@ -67,27 +70,25 @@ public class SseConnectionManager
     }
 
     /// <summary>
-    /// Gets all connected transports
+    /// Returns a snapshot of the currently connected transports.
     /// </summary>
-    /// <returns>Collection of all active transports</returns>
     public IReadOnlyCollection<SseTransport> GetAllTransports()
     {
         return _connections.Values.ToArray();
     }
 
     /// <summary>
-    /// Gets the number of active connections
+    /// Gets the count of active transports currently registered with the manager.
     /// </summary>
-    /// <returns>Number of active connections</returns>
     public int GetConnectionCount()
     {
         return _connections.Count;
     }
 
     /// <summary>
-    /// Registers a transport with the connection manager
+    /// Registers an SSE transport and wires up lifecycle callbacks so it can be tracked and removed automatically.
     /// </summary>
-    /// <param name="transport">The transport to register</param>
+    /// <param name="transport">The transport to register.</param>
     public void RegisterTransport(SseTransport transport)
     {
         _connections[transport.SessionId] = transport;
@@ -108,17 +109,17 @@ public class SseConnectionManager
     }
 
     /// <summary>
-    /// Removes a transport from the connection manager
+    /// Removes a transport from the manager.
     /// </summary>
-    /// <param name="sessionId">The session ID to remove</param>
-    /// <returns>True if the transport was found and removed, false otherwise</returns>
+    /// <param name="sessionId">The session identifier of the transport to remove.</param>
+    /// <returns><c>true</c> when the transport was removed; otherwise <c>false</c>.</returns>
     public bool RemoveTransport(string sessionId)
     {
         return _connections.TryRemove(sessionId, out _);
     }
 
     /// <summary>
-    /// Closes all connections and disposes resources (synchronous version)
+    /// Closes all registered transports synchronously by awaiting the asynchronous variant.
     /// </summary>
     public void CloseAllConnections()
     {
@@ -126,12 +127,11 @@ public class SseConnectionManager
     }
 
     /// <summary>
-    /// Closes all connections and disposes resources
+    /// Asynchronously closes all registered transports and waits for completion (with a short timeout per transport).
     /// </summary>
     public async Task CloseAllConnectionsAsync()
     {
         _logger.LogInformation("Closing all SSE connections...");
-        _cleanupTimer.Dispose();
 
         // Create a copy of the connections to avoid enumeration issues
         var transportsCopy = _connections.Values.ToArray();
@@ -163,10 +163,10 @@ public class SseConnectionManager
     }
 
     /// <summary>
-    /// Creates, initializes, and manages an SSE connection from an HTTP context
+    /// Handles a newly established SSE GET request and keeps the connection alive until the client disconnects.
     /// </summary>
-    /// <param name="context">The HTTP context for the SSE connection</param>
-    /// <returns>A task that completes when the connection is closed</returns>
+    /// <param name="context">The HTTP context representing the GET handshake.</param>
+    /// <returns>A task that completes once the connection terminates.</returns>
     public async Task HandleSseConnectionAsync(HttpContext context)
     {
         // Create and set up logger with connection details
@@ -257,99 +257,74 @@ public class SseConnectionManager
     }
 
     /// <summary>
-    /// Process JSON-RPC messages from client
+    /// Processes a single HTTP POST containing a JSON-RPC message, delivering it to the underlying transport.
     /// </summary>
-    /// <param name="context">The HTTP context containing the message</param>
-    /// <returns>A task that completes when the message is processed</returns>
+    /// <param name="context">The HTTP POST context.</param>
+    /// <returns>A task that completes when the message has been validated and dispatched.</returns>
     public async Task HandleMessageAsync(HttpContext context)
     {
         var logger = _loggerFactory.CreateLogger("MessageEndpoint");
-        var sessionId = context.Request.Headers["Mcp-Session-Id"].ToString();
 
-        if (string.IsNullOrEmpty(sessionId))
+        var sessionId = await ResolveSessionIdAsync(context, logger);
+        if (sessionId == null)
         {
-            sessionId = context.Request.Query["sessionId"].ToString();
-        }
-
-        if (string.IsNullOrEmpty(sessionId))
-        {
-            logger.LogWarning("Message received without session ID");
-            context.Response.StatusCode = 400;
-            await context.Response.WriteAsJsonAsync(new { error = "Missing session ID" });
             return;
         }
 
-        // Authenticate the message if authentication is configured
-        if (_authHandler != null)
+        if (!await AuthenticateRequestAsync(context, logger))
         {
-            var authResult = await _authHandler.AuthenticateAsync(context);
-            if (!authResult.Succeeded)
-            {
-                logger.LogWarning(
-                    "Authentication failed for message endpoint: {Reason}",
-                    authResult.FailureReason
-                );
-                context.Response.StatusCode = 401;
-                await context.Response.WriteAsJsonAsync(
-                    new { error = "Unauthorized", message = authResult.FailureReason }
-                );
-                return;
-            }
-
-            logger.LogDebug("Message endpoint authenticated for user {UserId}", authResult.UserId);
+            return;
         }
 
         using (logger.BeginScope(new Dictionary<string, object> { ["SessionId"] = sessionId }))
         {
-            var transport = GetTransport(sessionId);
+            var transport = await ResolveTransportAsync(context, sessionId, logger);
             if (transport == null)
             {
-                logger.LogWarning("Session not found for ID {SessionId}", sessionId);
-                context.Response.StatusCode = 404;
-                await context.Response.WriteAsJsonAsync(new { error = "Session not found" });
                 return;
             }
 
             try
             {
-                var request = await JsonSerializer.DeserializeAsync<JsonRpcRequestMessage>(
-                    context.Request.Body
-                );
-
-                if (request == null)
+                var body = await ReadRequestBodyAsync(context, sessionId, logger);
+                if (body == null)
                 {
-                    logger.LogError("Invalid JSON-RPC request format");
-                    context.Response.StatusCode = 400;
-                    await context.Response.WriteAsJsonAsync(
-                        new JsonRpcError
-                        {
-                            Code = (int)ErrorCode.InvalidRequest,
-                            Message = "Invalid request",
-                        }
-                    );
                     return;
                 }
 
-                logger.LogDebug(
-                    "JSON-RPC Request: Method={Method}, Id={Id}",
-                    request.Method,
-                    request.Id ?? "null"
-                );
-
-                if (request.Params != null)
+                JsonRpcPayload payload;
+                try
                 {
-                    logger.LogTrace(
-                        "Request params: {Params}",
-                        JsonSerializer.Serialize(request.Params)
-                    );
+                    if (
+                        !TryParseJsonRpcPayload(
+                            body,
+                            s_jsonSerializerOptions,
+                            out payload,
+                            out var parseError
+                        )
+                    )
+                    {
+                        logger.LogError("Invalid JSON-RPC payload: {Message}", parseError);
+                        await WriteInvalidRequestAsync(
+                            context,
+                            sessionId,
+                            parseError ?? "Invalid payload"
+                        );
+                        return;
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    await HandleJsonParsingError(context, ex, logger);
+                    return;
                 }
 
-                // Process the request through the transport
-                transport.HandleRequest(request);
+                if (!await ValidateProtocolVersionAsync(context, sessionId, payload.Method, logger))
+                {
+                    return;
+                }
 
-                // Return 202 Accepted immediately
-                context.Response.StatusCode = 202;
-                await context.Response.WriteAsJsonAsync(new { status = "accepted" });
+                await DispatchPayloadAsync(context, sessionId, transport, payload, logger);
             }
             catch (JsonException ex)
             {
@@ -358,7 +333,7 @@ public class SseConnectionManager
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error processing message");
-                context.Response.StatusCode = 500;
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
                 await context.Response.WriteAsJsonAsync(
                     new JsonRpcError
                     {
@@ -371,10 +346,327 @@ public class SseConnectionManager
     }
 
     /// <summary>
+    /// Resolves the session identifier from headers or query parameters, replying with an error when absent.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="logger">Logger for emitting diagnostic messages.</param>
+    /// <returns>The session identifier when available; otherwise <c>null</c>.</returns>
+    private async Task<string?> ResolveSessionIdAsync(HttpContext context, ILogger logger)
+    {
+        var sessionId = context.Request.Headers["Mcp-Session-Id"].ToString();
+
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            sessionId = context.Request.Query["sessionId"].ToString();
+        }
+
+        if (!string.IsNullOrEmpty(sessionId))
+        {
+            return sessionId;
+        }
+
+        logger.LogWarning("Message received without session ID");
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { error = "Missing session ID" });
+        return null;
+    }
+
+    /// <summary>
+    /// Validates the request with the configured authentication handler (if one exists).
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="logger">Logger for diagnostic messages.</param>
+    /// <returns><c>true</c> when the request is authenticated or no handler is configured; otherwise <c>false</c>.</returns>
+    private async Task<bool> AuthenticateRequestAsync(HttpContext context, ILogger logger)
+    {
+        if (_authHandler == null)
+        {
+            return true;
+        }
+
+        var authResult = await _authHandler.AuthenticateAsync(context);
+        if (authResult.Succeeded)
+        {
+            logger.LogDebug("Message endpoint authenticated for user {UserId}", authResult.UserId);
+            return true;
+        }
+
+        logger.LogWarning(
+            "Authentication failed for message endpoint: {Reason}",
+            authResult.FailureReason
+        );
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(
+            new { error = "Unauthorized", message = authResult.FailureReason }
+        );
+        return false;
+    }
+
+    /// <summary>
+    /// Retrieves the transport associated with the supplied session identifier, replying with 404 when missing.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="sessionId">The resolved session identifier.</param>
+    /// <param name="logger">Logger for diagnostic messages.</param>
+    /// <returns>The transport if one is registered; otherwise <c>null</c>.</returns>
+    private async Task<SseTransport?> ResolveTransportAsync(
+        HttpContext context,
+        string sessionId,
+        ILogger logger
+    )
+    {
+        var transport = GetTransport(sessionId);
+        if (transport != null)
+        {
+            return transport;
+        }
+
+        logger.LogWarning("Session not found for ID {SessionId}", sessionId);
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        await context.Response.WriteAsJsonAsync(new { error = "Session not found" });
+        return null;
+    }
+
+    /// <summary>
+    /// Buffers the HTTP request body and ensures it contains content.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="sessionId">The session identifier used for error responses.</param>
+    /// <param name="logger">Logger for diagnostic messages.</param>
+    /// <returns>The request body text when present; otherwise <c>null</c>.</returns>
+    private static async Task<string?> ReadRequestBodyAsync(
+        HttpContext context,
+        string sessionId,
+        ILogger logger
+    )
+    {
+        context.Request.EnableBuffering();
+        string body;
+        using (
+            var reader = new StreamReader(
+                context.Request.Body,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: false,
+                leaveOpen: true
+            )
+        )
+        {
+            body = await reader.ReadToEndAsync();
+        }
+        context.Request.Body.Position = 0;
+
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            return body;
+        }
+
+        logger.LogError("Empty JSON-RPC payload received");
+        await WriteInvalidRequestAsync(context, sessionId, "Request body must not be empty");
+        return null;
+    }
+
+    /// <summary>
+    /// Categorizes a JSON-RPC payload, returning a strongly-typed representation for downstream processing.
+    /// </summary>
+    /// <param name="body">Raw JSON payload.</param>
+    /// <param name="serializerOptions">Serializer options used for deserialization.</param>
+    /// <param name="payload">The parsed payload when successful.</param>
+    /// <param name="error">Output error message when parsing fails.</param>
+    /// <returns><c>true</c> when parsing succeeds; otherwise <c>false</c>.</returns>
+    private static bool TryParseJsonRpcPayload(
+        string body,
+        JsonSerializerOptions serializerOptions,
+        out JsonRpcPayload payload,
+        out string? error
+    )
+    {
+        payload = default!;
+        error = null;
+
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+
+        if (
+            !root.TryGetProperty("jsonrpc", out var jsonRpcVersion)
+            || jsonRpcVersion.GetString() != "2.0"
+        )
+        {
+            error = "Invalid or missing jsonrpc version";
+            return false;
+        }
+
+        var hasMethod = root.TryGetProperty("method", out var methodElement);
+        var hasId =
+            root.TryGetProperty("id", out var idElement)
+            && idElement.ValueKind != JsonValueKind.Null;
+        var isResponsePayload =
+            !hasMethod
+            && (root.TryGetProperty("result", out _) || root.TryGetProperty("error", out _));
+
+        var method = hasMethod ? methodElement.GetString() : null;
+
+        if (isResponsePayload)
+        {
+            payload = JsonRpcPayload.CreateResponse();
+            return true;
+        }
+
+        if (!hasMethod)
+        {
+            error = "Missing method";
+            return false;
+        }
+
+        if (!hasId)
+        {
+            var notification = JsonSerializer.Deserialize<JsonRpcNotificationMessage>(
+                body,
+                serializerOptions
+            );
+            if (notification == null)
+            {
+                error = "Invalid notification payload";
+                return false;
+            }
+
+            payload = JsonRpcPayload.CreateNotification(method, notification);
+            return true;
+        }
+
+        var request = JsonSerializer.Deserialize<JsonRpcRequestMessage>(body, serializerOptions);
+        if (request == null)
+        {
+            error = "Invalid request payload";
+            return false;
+        }
+
+        payload = JsonRpcPayload.CreateRequest(method, request);
+        return true;
+    }
+
+    /// <summary>
+    /// Validates the MCP protocol version header for non-initialize messages.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="sessionId">Session identifier used for error reporting.</param>
+    /// <param name="method">The JSON-RPC method associated with the payload.</param>
+    /// <param name="logger">Logger for diagnostic messages.</param>
+    /// <returns><c>true</c> when the header is valid or not required; otherwise <c>false</c>.</returns>
+    private async Task<bool> ValidateProtocolVersionAsync(
+        HttpContext context,
+        string sessionId,
+        string? method,
+        ILogger logger
+    )
+    {
+        if (
+            string.IsNullOrEmpty(_server.NegotiatedProtocolVersion)
+            || string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return true;
+        }
+
+        var protocolHeader = context.Request.Headers["MCP-Protocol-Version"].ToString();
+        if (string.IsNullOrWhiteSpace(protocolHeader))
+        {
+            logger.LogWarning(
+                "Missing MCP-Protocol-Version header for session {SessionId}",
+                sessionId
+            );
+            await WriteProtocolVersionErrorAsync(
+                context,
+                sessionId,
+                $"Missing MCP-Protocol-Version header. Expected {_server.NegotiatedProtocolVersion}"
+            );
+            return false;
+        }
+
+        if (
+            !string.Equals(
+                protocolHeader,
+                _server.NegotiatedProtocolVersion,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            logger.LogWarning(
+                "Unsupported MCP-Protocol-Version \"{Version}\" for session {SessionId}",
+                protocolHeader,
+                sessionId
+            );
+            await WriteProtocolVersionErrorAsync(
+                context,
+                sessionId,
+                $"Unsupported MCP-Protocol-Version \"{protocolHeader}\". Expected {_server.NegotiatedProtocolVersion}"
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Dispatches the parsed payload to the SSE transport as a request, notification, or response acknowledgement.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="sessionId">Resolved session identifier.</param>
+    /// <param name="transport">The SSE transport handling the connection.</param>
+    /// <param name="payload">Typed JSON-RPC payload.</param>
+    /// <param name="logger">Logger for diagnostic messages.</param>
+    private async Task DispatchPayloadAsync(
+        HttpContext context,
+        string sessionId,
+        SseTransport transport,
+        JsonRpcPayload payload,
+        ILogger logger
+    )
+    {
+        switch (payload.Kind)
+        {
+            case JsonRpcPayloadKind.Response:
+                logger.LogDebug("Received JSON-RPC response payload");
+                await WriteAcceptedAsync(context, sessionId, _server.NegotiatedProtocolVersion);
+                return;
+
+            case JsonRpcPayloadKind.Notification:
+                logger.LogDebug(
+                    "JSON-RPC Notification: Method={Method}",
+                    payload.Notification!.Method
+                );
+                transport.HandleNotification(payload.Notification!);
+                await WriteAcceptedAsync(context, sessionId, _server.NegotiatedProtocolVersion);
+                return;
+
+            case JsonRpcPayloadKind.Request:
+                logger.LogDebug(
+                    "JSON-RPC Request: Method={Method}, Id={Id}",
+                    payload.Request!.Method,
+                    payload.Request!.Id
+                );
+
+                if (payload.Request!.Params != null)
+                {
+                    logger.LogTrace(
+                        "Request params: {Params}",
+                        JsonSerializer.Serialize(payload.Request!.Params)
+                    );
+                }
+
+                transport.HandleRequest(payload.Request!);
+                await WriteAcceptedAsync(context, sessionId, _server.NegotiatedProtocolVersion);
+                return;
+        }
+    }
+
+    /// <summary>
     /// Creates a new SSE transport from an HTTP context
     /// </summary>
     /// <param name="context">The HTTP context</param>
     /// <returns>The created transport</returns>
+    /// <summary>
+    /// Creates a transport instance and associated response writer backed by the current HTTP response.
+    /// </summary>
     private SseTransport CreateTransport(HttpContext context)
     {
         var responseWriter = new HttpResponseWriter(
@@ -387,6 +679,9 @@ public class SseConnectionManager
 
     /// <summary>
     /// Handles JSON parsing errors with detailed logging
+    /// </summary>
+    /// <summary>
+    /// Writes a detailed parse-error response while logging the problematic payload for diagnostics.
     /// </summary>
     private static async Task HandleJsonParsingError(
         HttpContext context,
@@ -438,25 +733,84 @@ public class SseConnectionManager
         );
     }
 
-    /// <summary>
-    /// Periodically checks for and removes stale connections
-    /// </summary>
-    private void CleanupStaleConnections(object? state)
+    /// <param name="context">HTTP context used to write the response.</param>
+    /// <param name="sessionId">Session identifier to echo back in headers.</param>
+    /// <param name="negotiatedProtocolVersion">Negotiated protocol version, when available.</param>
+    private static Task WriteAcceptedAsync(
+        HttpContext context,
+        string sessionId,
+        string? negotiatedProtocolVersion
+    )
     {
-        try
+        context.Response.StatusCode = StatusCodes.Status202Accepted;
+        context.Response.Headers["Mcp-Session-Id"] = sessionId;
+        if (!string.IsNullOrWhiteSpace(negotiatedProtocolVersion))
         {
-            _logger.LogDebug("Checking for stale connections...");
-
-            //TODO: Implement this properly
-            // In a real implementation, we would track last activity time for each connection
-            // and remove those that have been inactive for longer than the timeout.
-            // For now, since we don't have a way to track activity, we'll just log the count.
-
-            _logger.LogDebug("Active connections: {ConnectionCount}", _connections.Count);
+            context.Response.Headers["MCP-Protocol-Version"] = negotiatedProtocolVersion;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error cleaning up stale connections");
-        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <param name="context">HTTP context used to write the response.</param>
+    /// <param name="sessionId">Session identifier to echo back in headers.</param>
+    /// <param name="message">Error message describing the validation failure.</param>
+    private static async Task WriteInvalidRequestAsync(
+        HttpContext context,
+        string sessionId,
+        string message
+    )
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        context.Response.Headers["Mcp-Session-Id"] = sessionId;
+        await context.Response.WriteAsJsonAsync(
+            new JsonRpcError { Code = (int)ErrorCode.InvalidRequest, Message = message }
+        );
+    }
+
+    /// <param name="context">HTTP context used to write the response.</param>
+    /// <param name="sessionId">Session identifier to echo back in headers.</param>
+    /// <param name="message">Error message describing the protocol mismatch.</param>
+    private static async Task WriteProtocolVersionErrorAsync(
+        HttpContext context,
+        string sessionId,
+        string message
+    )
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        context.Response.Headers["Mcp-Session-Id"] = sessionId;
+        await context.Response.WriteAsJsonAsync(
+            new JsonRpcError { Code = (int)ErrorCode.InvalidRequest, Message = message }
+        );
+    }
+
+    /// <param name="Kind">Type of payload being represented.</param>
+    /// <param name="Method">Method name (when applicable).</param>
+    /// <param name="Request">Typed JSON-RPC request when <paramref name="Kind"/> is <see cref="JsonRpcPayloadKind.Request"/>.</param>
+    /// <param name="Notification">Typed JSON-RPC notification when <paramref name="Kind"/> is <see cref="JsonRpcPayloadKind.Notification"/>.</param>
+    private sealed record JsonRpcPayload(
+        JsonRpcPayloadKind Kind,
+        string? Method,
+        JsonRpcRequestMessage? Request,
+        JsonRpcNotificationMessage? Notification
+    )
+    {
+        public static JsonRpcPayload CreateResponse() =>
+            new(JsonRpcPayloadKind.Response, null, null, null);
+
+        public static JsonRpcPayload CreateNotification(
+            string? method,
+            JsonRpcNotificationMessage notification
+        ) => new(JsonRpcPayloadKind.Notification, method, null, notification);
+
+        public static JsonRpcPayload CreateRequest(string? method, JsonRpcRequestMessage request) =>
+            new(JsonRpcPayloadKind.Request, method, request, null);
+    }
+
+    private enum JsonRpcPayloadKind
+    {
+        Request,
+        Notification,
+        Response,
     }
 }
