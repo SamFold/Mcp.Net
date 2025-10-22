@@ -1,5 +1,6 @@
+using System;
 using Mcp.Net.Core.Models.Capabilities;
-using Microsoft.Extensions.Logging;
+using Mcp.Net.Server.Authentication;
 
 namespace Mcp.Net.Server.Options;
 
@@ -23,35 +24,78 @@ public class McpServerOptions
     /// </summary>
     public string? Instructions { get; set; }
 
-    /// <summary>
-    /// Gets or sets the minimum log level for the server.
-    /// </summary>
-    public LogLevel LogLevel { get; set; } = LogLevel.Information;
 
     /// <summary>
-    /// Gets or sets whether console logging is enabled.
+    /// Gets or sets the logging configuration.
     /// </summary>
-    public bool UseConsoleLogging { get; set; } = true;
+    public LoggingOptions Logging { get; set; } = new();
 
     /// <summary>
-    /// Gets or sets the path to the log file.
+    /// Gets or sets the authentication configuration.
     /// </summary>
-    public string? LogFilePath { get; set; } = "mcp-server.log";
+    public AuthOptions Authentication { get; set; } = new();
 
     /// <summary>
-    /// Gets or sets whether authentication is explicitly disabled.
+    /// Gets or sets the tool registration configuration.
     /// </summary>
-    public bool NoAuthExplicitlyConfigured { get; set; } = false;
-
-    /// <summary>
-    /// Gets or sets the list of assembly paths to scan for tools.
-    /// </summary>
-    public List<string> ToolAssemblyPaths { get; set; } = new();
+    public ToolRegistrationOptions ToolRegistration { get; set; } = new();
 
     /// <summary>
     /// Gets or sets additional server capabilities.
     /// </summary>
     public ServerCapabilities? Capabilities { get; set; }
+
+    // Backward compatibility properties
+    /// <summary>
+    /// Gets or sets whether authentication is explicitly disabled.
+    /// This property is obsolete. Use Authentication.NoAuthExplicitlyConfigured instead.
+    /// </summary>
+    [Obsolete("Use Authentication.NoAuthExplicitlyConfigured instead")]
+    public bool NoAuthExplicitlyConfigured
+    {
+        get => Authentication.NoAuthExplicitlyConfigured;
+        set => Authentication.NoAuthExplicitlyConfigured = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the list of assembly paths to scan for tools.
+    /// This property is obsolete. Use ToolRegistration.Assemblies instead.
+    /// </summary>
+    [Obsolete("Use ToolRegistration.Assemblies instead")]
+    public List<string> ToolAssemblyPaths { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the minimum log level for the server.
+    /// This property is obsolete. Use Logging.MinimumLogLevel instead.
+    /// </summary>
+    [Obsolete("Use Logging.MinimumLogLevel instead")]
+    public Microsoft.Extensions.Logging.LogLevel LogLevel
+    {
+        get => Logging.MinimumLogLevel;
+        set => Logging.MinimumLogLevel = value;
+    }
+
+    /// <summary>
+    /// Gets or sets whether console logging is enabled.
+    /// This property is obsolete. Use Logging.UseConsoleLogging instead.
+    /// </summary>
+    [Obsolete("Use Logging.UseConsoleLogging instead")]
+    public bool UseConsoleLogging
+    {
+        get => Logging.UseConsoleLogging;
+        set => Logging.UseConsoleLogging = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the path to the log file.
+    /// This property is obsolete. Use Logging.LogFilePath instead.
+    /// </summary>
+    [Obsolete("Use Logging.LogFilePath instead")]
+    public string? LogFilePath
+    {
+        get => Logging.LogFilePath;
+        set => Logging.LogFilePath = value;
+    }
 
     /// <summary>
     /// Creates a new instance of the <see cref="ServerOptions"/> class with default capabilities.

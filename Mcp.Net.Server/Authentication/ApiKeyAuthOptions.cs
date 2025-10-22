@@ -46,4 +46,41 @@ public class ApiKeyAuthOptions : AuthOptions
     /// as query parameters may be logged in server logs.
     /// </remarks>
     public bool AllowQueryParam { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets additional API keys.
+    /// </summary>
+    /// <remarks>
+    /// Dictionary mapping API keys to user IDs. This is for simple in-memory
+    /// API key storage. For production scenarios, use a custom IApiKeyValidator.
+    /// </remarks>
+    public Dictionary<string, string> ApiKeys { get; set; } = new();
+
+    /// <summary>
+    /// Configures the options with a specific development API key.
+    /// </summary>
+    /// <param name="apiKey">The development API key</param>
+    /// <returns>The options instance for chaining</returns>
+    public ApiKeyAuthOptions WithApiKey(string apiKey)
+    {
+        DevelopmentApiKey = apiKey;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the options with multiple API keys.
+    /// </summary>
+    /// <param name="apiKeys">Dictionary mapping API keys to user IDs</param>
+    /// <returns>The options instance for chaining</returns>
+    public ApiKeyAuthOptions WithApiKeys(Dictionary<string, string> apiKeys)
+    {
+        ApiKeys = apiKeys;
+        return this;
+    }
+
+    /// <summary>
+    /// Gets whether any API keys are configured.
+    /// </summary>
+    public override bool IsSecurityConfigured =>
+        base.IsSecurityConfigured || !string.IsNullOrEmpty(DevelopmentApiKey) || ApiKeys.Count > 0;
 }

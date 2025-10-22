@@ -1,3 +1,5 @@
+
+using System;
 using Mcp.Net.Server.Authentication;
 
 namespace Mcp.Net.Server.Options;
@@ -31,20 +33,6 @@ public class SseServerOptions : McpServerOptions
     /// </summary>
     public string Scheme { get; set; } = "http";
 
-    /// <summary>
-    /// Gets or sets the authentication handler.
-    /// </summary>
-    public IAuthHandler? AuthHandler { get; set; }
-
-    /// <summary>
-    /// Gets or sets the API key validator.
-    /// </summary>
-    public IApiKeyValidator? ApiKeyValidator { get; set; }
-
-    /// <summary>
-    /// Gets or sets the API key options when using API key authentication.
-    /// </summary>
-    public ApiKeyAuthOptions? ApiKeyOptions { get; set; }
 
     /// <summary>
     /// Gets the base URL of the server.
@@ -96,17 +84,6 @@ public class SseServerOptions : McpServerOptions
     /// </summary>
     public TimeSpan? ConnectionTimeout { get; set; }
 
-    /// <summary>
-    /// Configures the server with the specified API key.
-    /// </summary>
-    /// <param name="apiKey">The API key</param>
-    /// <returns>The options instance for chaining</returns>
-    public SseServerOptions WithApiKey(string apiKey)
-    {
-        ApiKeyOptions ??= new ApiKeyAuthOptions();
-        ApiKeyOptions.DevelopmentApiKey = apiKey;
-        return this;
-    }
 
     /// <summary>
     /// Validates the options are correctly configured.
@@ -128,5 +105,65 @@ public class SseServerOptions : McpServerOptions
         {
             throw new InvalidOperationException("Scheme must be 'http' or 'https'");
         }
+    }
+
+    // Backward compatibility properties
+    /// <summary>
+    /// Gets or sets the authentication handler.
+    /// This property is obsolete. Use Authentication.AuthHandler instead.
+    /// </summary>
+    [Obsolete("Use Authentication.AuthHandler instead")]
+    public IAuthHandler? AuthHandler
+    {
+        get => Authentication.AuthHandler;
+        set => Authentication.AuthHandler = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the API key validator.
+    /// This property is obsolete. Use Authentication.ApiKeyValidator instead.
+    /// </summary>
+    [Obsolete("Use Authentication.ApiKeyValidator instead")]
+    public IApiKeyValidator? ApiKeyValidator
+    {
+        get => Authentication.ApiKeyValidator;
+        set => Authentication.ApiKeyValidator = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the API key options when using API key authentication.
+    /// This property is obsolete. Use Authentication as ApiKeyAuthOptions instead.
+    /// </summary>
+    [Obsolete("Use Authentication as ApiKeyAuthOptions instead")]
+    public ApiKeyAuthOptions? ApiKeyOptions
+    {
+        get => Authentication as ApiKeyAuthOptions;
+        set
+        {
+            if (value != null)
+            {
+                Authentication = value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Configures the server with the specified API key.
+    /// This method is obsolete. Use Authentication.WithApiKey instead.
+    /// </summary>
+    /// <param name="apiKey">The API key</param>
+    /// <returns>The options instance for chaining</returns>
+    [Obsolete("Use Authentication.WithApiKey instead")]
+    public SseServerOptions WithApiKey(string apiKey)
+    {
+        if (Authentication is ApiKeyAuthOptions apiKeyAuth)
+        {
+            apiKeyAuth.WithApiKey(apiKey);
+        }
+        else
+        {
+            Authentication = new ApiKeyAuthOptions().WithApiKey(apiKey);
+        }
+        return this;
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using Mcp.Net.Server.Authentication;
 
 namespace Mcp.Net.Server.Options;
@@ -7,15 +8,6 @@ namespace Mcp.Net.Server.Options;
 /// </summary>
 public class StdioServerOptions : McpServerOptions
 {
-    /// <summary>
-    /// Gets or sets the authentication handler.
-    /// </summary>
-    public IAuthHandler? AuthHandler { get; set; }
-
-    /// <summary>
-    /// Gets or sets the API key validator.
-    /// </summary>
-    public IApiKeyValidator? ApiKeyValidator { get; set; }
 
     /// <summary>
     /// Gets or sets whether to use standard input/output or create custom streams.
@@ -54,5 +46,28 @@ public class StdioServerOptions : McpServerOptions
                 );
             }
         }
+    }
+
+    // Backward compatibility properties
+    /// <summary>
+    /// Gets or sets the authentication handler.
+    /// This property is obsolete. Use Authentication.AuthHandler instead.
+    /// </summary>
+    [Obsolete("Use Authentication.AuthHandler instead")]
+    public IAuthHandler? AuthHandler
+    {
+        get => Authentication.AuthHandler;
+        set => Authentication.AuthHandler = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the API key validator.
+    /// This property is obsolete. Use Authentication.ApiKeyValidator instead.
+    /// </summary>
+    [Obsolete("Use Authentication.ApiKeyValidator instead")]
+    public IApiKeyValidator? ApiKeyValidator
+    {
+        get => Authentication.ApiKeyValidator;
+        set => Authentication.ApiKeyValidator = value;
     }
 }
