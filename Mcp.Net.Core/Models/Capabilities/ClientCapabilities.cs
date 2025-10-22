@@ -20,6 +20,12 @@ public class ClientCapabilities
     public object? Sampling { get; set; }
 
     /// <summary>
+    /// Elicitation capabilities
+    /// </summary>
+    [JsonPropertyName("elicitation")]
+    public object? Elicitation { get; set; }
+
+    /// <summary>
     /// Root capabilities
     /// </summary>
     [JsonPropertyName("roots")]

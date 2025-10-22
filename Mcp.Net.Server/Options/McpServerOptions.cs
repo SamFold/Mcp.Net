@@ -15,6 +15,11 @@ public class McpServerOptions
     public string Name { get; set; } = "MCP Server";
 
     /// <summary>
+    /// Gets or sets the human-friendly title of the server.
+    /// </summary>
+    public string? Title { get; set; }
+
+    /// <summary>
     /// Gets or sets the version of the server.
     /// </summary>
     public string Version { get; set; } = "1.0.0";
@@ -123,6 +128,11 @@ public class McpServerOptions
     /// <returns>A configured ServerInfo instance</returns>
     public ServerInfo ToServerInfo()
     {
-        return new ServerInfo { Name = Name, Version = Version };
+        return new ServerInfo
+        {
+            Name = Name,
+            Title = Title ?? Name,
+            Version = Version,
+        };
     }
 }

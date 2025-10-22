@@ -76,12 +76,21 @@ public class McpServerTests
             .Should()
             .Be("Test Server");
         resultObj.GetProperty("serverInfo").GetProperty("version").GetString().Should().Be("1.0.0");
+        resultObj
+            .GetProperty("serverInfo")
+            .GetProperty("title")
+            .GetString()
+            .Should()
+            .Be("Test Server");
         resultObj.GetProperty("instructions").GetString().Should().Be("Test server instructions");
         resultObj
             .GetProperty("protocolVersion")
             .GetString()
             .Should()
             .Be(McpServer.LatestProtocolVersion);
+        var capabilities = resultObj.GetProperty("capabilities");
+        capabilities.TryGetProperty("logging", out _).Should().BeFalse();
+        capabilities.TryGetProperty("completions", out _).Should().BeFalse();
         _server.NegotiatedProtocolVersion.Should().Be(McpServer.LatestProtocolVersion);
     }
 

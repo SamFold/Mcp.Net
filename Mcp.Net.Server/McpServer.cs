@@ -43,6 +43,8 @@ public class McpServer : IMcpServer
     public McpServer(ServerInfo serverInfo, ServerOptions? options, ILoggerFactory loggerFactory)
     {
         _serverInfo = serverInfo;
+        if (string.IsNullOrWhiteSpace(_serverInfo.Title))
+            _serverInfo.Title = _serverInfo.Name;
         _capabilities = options?.Capabilities ?? new ServerCapabilities();
         _logger = loggerFactory.CreateLogger<McpServer>();
 

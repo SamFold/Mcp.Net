@@ -10,4 +10,7 @@ public class ServerInfo
 
     [JsonPropertyName("version")]
     public string Version { get; set; } = "";
+
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
 }

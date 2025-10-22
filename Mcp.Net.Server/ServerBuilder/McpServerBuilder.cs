@@ -120,6 +120,17 @@ public class McpServerBuilder
     }
 
     /// <summary>
+    /// Configures the server with a human-friendly title.
+    /// </summary>
+    /// <param name="title">The title clients should display.</param>
+    /// <returns>The builder for chaining.</returns>
+    public McpServerBuilder WithTitle(string title)
+    {
+        _serverInfo.Title = title;
+        return this;
+    }
+
+    /// <summary>
     /// Configures the server with a specific version.
     /// </summary>
     /// <param name="version">The version of the server</param>
@@ -438,6 +449,11 @@ public class McpServerBuilder
                     Prompts = new { },
                 },
             };
+
+        if (string.IsNullOrWhiteSpace(_serverInfo.Title))
+        {
+            _serverInfo.Title = _serverInfo.Name;
+        }
 
         // Use security configuration if needed
         ConfigureSecurity();
