@@ -50,7 +50,8 @@ public class StdioTransport : ServerMessageTransportBase
         Stream output,
         IMessageParser parser,
         ILogger<StdioTransport> logger
-    ) : base(parser, logger)
+    )
+        : base(parser, logger)
     {
         _reader = PipeReader.Create(input);
         _writer = PipeWriter.Create(output);
@@ -81,33 +82,49 @@ public class StdioTransport : ServerMessageTransportBase
                 ReadResult result = await _reader.ReadAsync(CancellationTokenSource.Token);
                 ReadOnlySequence<byte> buffer = result.Buffer;
 
-                // Convert to string for processing
-                string bufferString = Encoding.UTF8.GetString(buffer.ToArray());
+                SequencePosition consumed = buffer.Start;
+                SequencePosition examined = buffer.End;
 
-                // Process each line as a message
-                int position = 0;
-                while (position < bufferString.Length)
+                try
                 {
-                    int newlineIndex = bufferString.IndexOf('\n', position);
-                    if (newlineIndex == -1)
-                        break;
-
-                    string line = bufferString.Substring(position, newlineIndex - position).Trim();
-                    if (!string.IsNullOrEmpty(line))
+                    while (TryReadLine(ref buffer, out var lineSequence))
                     {
-                        // Process the message using the server message transport base
-                        ProcessJsonRpcMessage(line);
-                    }
+                        consumed = buffer.Start;
+                        if (lineSequence.Length == 0)
+                        {
+                            continue;
+                        }
 
-                    position = newlineIndex + 1;
+                        string message = Encoding.UTF8.GetString(lineSequence.ToArray());
+                        if (string.IsNullOrWhiteSpace(message))
+                        {
+                            continue;
+                        }
+
+                        // Trim a trailing carriage-return so both LF and CRLF are accepted
+                        if (message[^1] == '\r')
+                        {
+                            message = message[..^1];
+                        }
+
+                        ProcessJsonRpcMessage(message);
+                    }
+                }
+                finally
+                {
+                    _reader.AdvanceTo(consumed, examined);
                 }
 
-                // Tell the PipeReader how much of the buffer we consumed
-                _reader.AdvanceTo(buffer.GetPosition(position));
-
-                // Break the loop if there's no more data coming
                 if (result.IsCompleted)
                 {
+                    if (buffer.Length > 0)
+                    {
+                        Logger.LogWarning(
+                            "Terminating stdio transport with {ByteCount} unprocessed bytes (missing newline)",
+                            buffer.Length
+                        );
+                    }
+
                     Logger.LogInformation("End of input stream detected, closing stdio transport");
                     break;
                 }
@@ -127,6 +144,24 @@ public class StdioTransport : ServerMessageTransportBase
             await _reader.CompleteAsync();
             Logger.LogInformation("Stdio read loop terminated");
         }
+    }
+
+    private static bool TryReadLine(
+        ref ReadOnlySequence<byte> buffer,
+        out ReadOnlySequence<byte> line
+    )
+    {
+        SequencePosition? position = buffer.PositionOf((byte)'\n');
+        if (position == null)
+        {
+            line = default;
+            return false;
+        }
+
+        line = buffer.Slice(0, position.Value);
+        var next = buffer.GetPosition(1, position.Value);
+        buffer = buffer.Slice(next);
+        return true;
     }
 
     /// <inheritdoc />
