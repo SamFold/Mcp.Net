@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.Core.JsonRpc;
@@ -165,6 +166,29 @@ public class JsonRpcMessageTests
         json.Should().Contain("\"jsonrpc\":\"2.0\"");
         json.Should().Contain("\"method\":\"method\"");
         json.Should().NotContain("\"id\":");
+    }
+
+    [Fact]
+    public void JsonRpcMessages_Should_RoundTrip_Meta()
+    {
+        var meta = new Dictionary<string, object?> { ["foo"] = "bar" };
+        var request = new JsonRpcRequestMessage("2.0", "1", "test", null, meta);
+        var serialized = JsonSerializer.Serialize(request);
+        var parsed = JsonSerializer.Deserialize<JsonRpcRequestMessage>(serialized);
+        parsed!.Meta.Should().NotBeNull();
+        ((JsonElement)parsed.Meta!["foo"]!).GetString().Should().Be("bar");
+
+        var response = new JsonRpcResponseMessage("2.0", "1", null, null, meta);
+        serialized = JsonSerializer.Serialize(response);
+        var parsedResponse = JsonSerializer.Deserialize<JsonRpcResponseMessage>(serialized);
+        parsedResponse!.Meta.Should().NotBeNull();
+        ((JsonElement)parsedResponse.Meta!["foo"]!).GetString().Should().Be("bar");
+
+        var notification = new JsonRpcNotificationMessage("2.0", "event", null, meta);
+        serialized = JsonSerializer.Serialize(notification);
+        var parsedNotification = JsonSerializer.Deserialize<JsonRpcNotificationMessage>(serialized);
+        parsedNotification!.Meta.Should().NotBeNull();
+        ((JsonElement)parsedNotification.Meta!["foo"]!).GetString().Should().Be("bar");
     }
 
     [Fact]

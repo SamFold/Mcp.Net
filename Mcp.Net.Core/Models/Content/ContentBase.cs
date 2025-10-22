@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -9,5 +10,9 @@ namespace Mcp.Net.Core.Models.Content
     {
         [JsonPropertyName("type")]
         public abstract string Type { get; }
+
+        [JsonPropertyName("_meta")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IDictionary<string, object?>? Meta { get; set; }
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.Core.Models.Content;
@@ -78,5 +79,36 @@ public class CallToolResultTests
         deserialized!.IsError.Should().BeFalse();
         deserialized.Content.Should().NotBeNull();
         deserialized.Content.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CallToolResult_Should_Serialize_Structured_Output_And_ResourceLinks()
+    {
+        var result = new ToolCallResult
+        {
+            IsError = false,
+            StructuredContent = new { count = 3 },
+            Meta = new Dictionary<string, object?> { ["origin"] = "test" }
+        };
+
+        result.Content = new ContentBase[]
+        {
+            new ResourceLinkContent { Uri = "mcp://resource/123", Name = "Example" }
+        };
+
+        var json = JsonSerializer.Serialize(result);
+        var deserialized = JsonSerializer.Deserialize<ToolCallResult>(json);
+
+        deserialized.Should().NotBeNull();
+        deserialized!.StructuredContent.Should().NotBeNull();
+        var structured = (JsonElement)deserialized.StructuredContent!;
+        structured.GetProperty("count").GetInt32().Should().Be(3);
+
+        deserialized.Content.Should().HaveCount(1);
+        deserialized.Content.First().Should().BeOfType<ResourceLinkContent>();
+        ((ResourceLinkContent)deserialized.Content.First()).Uri.Should().Be("mcp://resource/123");
+
+        deserialized.Meta.Should().NotBeNull();
+        ((JsonElement)deserialized.Meta!["origin"]!).GetString().Should().Be("test");
     }
 }

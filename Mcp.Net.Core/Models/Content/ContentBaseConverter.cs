@@ -34,6 +34,10 @@ public class ContentBaseConverter : JsonConverter<ContentBase>
                 rootElement.GetRawText(),
                 options
             ),
+            "resource_link" => JsonSerializer.Deserialize<ResourceLinkContent>(
+                rootElement.GetRawText(),
+                options
+            ),
             _ => throw new JsonException($"Unknown content type: {contentType}"),
         };
     }

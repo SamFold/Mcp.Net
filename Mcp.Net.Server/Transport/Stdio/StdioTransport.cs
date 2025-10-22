@@ -1,11 +1,9 @@
 using System.Buffers;
-using System.IO.Pipelines;
 using System.Text;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Mcp.Net.Server.Transport.Stdio;
 

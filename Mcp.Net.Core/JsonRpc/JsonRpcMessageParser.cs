@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using Mcp.Net.Core.Interfaces;
 
@@ -175,7 +176,9 @@ public class JsonRpcMessageParser : IMessageParser
                 );
             }
 
-            return new JsonRpcRequestMessage(jsonRpc, id, method, parameters);
+            var meta = ParseMeta(root);
+
+            return new JsonRpcRequestMessage(jsonRpc, id, method, parameters, meta);
         }
         catch (Exception ex) when (ex is JsonException || ex is KeyNotFoundException)
         {
@@ -231,7 +234,9 @@ public class JsonRpcMessageParser : IMessageParser
                 );
             }
 
-            return new JsonRpcResponseMessage(jsonRpc, id, result, error);
+            var meta = ParseMeta(root);
+
+            return new JsonRpcResponseMessage(jsonRpc, id, result, error, meta);
         }
         catch (Exception ex) when (ex is JsonException || ex is KeyNotFoundException)
         {
@@ -262,7 +267,9 @@ public class JsonRpcMessageParser : IMessageParser
                 );
             }
 
-            return new JsonRpcNotificationMessage(jsonRpc, method, parameters);
+            var meta = ParseMeta(root);
+
+            return new JsonRpcNotificationMessage(jsonRpc, method, parameters, meta);
         }
         catch (Exception ex) when (ex is JsonException || ex is KeyNotFoundException)
         {
@@ -271,5 +278,18 @@ public class JsonRpcMessageParser : IMessageParser
                 ex
             );
         }
+    }
+
+    private IDictionary<string, object?>? ParseMeta(JsonElement root)
+    {
+        if (!root.TryGetProperty("_meta", out var metaElement))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<Dictionary<string, object?>>(
+            metaElement.GetRawText(),
+            _options
+        );
     }
 }
