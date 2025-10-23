@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Examples.Shared;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.Options;
@@ -62,6 +63,9 @@ class Program
             ?? (Environment.GetEnvironmentVariable("PORT") != null ? "0.0.0.0" : "localhost");
 
         builder.Services.AddHealthChecks();
+        var advertisedHost = hostname == "0.0.0.0" ? "localhost" : hostname;
+        var baseUri = DemoOAuthDefaults.BuildBaseUri(advertisedHost, port);
+        DemoOAuthConfiguration? demoOAuth = null;
 
         // ========================================================================================
         // AUTHENTICATION CONFIGURATION - OPTION 1 (Recommended)
@@ -123,16 +127,14 @@ class Program
             // Configure authentication based on command line options
             if (options.NoAuth)
             {
-                // Disable authentication completely
                 mcpBuilder.WithAuthentication(auth => auth.WithNoAuth());
                 Console.WriteLine("Authentication disabled via --no-auth flag");
             }
             else
             {
-                // TODO: Configure OAuth-based authorization here once the authorization server metadata is available.
-                // For now, fall back to unauthenticated mode so the sample remains runnable.
-                mcpBuilder.WithAuthentication(auth => auth.WithNoAuth());
-                Console.WriteLine("Authentication defaults to disabled until OAuth is configured.");
+                demoOAuth = DemoOAuthServer.CreateConfiguration(baseUri);
+                DemoOAuthServer.ConfigureAuthentication(mcpBuilder, demoOAuth);
+                Console.WriteLine("Demo OAuth 2.1 bearer authentication enabled.");
             }
         });
         var app = builder.Build();
@@ -143,7 +145,21 @@ class Program
         }
         else
         {
-            Console.WriteLine("Authentication currently defaults to disabled; configure OAuth to enable protection.");
+            Console.WriteLine("Authentication requires OAuth bearer tokens issued by the demo authorization server.");
+        }
+
+        if (!options.NoAuth && demoOAuth != null)
+        {
+            DemoOAuthServer.MapEndpoints(app, demoOAuth);
+            Console.WriteLine();
+            Console.WriteLine("Demo OAuth endpoints:");
+            Console.WriteLine($"  Resource metadata: {demoOAuth.ResourceMetadataUri}");
+            Console.WriteLine($"  Authorization server metadata: {demoOAuth.AuthorizationServerMetadataUri}");
+            Console.WriteLine($"  Token endpoint: {new Uri(baseUri, DemoOAuthDefaults.TokenEndpointPath)}");
+            Console.WriteLine();
+            Console.WriteLine("Client credentials:");
+            Console.WriteLine($"  Client ID: {DemoOAuthDefaults.ClientId}");
+            Console.WriteLine($"  Client Secret: {DemoOAuthDefaults.ClientSecret}");
         }
 
         // Create a cancellation token source for graceful shutdown

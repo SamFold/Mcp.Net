@@ -1,9 +1,12 @@
 using System;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Mcp.Net.Client;
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
+using Mcp.Net.Examples.Shared;
 
 namespace Mcp.Net.Examples.SimpleClient.Examples;
 
@@ -19,16 +22,33 @@ public class SseClientExample
 
         Console.WriteLine($"Connecting to server at {options.ServerUrl}");
 
-        // Use one of the real API keys for authentication
-        string apiKey = options.ApiKey ?? "api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c"; // Default to user1 admin key
-        Console.WriteLine($"Using API key for authentication: {apiKey}");
+        var serverUri = new Uri(options.ServerUrl);
+        var baseUriBuilder = new UriBuilder(serverUri)
+        {
+            Path = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty,
+        };
+        var baseUri = baseUriBuilder.Uri;
 
-        using IMcpClient client = new SseMcpClient(
-            options.ServerUrl,
-            "SimpleClientExample",
-            "1.0.0",
-            apiKey
-        );
+        var clientBuilder = new McpClientBuilder()
+            .WithName("SimpleClientExample")
+            .WithVersion("1.0.0")
+            .WithTitle("Simple Client Example")
+            .UseSseTransport(options.ServerUrl);
+
+        if (options.UseAuthentication)
+        {
+            Console.WriteLine("Using demo OAuth client credentials for authentication.");
+            var oauthOptions = DemoOAuthDefaults.CreateClientOptions(baseUri);
+            clientBuilder.WithClientCredentialsAuth(oauthOptions, new HttpClient());
+        }
+        else
+        {
+            Console.WriteLine("Authentication disabled; requests will be sent without bearer tokens.");
+        }
+
+        using IMcpClient client = clientBuilder.Build();
 
         try
         {

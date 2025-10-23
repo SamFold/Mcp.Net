@@ -24,15 +24,7 @@ class Program
 
         try
         {
-            if (args.Contains("--show-auth-failure"))
-            {
-                // Demonstrate authentication failure with invalid API key
-                options.ApiKey = "invalid-key";
-                Console.WriteLine("\n=== DEMONSTRATING AUTHENTICATION FAILURE WITH INVALID API KEY ===\n");
-                Console.WriteLine("This example will fail with a 401 Unauthorized error\n");
-                await SseClientExample.Run(options);
-            }
-            else if (!string.IsNullOrEmpty(options.ServerUrl))
+            if (!string.IsNullOrEmpty(options.ServerUrl))
             {
                 // Run the SSE client example by default
                 await SseClientExample.Run(options);
@@ -63,20 +55,13 @@ class Program
             "  --url <url>        Server URL for SSE transport (default: http://localhost:5000)"
         );
         Console.WriteLine("  --command <cmd>    Server command for Stdio transport");
-        Console.WriteLine("  --api-key <key>    API key for authentication (default: api-f85d077e-4f8a-48c8-b9ff-ec1bb9e1772c)");
-        Console.WriteLine("  --show-auth-failure Demonstrate authentication failure with invalid API key");
+        Console.WriteLine("  --no-auth         Disable OAuth authentication (anonymous mode)");
         Console.WriteLine("\nExample usage:");
         Console.WriteLine(
-            "  dotnet run                                   # Runs with SSE transport to default endpoint and test API key"
+            "  dotnet run                                   # Runs with SSE transport and demo OAuth credentials"
         );
         Console.WriteLine(
             "  dotnet run -- --url http://localhost:5000    # Explicit SSE transport connection"
-        );
-        Console.WriteLine(
-            "  dotnet run -- --api-key api-2e37dc50-b7a9-4c3d-8a88-99953c99e64b         # Use user2 API key for authentication"
-        );
-        Console.WriteLine(
-            "  dotnet run -- --show-auth-failure           # Show what happens with invalid authentication"
         );
         Console.WriteLine(
             "  dotnet run -- --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\"    # Stdio transport"
@@ -99,10 +84,9 @@ class Program
                 options.ServerCommand = args[i + 1];
                 i++;
             }
-            else if (args[i] == "--api-key" && i + 1 < args.Length)
+            else if (args[i] == "--no-auth")
             {
-                options.ApiKey = args[i + 1];
-                i++;
+                options.AuthMode = AuthMode.None;
             }
         }
 
@@ -114,5 +98,12 @@ public class ClientOptions
 {
     public string? ServerUrl { get; set; }
     public string? ServerCommand { get; set; }
-    public string? ApiKey { get; set; }
+    public AuthMode AuthMode { get; set; } = AuthMode.ClientCredentials;
+    public bool UseAuthentication => AuthMode != AuthMode.None;
+}
+
+public enum AuthMode
+{
+    ClientCredentials,
+    None,
 }

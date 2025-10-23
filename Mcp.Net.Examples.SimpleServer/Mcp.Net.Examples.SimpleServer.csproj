@@ -13,6 +13,10 @@
     <ProjectReference Include="..\Mcp.Net.Core\Mcp.Net.Core.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.ExternalTools\Mcp.Net.Examples.ExternalTools.csproj" />
     <ProjectReference Include="..\Mcp.Net.Server\Mcp.Net.Server.csproj" />
+    <ProjectReference Include="..\Mcp.Net.Client\Mcp.Net.Client.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Mcp.Net.Examples.Shared\DemoOAuthDefaults.cs" Link="DemoOAuthDefaults.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.3" />
@@ -20,5 +24,6 @@
     <PackageReference Include="Google.Apis.CustomSearchAPI.v1" Version="1.67.0.3366" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.59" />
     <PackageReference Include="AngleSharp" Version="1.1.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.1" />
   </ItemGroup>
 </Project>
