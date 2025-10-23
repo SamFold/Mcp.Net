@@ -13,9 +13,13 @@ namespace Mcp.Net.Core.Models.Tools
         [JsonPropertyName("isError")]
         public bool IsError { get; set; }
 
-        [JsonPropertyName("structuredContent")]
+        [JsonPropertyName("structured")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? StructuredContent { get; set; }
+        public JsonElement? Structured { get; set; }
+
+        [JsonPropertyName("resourceLinks")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<ToolCallResourceLink>? ResourceLinks { get; set; }
 
         [JsonPropertyName("_meta")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

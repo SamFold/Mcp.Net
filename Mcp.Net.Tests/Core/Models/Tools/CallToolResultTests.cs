@@ -87,26 +87,33 @@ public class CallToolResultTests
         var result = new ToolCallResult
         {
             IsError = false,
-            StructuredContent = new { count = 3 },
-            Meta = new Dictionary<string, object?> { ["origin"] = "test" }
-        };
-
-        result.Content = new ContentBase[]
-        {
-            new ResourceLinkContent { Uri = "mcp://resource/123", Name = "Example" }
+            Structured = JsonSerializer.SerializeToElement(new { count = 3 }),
+            Meta = new Dictionary<string, object?> { ["origin"] = "test" },
+            ResourceLinks = new List<ToolCallResourceLink>
+            {
+                new() { Uri = "mcp://resource/456", Name = "Linked" }
+            },
+            Content = new ContentBase[]
+            {
+                new ResourceLinkContent { Uri = "mcp://resource/123", Name = "Example" }
+            },
         };
 
         var json = JsonSerializer.Serialize(result);
         var deserialized = JsonSerializer.Deserialize<ToolCallResult>(json);
 
         deserialized.Should().NotBeNull();
-        deserialized!.StructuredContent.Should().NotBeNull();
-        var structured = (JsonElement)deserialized.StructuredContent!;
+        deserialized!.Structured.Should().NotBeNull();
+        var structured = deserialized.Structured!.Value;
         structured.GetProperty("count").GetInt32().Should().Be(3);
 
         deserialized.Content.Should().HaveCount(1);
         deserialized.Content.First().Should().BeOfType<ResourceLinkContent>();
         ((ResourceLinkContent)deserialized.Content.First()).Uri.Should().Be("mcp://resource/123");
+
+        deserialized.ResourceLinks.Should().NotBeNull();
+        deserialized.ResourceLinks!.Should().HaveCount(1);
+        deserialized.ResourceLinks![0].Uri.Should().Be("mcp://resource/456");
 
         deserialized.Meta.Should().NotBeNull();
         ((JsonElement)deserialized.Meta!["origin"]!).GetString().Should().Be("test");

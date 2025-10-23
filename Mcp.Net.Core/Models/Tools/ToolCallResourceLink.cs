@@ -1,9 +1,12 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace Mcp.Net.Core.Models.Resources;
+namespace Mcp.Net.Core.Models.Tools;
 
-public class Resource
+/// <summary>
+/// Represents a lightweight reference to a resource produced by a tool invocation.
+/// </summary>
+public class ToolCallResourceLink
 {
     [JsonPropertyName("uri")]
     public string Uri { get; set; } = string.Empty;
@@ -12,7 +15,6 @@ public class Resource
     public string? Name { get; set; }
 
     [JsonPropertyName("description")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
 
     [JsonPropertyName("mimeType")]
