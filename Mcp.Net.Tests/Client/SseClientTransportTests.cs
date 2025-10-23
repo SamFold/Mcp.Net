@@ -241,6 +241,118 @@ public class SseClientTransportTests
         await transport.CloseAsync();
     }
 
+    [Fact]
+    public async Task StartAsync_ShouldThrowWhenUnauthorizedWithoutChallenge()
+    {
+        var handler = new TestMessageHandler();
+        handler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent(string.Empty),
+            };
+            return response;
+        });
+
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+
+        await FluentActions.Invoking(() => transport.StartAsync())
+            .Should()
+            .ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldSurfaceForbiddenResponse()
+    {
+        var sseStream = new TestSseStream();
+        var handler = new TestMessageHandler();
+
+        handler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        handler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("forbidden")
+        });
+
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+            .Should()
+            .ThrowAsync<HttpRequestException>()
+            .WithMessage("*403*");
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldSurfaceBadRequestResponse()
+    {
+        var sseStream = new TestSseStream();
+        var handler = new TestMessageHandler();
+
+        handler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        handler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("bad request")
+        });
+
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+            .Should()
+            .ThrowAsync<HttpRequestException>()
+            .WithMessage("*400*");
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldSurfaceTokenProviderFailures()
+    {
+        var sseStream = new TestSseStream();
+        var handler = new TestMessageHandler();
+
+        handler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        handler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("unauthorized"),
+            };
+            response.Headers.WwwAuthenticate.ParseAdd("Bearer");
+            return response;
+        });
+
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, new FailingTokenProvider());
+        await transport.StartAsync();
+
+        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+            .Should()
+            .ThrowAsync<HttpRequestException>();
+    }
+
     private sealed class TestMessageHandler : HttpMessageHandler
     {
         private readonly ConcurrentQueue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
@@ -375,6 +487,20 @@ public class SseClientTransportTests
                 new OAuthTokenResponse(_token, DateTimeOffset.UtcNow.AddMinutes(30))
             );
         }
+
+        public Task<OAuthTokenResponse?> RefreshTokenAsync(
+            OAuthTokenRequestContext context,
+            OAuthTokenResponse currentToken,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<OAuthTokenResponse?>(null);
+    }
+
+    private sealed class FailingTokenProvider : IOAuthTokenProvider
+    {
+        public Task<OAuthTokenResponse?> AcquireTokenAsync(
+            OAuthTokenRequestContext context,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<OAuthTokenResponse?>(null);
 
         public Task<OAuthTokenResponse?> RefreshTokenAsync(
             OAuthTokenRequestContext context,

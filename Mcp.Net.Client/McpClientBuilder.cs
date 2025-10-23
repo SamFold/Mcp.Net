@@ -1,3 +1,4 @@
+using System.Threading;
 using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Client.Transport;
@@ -67,6 +68,63 @@ public class McpClientBuilder
     public McpClientBuilder WithOAuthTokenProvider(IOAuthTokenProvider tokenProvider)
     {
         _tokenProvider = tokenProvider;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the client to obtain bearer tokens using the OAuth client credentials grant.
+    /// </summary>
+    public McpClientBuilder WithClientCredentialsAuth(
+        OAuthClientOptions options,
+        HttpClient? httpClient = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _tokenProvider = new ClientCredentialsOAuthTokenProvider(
+            options,
+            httpClient ?? new HttpClient()
+        );
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the client to obtain bearer tokens using the OAuth device authorization flow.
+    /// </summary>
+    public McpClientBuilder WithDeviceCodeAuth(
+        OAuthClientOptions options,
+        Func<DeviceCodeInfo, CancellationToken, Task>? onInteraction = null,
+        HttpClient? httpClient = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _tokenProvider = new DeviceCodeOAuthTokenProvider(
+            options,
+            httpClient ?? new HttpClient(),
+            onInteraction
+        );
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the client to obtain bearer tokens using the OAuth authorization code flow with PKCE.
+    /// </summary>
+    public McpClientBuilder WithAuthorizationCodeAuth(
+        OAuthClientOptions options,
+        Func<
+            AuthorizationCodeRequest,
+            CancellationToken,
+            Task<AuthorizationCodeResult>
+        > interactionHandler,
+        HttpClient? httpClient = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(interactionHandler);
+        _tokenProvider = new AuthorizationCodePkceOAuthTokenProvider(
+            options,
+            httpClient ?? new HttpClient(),
+            interactionHandler
+        );
         return this;
     }
 
