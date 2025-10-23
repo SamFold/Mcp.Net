@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -9,6 +11,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.Shared;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Examples.SimpleClient.Examples;
@@ -52,15 +55,39 @@ public class SseClientExample
             .WithLogger(loggerFactory.CreateLogger("SimpleClient"))
             .UseSseTransport(options.ServerUrl);
 
-        if (options.UseAuthentication)
+        HttpClient? pkceProviderHttpClient = null;
+        HttpClient? pkceInteractionHttpClient = null;
+
+        switch (options.AuthMode)
         {
-            Console.WriteLine("Using demo OAuth client credentials for authentication.");
-            var oauthOptions = DemoOAuthDefaults.CreateClientOptions(baseUri);
-            clientBuilder.WithClientCredentialsAuth(oauthOptions, new HttpClient());
-        }
-        else
-        {
-            Console.WriteLine("Authentication disabled; requests will be sent without bearer tokens.");
+            case AuthMode.ClientCredentials:
+                Console.WriteLine("Using demo OAuth client credentials for authentication.");
+                clientBuilder.WithClientCredentialsAuth(
+                    DemoOAuthDefaults.CreateClientOptions(baseUri),
+                    new HttpClient()
+                );
+                break;
+
+            case AuthMode.AuthorizationCodePkce:
+                Console.WriteLine("Using demo OAuth authorization code flow with PKCE.");
+                var pkceOptions = DemoOAuthDefaults.CreateClientOptions(baseUri);
+                pkceOptions.RedirectUri = DemoOAuthDefaults.DefaultRedirectUri;
+
+                pkceProviderHttpClient = new HttpClient();
+                pkceInteractionHttpClient = new HttpClient(
+                    new HttpClientHandler { AllowAutoRedirect = false }
+                );
+
+                clientBuilder.WithAuthorizationCodeAuth(
+                    pkceOptions,
+                    CreatePkceInteractionHandler(pkceInteractionHttpClient),
+                    pkceProviderHttpClient
+                );
+                break;
+
+            case AuthMode.None:
+                Console.WriteLine("Authentication disabled; requests will be sent without bearer tokens.");
+                break;
         }
 
         using IMcpClient client = clientBuilder.Build();
@@ -106,6 +133,11 @@ public class SseClientExample
         catch (Exception ex)
         {
             Console.WriteLine($"Error: {ex.Message}");
+        }
+        finally
+        {
+            pkceProviderHttpClient?.Dispose();
+            pkceInteractionHttpClient?.Dispose();
         }
     }
 
@@ -345,4 +377,65 @@ public class SseClientExample
             }
         }
     }
+
+    private static Func<
+        AuthorizationCodeRequest,
+        CancellationToken,
+        Task<AuthorizationCodeResult>
+    > CreatePkceInteractionHandler(HttpClient httpClient)
+    {
+        return async (request, cancellationToken) =>
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, request.AuthorizationUri);
+            using var response = await httpClient.SendAsync(
+                message,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken
+            );
+
+            if (!IsRedirectStatus(response.StatusCode))
+            {
+                throw new InvalidOperationException(
+                    $"Authorization endpoint responded with status {response.StatusCode}."
+                );
+            }
+
+            var location = response.Headers.Location
+                ?? throw new InvalidOperationException(
+                    "Authorization server did not provide a redirect location."
+                );
+
+            if (!location.IsAbsoluteUri)
+            {
+                if (request.RedirectUri == null)
+                {
+                    throw new InvalidOperationException(
+                        "Redirect URI is relative and no base redirect URI is available."
+                    );
+                }
+
+                location = new Uri(request.RedirectUri, location);
+            }
+
+            var query = QueryHelpers.ParseQuery(location.Query);
+            if (!query.TryGetValue("code", out var codeValues))
+            {
+                throw new InvalidOperationException("Authorization server did not return an authorization code.");
+            }
+
+            var code = codeValues.ToString();
+            var returnedState = query.TryGetValue("state", out var stateValues)
+                ? stateValues.ToString()
+                : string.Empty;
+
+            return new AuthorizationCodeResult(code, returnedState);
+        };
+    }
+
+    private static bool IsRedirectStatus(HttpStatusCode statusCode) =>
+        statusCode == HttpStatusCode.MovedPermanently
+        || statusCode == HttpStatusCode.Found
+        || statusCode == HttpStatusCode.SeeOther
+        || statusCode == HttpStatusCode.TemporaryRedirect
+        || (int)statusCode == 308; // Permanent Redirect
 }

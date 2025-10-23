@@ -56,6 +56,7 @@ class Program
         );
         Console.WriteLine("  --command <cmd>    Server command for Stdio transport");
         Console.WriteLine("  --no-auth         Disable OAuth authentication (anonymous mode)");
+        Console.WriteLine("  --auth-mode <mode>  Authentication mode: client (default), pkce, none");
         Console.WriteLine("\nExample usage:");
         Console.WriteLine(
             "  dotnet run                                   # Runs with SSE transport and demo OAuth credentials"
@@ -88,6 +89,21 @@ class Program
             {
                 options.AuthMode = AuthMode.None;
             }
+            else if (args[i] == "--auth-mode" && i + 1 < args.Length)
+            {
+                var mode = args[i + 1];
+                i++;
+                options.AuthMode = mode.ToLowerInvariant() switch
+                {
+                    "none" => AuthMode.None,
+                    "pkce" or "code" => AuthMode.AuthorizationCodePkce,
+                    _ => AuthMode.ClientCredentials,
+                };
+            }
+            else if (args[i] == "--pkce")
+            {
+                options.AuthMode = AuthMode.AuthorizationCodePkce;
+            }
         }
 
         return options;
@@ -105,5 +121,6 @@ public class ClientOptions
 public enum AuthMode
 {
     ClientCredentials,
+    AuthorizationCodePkce,
     None,
 }
