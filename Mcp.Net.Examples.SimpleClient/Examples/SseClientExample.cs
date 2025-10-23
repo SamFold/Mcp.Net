@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
@@ -11,6 +12,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.Shared;
+using Mcp.Net.Examples.SimpleClient.Authorization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 
@@ -69,14 +71,31 @@ public class SseClientExample
                 break;
 
             case AuthMode.AuthorizationCodePkce:
+            {
                 Console.WriteLine("Using demo OAuth authorization code flow with PKCE.");
                 var pkceOptions = DemoOAuthDefaults.CreateClientOptions(baseUri);
-                pkceOptions.RedirectUri = DemoOAuthDefaults.DefaultRedirectUri;
+                var redirectUri = DemoOAuthDefaults.DefaultRedirectUri;
+                pkceOptions.RedirectUri = redirectUri;
 
                 pkceProviderHttpClient = new HttpClient();
                 pkceInteractionHttpClient = new HttpClient(
                     new HttpClientHandler { AllowAutoRedirect = false }
                 );
+
+                var registration = await DemoDynamicClientRegistrar.RegisterAsync(
+                    baseUri,
+                    clientName: "Simple Client PKCE Sample",
+                    redirectUri,
+                    DemoOAuthDefaults.Scopes,
+                    pkceProviderHttpClient,
+                    CancellationToken.None
+                );
+
+                pkceOptions.ClientId = registration.ClientId;
+                pkceOptions.ClientSecret = registration.ClientSecret;
+                pkceOptions.RedirectUri = registration.RedirectUris[0];
+
+                Console.WriteLine($"Dynamic client registered with ID {registration.ClientId}.");
 
                 clientBuilder.WithAuthorizationCodeAuth(
                     pkceOptions,
@@ -84,6 +103,7 @@ public class SseClientExample
                     pkceProviderHttpClient
                 );
                 break;
+            }
 
             case AuthMode.None:
                 Console.WriteLine("Authentication disabled; requests will be sent without bearer tokens.");
@@ -289,6 +309,20 @@ public class SseClientExample
                 Console.WriteLine(
                     $"Sample resource '{first.Uri}' returned {contents.Length} content item(s)."
                 );
+
+                var preview = contents
+                    .FirstOrDefault(content => !string.IsNullOrWhiteSpace(content.Text))
+                    ?.Text;
+
+                if (!string.IsNullOrWhiteSpace(preview))
+                {
+                    Console.WriteLine("Preview:");
+                    Console.WriteLine(Indent(PreviewText(preview!, 200)));
+                }
+            }
+            else
+            {
+                Console.WriteLine("No resources published by the server.");
             }
         }
         catch (NotImplementedException)
@@ -324,6 +358,20 @@ public class SseClientExample
                 Console.WriteLine(
                     $"Prompt '{first.Name}' contains {promptMessages.Length} message(s)."
                 );
+
+                if (promptMessages.Length > 0)
+                {
+                    var previewJson = JsonSerializer.Serialize(
+                        promptMessages[0],
+                        new JsonSerializerOptions { WriteIndented = true }
+                    );
+                    Console.WriteLine("First prompt message:");
+                    Console.WriteLine(Indent(previewJson));
+                }
+            }
+            else
+            {
+                Console.WriteLine("No prompts published by the server.");
             }
         }
         catch (NotImplementedException)
@@ -334,6 +382,33 @@ public class SseClientExample
         {
             Console.WriteLine($"Unable to inspect prompts: {ex.Message}");
         }
+    }
+
+    private static string PreviewText(string text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = text.Replace("\r\n", "\n");
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized.Substring(0, maxLength).TrimEnd() + "…";
+    }
+
+    private static string Indent(string value, string indent = "  ")
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var lines = value.Split('\n', StringSplitOptions.None);
+        return string.Join(Environment.NewLine, lines.Select(line => indent + line));
     }
 
     public static void DisplayToolResponse(ToolCallResult result)

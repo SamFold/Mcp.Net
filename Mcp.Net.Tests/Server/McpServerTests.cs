@@ -1,10 +1,14 @@
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Exceptions;
+using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server;
@@ -248,5 +252,112 @@ public class McpServerTests
         tool.GetProperty("name").GetString().Should().Be(toolName);
         tool.GetProperty("description").GetString().Should().Be(toolDescription);
         tool.GetProperty("inputSchema").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RegisterResource_Should_List_And_Read()
+    {
+        var resource = new Resource
+        {
+            Uri = "mcp://test/resource",
+            Name = "Test Resource",
+            Description = "Resource used by unit test",
+            MimeType = "text/plain",
+        };
+
+        var contents = new[]
+        {
+            new ResourceContent
+            {
+                Uri = resource.Uri,
+                MimeType = "text/plain",
+                Text = "Hello from the resource catalogue.",
+            },
+        };
+
+        _server.RegisterResource(resource, contents);
+
+        var listRequest = new JsonRpcRequestMessage("2.0", "res-list", "resources/list", null);
+        var listResponse = await _server.ProcessJsonRpcRequest(listRequest);
+        listResponse.Error.Should().BeNull();
+
+        var listPayload = JsonSerializer.SerializeToElement(listResponse.Result!);
+        listPayload
+            .GetProperty("resources")
+            .EnumerateArray()
+            .Should()
+            .ContainSingle(r => r.GetProperty("uri").GetString() == resource.Uri);
+
+        var readParams = JsonSerializer.SerializeToElement(new { uri = resource.Uri });
+        var readRequest = new JsonRpcRequestMessage(
+            "2.0",
+            "res-read",
+            "resources/read",
+            readParams
+        );
+
+        var readResponse = await _server.ProcessJsonRpcRequest(readRequest);
+        readResponse.Error.Should().BeNull();
+
+        var readPayload = JsonSerializer.SerializeToElement(readResponse.Result!);
+        readPayload
+            .GetProperty("contents")
+            .EnumerateArray()
+            .Should()
+            .ContainSingle(c => c.GetProperty("text").GetString() == contents[0].Text);
+    }
+
+    [Fact]
+    public async Task RegisterPrompt_Should_List_And_ReturnMessages()
+    {
+        var prompt = new Prompt
+        {
+            Name = "demo",
+            Description = "Prompt used by unit test",
+        };
+
+        Task<object[]> MessageFactory(CancellationToken _)
+        {
+            object[] messages =
+            {
+                new
+                {
+                    role = "system",
+                    content = new ContentBase[]
+                    {
+                        new TextContent { Text = "You are a test harness." },
+                    },
+                },
+            };
+
+            return Task.FromResult(messages);
+        }
+
+        _server.RegisterPrompt(prompt, MessageFactory);
+
+        var listRequest = new JsonRpcRequestMessage("2.0", "prompt-list", "prompts/list", null);
+        var listResponse = await _server.ProcessJsonRpcRequest(listRequest);
+        listResponse.Error.Should().BeNull();
+
+        var listPayload = JsonSerializer.SerializeToElement(listResponse.Result!);
+        listPayload
+            .GetProperty("prompts")
+            .EnumerateArray()
+            .Should()
+            .ContainSingle(p => p.GetProperty("name").GetString() == prompt.Name);
+
+        var getParams = JsonSerializer.SerializeToElement(new { name = prompt.Name });
+        var getRequest = new JsonRpcRequestMessage(
+            "2.0",
+            "prompt-get",
+            "prompts/get",
+            getParams
+        );
+
+        var getResponse = await _server.ProcessJsonRpcRequest(getRequest);
+        getResponse.Error.Should().BeNull();
+
+        var promptPayload = JsonSerializer.SerializeToElement(getResponse.Result!);
+        promptPayload.GetProperty("messages").GetArrayLength().Should().Be(1);
     }
 }

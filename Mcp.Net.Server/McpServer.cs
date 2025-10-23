@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -6,12 +7,15 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Core.Models.Messages;
+using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System.Threading;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
 public class McpServer : IMcpServer
@@ -29,6 +33,14 @@ public class McpServer : IMcpServer
     private readonly Dictionary<string, Tool> _tools = new();
     private readonly Dictionary<string, Func<JsonElement?, Task<ToolCallResult>>> _toolHandlers =
         new();
+    private readonly Dictionary<string, ResourceRegistration> _resources =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _resourceOrder = new();
+    private readonly Dictionary<string, PromptRegistration> _prompts =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _promptOrder = new();
+    private readonly object _resourceLock = new();
+    private readonly object _promptLock = new();
     private IServerTransport? _transport;
 
     private readonly ServerInfo _serverInfo;
@@ -66,6 +78,176 @@ public class McpServer : IMcpServer
             serverInfo.Name,
             serverInfo.Version
         );
+    }
+
+    /// <summary>
+    /// Registers a resource that the server can advertise and serve to clients.
+    /// </summary>
+    /// <param name="resource">Metadata describing the resource.</param>
+    /// <param name="reader">Delegate responsible for producing the resource contents when requested.</param>
+    /// <param name="overwrite">When true, replaces an existing resource with the same URI.</param>
+    public void RegisterResource(
+        Resource resource,
+        Func<CancellationToken, Task<ResourceContent[]>> reader,
+        bool overwrite = false
+    )
+    {
+        if (resource == null)
+        {
+            throw new ArgumentNullException(nameof(resource));
+        }
+
+        if (reader == null)
+        {
+            throw new ArgumentNullException(nameof(reader));
+        }
+
+        if (string.IsNullOrWhiteSpace(resource.Uri))
+        {
+            throw new ArgumentException("Resource URI must be specified.", nameof(resource));
+        }
+
+        lock (_resourceLock)
+        {
+            var key = resource.Uri;
+            if (_resources.ContainsKey(key))
+            {
+                if (!overwrite)
+                {
+                    throw new InvalidOperationException(
+                        $"Resource '{resource.Uri}' is already registered."
+                    );
+                }
+            }
+            else
+            {
+                _resourceOrder.Add(key);
+            }
+
+            _resources[key] = new ResourceRegistration(CloneResource(resource), reader);
+        }
+
+        _logger.LogInformation("Registered resource: {Uri}", resource.Uri);
+    }
+
+    /// <summary>
+    /// Registers a resource with static content.
+    /// </summary>
+    public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false)
+    {
+        if (contents == null)
+        {
+            throw new ArgumentNullException(nameof(contents));
+        }
+
+        RegisterResource(resource, _ => Task.FromResult(contents), overwrite);
+    }
+
+    /// <summary>
+    /// Removes a previously registered resource.
+    /// </summary>
+    public bool UnregisterResource(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            throw new ArgumentException("Resource URI must be specified.", nameof(uri));
+        }
+
+        lock (_resourceLock)
+        {
+            var removed = _resources.Remove(uri);
+            if (removed)
+            {
+                _resourceOrder.Remove(uri);
+            }
+
+            return removed;
+        }
+    }
+
+    /// <summary>
+    /// Registers a prompt that the server can advertise to clients.
+    /// </summary>
+    /// <param name="prompt">Prompt metadata.</param>
+    /// <param name="messageFactory">Delegate that builds the prompt messages when requested.</param>
+    /// <param name="overwrite">When true, replaces an existing prompt with the same name.</param>
+    public void RegisterPrompt(
+        Prompt prompt,
+        Func<CancellationToken, Task<object[]>> messageFactory,
+        bool overwrite = false
+    )
+    {
+        if (prompt == null)
+        {
+            throw new ArgumentNullException(nameof(prompt));
+        }
+
+        if (messageFactory == null)
+        {
+            throw new ArgumentNullException(nameof(messageFactory));
+        }
+
+        if (string.IsNullOrWhiteSpace(prompt.Name))
+        {
+            throw new ArgumentException("Prompt name must be specified.", nameof(prompt));
+        }
+
+        lock (_promptLock)
+        {
+            var key = prompt.Name;
+            if (_prompts.ContainsKey(key))
+            {
+                if (!overwrite)
+                {
+                    throw new InvalidOperationException(
+                        $"Prompt '{prompt.Name}' is already registered."
+                    );
+                }
+            }
+            else
+            {
+                _promptOrder.Add(key);
+            }
+
+            _prompts[key] = new PromptRegistration(ClonePrompt(prompt), messageFactory);
+        }
+
+        _logger.LogInformation("Registered prompt: {PromptName}", prompt.Name);
+    }
+
+    /// <summary>
+    /// Registers a prompt with static messages.
+    /// </summary>
+    public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false)
+    {
+        if (messages == null)
+        {
+            throw new ArgumentNullException(nameof(messages));
+        }
+
+        RegisterPrompt(prompt, _ => Task.FromResult(messages), overwrite);
+    }
+
+    /// <summary>
+    /// Removes a previously registered prompt.
+    /// </summary>
+    public bool UnregisterPrompt(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Prompt name must be specified.", nameof(name));
+        }
+
+        lock (_promptLock)
+        {
+            var removed = _prompts.Remove(name);
+            if (removed)
+            {
+                _promptOrder.Remove(name);
+            }
+
+            return removed;
+        }
     }
 
     public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
@@ -354,10 +536,26 @@ public class McpServer : IMcpServer
     private Task<object> HandleResourcesList(ResourcesListRequest _)
     {
         _logger.LogDebug("Handling resources/list request");
-        return Task.FromResult<object>(new { resources = Array.Empty<object>() });
+
+        List<Resource> resources;
+        lock (_resourceLock)
+        {
+            resources = new List<Resource>(_resourceOrder.Count);
+            foreach (var uri in _resourceOrder)
+            {
+                if (_resources.TryGetValue(uri, out var registration))
+                {
+                    resources.Add(CloneResource(registration.Resource));
+                }
+            }
+        }
+
+        return Task.FromResult<object>(
+            new ResourcesListResponse { Resources = resources.ToArray() }
+        );
     }
 
-    private Task<object> HandleResourcesRead(ResourcesReadRequest request)
+    private async Task<object> HandleResourcesRead(ResourcesReadRequest request)
     {
         _logger.LogDebug("Handling resources/read request");
 
@@ -366,17 +564,60 @@ public class McpServer : IMcpServer
             throw new McpException(ErrorCode.InvalidParams, "Invalid URI");
         }
 
+        ResourceRegistration? registration;
+        lock (_resourceLock)
+        {
+            if (!_resources.TryGetValue(request.Uri, out registration))
+            {
+                _logger.LogWarning("Resource not found: {Uri}", request.Uri);
+                throw new McpException(
+                    ErrorCode.ResourceNotFound,
+                    $"Resource not found: {request.Uri}"
+                );
+            }
+        }
+
+        ResourceContent[] contents;
+        try
+        {
+            contents = registration.Reader != null
+                ? await registration.Reader(CancellationToken.None).ConfigureAwait(false)
+                : Array.Empty<ResourceContent>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading resource {Uri}", request.Uri);
+            throw new McpException(
+                ErrorCode.InternalError,
+                $"Failed to read resource: {request.Uri}"
+            );
+        }
+
         _logger.LogInformation("Resource read requested for URI: {Uri}", request.Uri);
-        throw new McpException(ErrorCode.ResourceNotFound, $"Resource not found: {request.Uri}");
+        return new ResourceReadResponse { Contents = contents ?? Array.Empty<ResourceContent>() };
     }
 
     private Task<object> HandlePromptsList(PromptsListRequest _)
     {
         _logger.LogDebug("Handling prompts/list request");
-        return Task.FromResult<object>(new { prompts = Array.Empty<object>() });
+
+        List<Prompt> prompts;
+        lock (_promptLock)
+        {
+            prompts = new List<Prompt>(_promptOrder.Count);
+            foreach (var name in _promptOrder)
+            {
+                if (_prompts.TryGetValue(name, out var registration))
+                {
+                    prompts.Add(ClonePrompt(registration.Prompt));
+                }
+            }
+        }
+
+        return Task.FromResult<object>(new PromptsListResponse { Prompts = prompts.ToArray() });
     }
 
-    private Task<object> HandlePromptsGet(PromptsGetRequest request)
+    private async Task<object> HandlePromptsGet(PromptsGetRequest request)
     {
         _logger.LogDebug("Handling prompts/get request");
 
@@ -385,9 +626,99 @@ public class McpServer : IMcpServer
             throw new McpException(ErrorCode.InvalidParams, "Invalid prompt name");
         }
 
+        PromptRegistration? registration;
+        lock (_promptLock)
+        {
+            if (!_prompts.TryGetValue(request.Name, out registration))
+            {
+                _logger.LogWarning("Prompt not found: {Name}", request.Name);
+                throw new McpException(
+                    ErrorCode.PromptNotFound,
+                    $"Prompt not found: {request.Name}"
+                );
+            }
+        }
+
+        object[] messages;
+        try
+        {
+            messages = registration.MessagesFactory != null
+                ? await registration.MessagesFactory(CancellationToken.None).ConfigureAwait(false)
+                : Array.Empty<object>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating prompt {Name}", request.Name);
+            throw new McpException(
+                ErrorCode.InternalError,
+                $"Failed to generate prompt: {request.Name}"
+            );
+        }
+
         _logger.LogInformation("Prompt requested: {Name}", request.Name);
-        throw new McpException(ErrorCode.PromptNotFound, $"Prompt not found: {request.Name}");
+        return new PromptsGetResponse { Messages = messages ?? Array.Empty<object>() };
     }
+
+    private static Resource CloneResource(Resource source)
+    {
+        return new Resource
+        {
+            Uri = source.Uri,
+            Name = source.Name,
+            Description = source.Description,
+            MimeType = source.MimeType,
+            Annotations = CloneDictionary(source.Annotations),
+            Meta = CloneDictionary(source.Meta),
+        };
+    }
+
+    private static Prompt ClonePrompt(Prompt source)
+    {
+        return new Prompt
+        {
+            Name = source.Name,
+            Title = source.Title,
+            Description = source.Description,
+            Arguments = source.Arguments?.Select(ClonePromptArgument).ToArray(),
+            Annotations = CloneDictionary(source.Annotations),
+            Meta = CloneDictionary(source.Meta),
+        };
+    }
+
+    private static PromptArgument ClonePromptArgument(PromptArgument source)
+    {
+        return new PromptArgument
+        {
+            Name = source.Name,
+            Description = source.Description,
+            Required = source.Required,
+            Default = source.Default,
+            Annotations = CloneDictionary(source.Annotations),
+            Meta = CloneDictionary(source.Meta),
+        };
+    }
+
+    private static IDictionary<string, object?>? CloneDictionary(
+        IDictionary<string, object?>? source
+    )
+    {
+        if (source == null)
+        {
+            return null;
+        }
+
+        return new Dictionary<string, object?>(source);
+    }
+
+    private sealed record ResourceRegistration(
+        Resource Resource,
+        Func<CancellationToken, Task<ResourceContent[]>> Reader
+    );
+
+    private sealed record PromptRegistration(
+        Prompt Prompt,
+        Func<CancellationToken, Task<object[]>> MessagesFactory
+    );
 
     /// <summary>
     /// Register a method handler for a specific request type

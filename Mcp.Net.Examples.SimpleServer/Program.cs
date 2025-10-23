@@ -139,6 +139,13 @@ class Program
         });
         var app = builder.Build();
 
+        var catalogLogger = app.Services
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("SampleContentCatalog");
+        var mcpServerInstance = app.Services.GetRequiredService<McpServer>();
+        SampleContentCatalog.Register(mcpServerInstance, catalogLogger);
+        Console.WriteLine("Seeded demo resources and prompts.");
+
         if (options.NoAuth)
         {
             Console.WriteLine("Authentication is DISABLED - server allows anonymous access.");
