@@ -21,9 +21,10 @@ public class SseClientTransportTests
     public async Task StartAsync_ShouldOpenSseStreamAndCaptureSession()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
 
-        handler.EnqueueResponse(request =>
+        streamHandler.EnqueueResponse(request =>
         {
             request.Method.Should().Be(HttpMethod.Get);
             request.RequestUri.Should().Be(new Uri("http://localhost:5000/mcp"));
@@ -35,12 +36,19 @@ public class SseClientTransportTests
             return response;
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
 
         await transport.StartAsync();
 
-        handler.RequestCount.Should().Be(1);
+        streamHandler.RequestCount.Should().Be(1);
 
         await sseStream.CompleteAsync();
         await transport.CloseAsync();
@@ -50,9 +58,10 @@ public class SseClientTransportTests
     public async Task SendRequestAsync_ShouldIncludeSessionAndNegotiatedHeaders()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
 
-        handler.EnqueueResponse(request =>
+        streamHandler.EnqueueResponse(request =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-456");
@@ -62,7 +71,7 @@ public class SseClientTransportTests
 
         string? initializeRequestId = null;
 
-        handler.EnqueueResponse(request =>
+        requestHandler.EnqueueResponse(request =>
         {
             request.Method.Should().Be(HttpMethod.Post);
             request.Headers.TryGetValues("Mcp-Session-Id", out var sessionHeaders)
@@ -83,7 +92,7 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(request =>
+        requestHandler.EnqueueResponse(request =>
         {
             request.Method.Should().Be(HttpMethod.Post);
             request.Headers.TryGetValues("MCP-Protocol-Version", out var protocolHeaders)
@@ -98,8 +107,15 @@ public class SseClientTransportTests
             return response;
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
 
         await transport.StartAsync();
 
@@ -157,8 +173,18 @@ public class SseClientTransportTests
         });
 
         var tokenProvider = new TestTokenProvider("token-123");
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, tokenProvider);
+        using var streamClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        using var requestClient = new HttpClient(new TestMessageHandler())
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(
+            requestClient,
+            streamClient,
+            NullLogger.Instance,
+            null,
+            tokenProvider
+        );
 
         await transport.StartAsync();
         tokenProvider.AcquireCount.Should().Be(1);
@@ -171,10 +197,11 @@ public class SseClientTransportTests
     public async Task SendRequestAsync_ShouldRetryWithOAuthTokenOnUnauthorized()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
         string? initializeRequestId = null;
 
-        handler.EnqueueResponse(request =>
+        streamHandler.EnqueueResponse(request =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-abc");
@@ -182,7 +209,7 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(request =>
+        requestHandler.EnqueueResponse(request =>
         {
             request.Headers.Authorization.Should().BeNull();
             var body = request.Content!.ReadAsStringAsync().Result;
@@ -196,7 +223,7 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(request =>
+        requestHandler.EnqueueResponse(request =>
         {
             request.Headers.Authorization.Should().NotBeNull();
             request.Headers.Authorization!.Scheme.Should().Be("Bearer");
@@ -209,8 +236,21 @@ public class SseClientTransportTests
         });
 
         var tokenProvider = new TestTokenProvider("token-post");
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, tokenProvider);
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(
+            requestClient,
+            streamClient,
+            NullLogger.Instance,
+            null,
+            tokenProvider
+        );
 
         await transport.StartAsync();
 
@@ -254,8 +294,15 @@ public class SseClientTransportTests
             return response;
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        using var streamClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(new TestMessageHandler())
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
 
         await FluentActions.Invoking(() => transport.StartAsync())
             .Should()
@@ -266,9 +313,10 @@ public class SseClientTransportTests
     public async Task SendRequestAsync_ShouldSurfaceForbiddenResponse()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
 
-        handler.EnqueueResponse(_ =>
+        streamHandler.EnqueueResponse(_ =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
@@ -276,13 +324,20 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        requestHandler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
         {
             Content = new StringContent("forbidden")
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
         await transport.StartAsync();
 
         await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
@@ -295,9 +350,10 @@ public class SseClientTransportTests
     public async Task SendRequestAsync_ShouldSurfaceBadRequestResponse()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
 
-        handler.EnqueueResponse(_ =>
+        streamHandler.EnqueueResponse(_ =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
@@ -305,13 +361,20 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        requestHandler.EnqueueResponse(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
         {
             Content = new StringContent("bad request")
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance);
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
         await transport.StartAsync();
 
         await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
@@ -324,9 +387,10 @@ public class SseClientTransportTests
     public async Task SendRequestAsync_ShouldSurfaceTokenProviderFailures()
     {
         var sseStream = new TestSseStream();
-        var handler = new TestMessageHandler();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
 
-        handler.EnqueueResponse(_ =>
+        streamHandler.EnqueueResponse(_ =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK);
             response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
@@ -334,7 +398,7 @@ public class SseClientTransportTests
             return response;
         });
 
-        handler.EnqueueResponse(_ =>
+        requestHandler.EnqueueResponse(_ =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.Unauthorized)
             {
@@ -344,8 +408,21 @@ public class SseClientTransportTests
             return response;
         });
 
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
-        var transport = new SseClientTransport(httpClient, NullLogger.Instance, null, new FailingTokenProvider());
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(
+            requestClient,
+            streamClient,
+            NullLogger.Instance,
+            null,
+            new FailingTokenProvider()
+        );
         await transport.StartAsync();
 
         await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))

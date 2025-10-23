@@ -138,6 +138,7 @@ public abstract class McpClient : IMcpClient, IDisposable
             ClientInfo = _clientInfo,
         };
 
+        _logger?.LogInformation("Sending initialize request to MCP server.");
         var response = await SendRequest("initialize", initializeParams);
 
         try
@@ -145,6 +146,10 @@ public abstract class McpClient : IMcpClient, IDisposable
             var initializeResponse = DeserializeResponse<InitializeResponse>(response);
             if (initializeResponse != null)
             {
+                _logger?.LogDebug(
+                    "Initialize response received with protocol {ProtocolVersion}.",
+                    initializeResponse.ProtocolVersion
+                );
                 if (
                     string.IsNullOrWhiteSpace(initializeResponse.ProtocolVersion)
                     || !s_supportedProtocolVersions.Contains(initializeResponse.ProtocolVersion)

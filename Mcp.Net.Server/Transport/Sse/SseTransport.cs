@@ -99,7 +99,7 @@ public class SseTransport : ServerTransportBase
 
     /// <inheritdoc />
     /// <remarks>Marks the transport as started and logs connection startup.</remarks>
-    public override Task StartAsync()
+    public override async Task StartAsync()
     {
         if (_isStarted)
         {
@@ -111,9 +111,39 @@ public class SseTransport : ServerTransportBase
         {
             _isStarted = true;
             Logger.LogInformation("SSE transport started for session {SessionId}", SessionId);
+            // Flush headers immediately so clients finish the SSE handshake before any events are sent.
+            await FlushHeadersAsync();
+            await SendHandshakeCommentAsync();
         }
+    }
 
-        return Task.CompletedTask;
+    private async Task FlushHeadersAsync()
+    {
+        try
+        {
+            await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
+            Logger.LogDebug("SSE headers flushed for session {SessionId}", SessionId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogTransportError(ex, SessionId, "FlushHeadersAsync", TRANSPORT_TYPE);
+            throw;
+        }
+    }
+
+    private async Task SendHandshakeCommentAsync()
+    {
+        try
+        {
+            await ResponseWriter.WriteAsync(":\n\n", CancellationTokenSource.Token);
+            await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
+            Logger.LogDebug("SSE handshake comment sent for session {SessionId}", SessionId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogTransportError(ex, SessionId, "SendHandshakeCommentAsync", TRANSPORT_TYPE);
+            throw;
+        }
     }
 
     /// <inheritdoc />

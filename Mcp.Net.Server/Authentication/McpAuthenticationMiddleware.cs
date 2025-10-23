@@ -292,9 +292,31 @@ public class McpAuthenticationMiddleware
             Uri.TryCreate(oauthOptions.ResourceMetadataPath, UriKind.Absolute, out var absoluteUri)
         )
         {
-            return absoluteUri.ToString();
+            if (
+                string.Equals(absoluteUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    absoluteUri.Scheme,
+                    Uri.UriSchemeHttps,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+            {
+                return absoluteUri.ToString();
+            }
+
+            // For non-HTTP absolute URIs (e.g., file://), reuse the authority derived below but keep the pathname.
+            return CombineAuthorityWithPath(context, oauthOptions, absoluteUri.AbsolutePath);
         }
 
+        return CombineAuthorityWithPath(context, oauthOptions, oauthOptions.ResourceMetadataPath);
+    }
+
+    private static string? CombineAuthorityWithPath(
+        HttpContext context,
+        OAuthResourceServerOptions oauthOptions,
+        string candidatePath
+    )
+    {
         string? authority = null;
         if (
             !string.IsNullOrWhiteSpace(oauthOptions.Resource)
@@ -313,9 +335,9 @@ public class McpAuthenticationMiddleware
             return null;
         }
 
-        var path = oauthOptions.ResourceMetadataPath.StartsWith("/")
-            ? oauthOptions.ResourceMetadataPath
-            : "/" + oauthOptions.ResourceMetadataPath;
+        var path = candidatePath.StartsWith("/")
+            ? candidatePath
+            : "/" + candidatePath;
 
         return $"{authority.TrimEnd('/')}{path}";
     }

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Mcp.Net.Client.Authentication;
@@ -20,8 +21,10 @@ namespace Mcp.Net.Client.Transport;
 public class SseClientTransport : ClientTransportBase
 {
     private const string DefaultEndpointPath = "/mcp";
-    private readonly HttpClient _httpClient;
-    private readonly bool _ownsHttpClient;
+    private readonly HttpClient _requestHttpClient;
+    private readonly HttpClient _streamHttpClient;
+    private readonly bool _ownsRequestHttpClient;
+    private readonly bool _ownsStreamHttpClient;
     private readonly Uri _endpointUri;
     private readonly string? _apiKey;
     private readonly OAuthTokenManager _tokenManager;
@@ -46,12 +49,14 @@ public class SseClientTransport : ClientTransportBase
         IOAuthTokenProvider? tokenProvider = null
     )
         : this(
-            CreateHttpClient(baseUrl, out var endpointUri),
+            CreateRequestClient(baseUrl, out var endpointUri, out var authorityUri),
+            CreateStreamClient(authorityUri),
             logger,
             apiKey,
             endpointUri,
             tokenProvider,
-            ownsClient: true
+            ownsRequestClient: true,
+            ownsStreamClient: true
         ) { }
 
     /// <summary>
@@ -61,43 +66,97 @@ public class SseClientTransport : ClientTransportBase
     /// <param name="logger">Optional logger.</param>
     /// <param name="apiKey">Optional API key for authentication.</param>
     /// <param name="tokenProvider">Optional OAuth token provider used to acquire bearer tokens.</param>
+    /// <param name="streamHttpClient">
+    /// Optional HTTP client dedicated to the SSE stream. When not supplied, a new client is created
+    /// based on the request client's authority.
+    /// </param>
     public SseClientTransport(
         HttpClient httpClient,
+        ILogger? logger = null,
+        string? apiKey = null,
+        IOAuthTokenProvider? tokenProvider = null,
+        HttpClient? streamHttpClient = null
+    )
+        : this(
+            httpClient ?? throw new ArgumentNullException(nameof(httpClient)),
+            streamHttpClient
+                ?? CreateStreamClient(GetAuthorityUri(ResolveEndpointUri(httpClient?.BaseAddress))),
+            logger,
+            apiKey,
+            ResolveEndpointUri(httpClient?.BaseAddress),
+            tokenProvider,
+            ownsRequestClient: false,
+            ownsStreamClient: streamHttpClient == null
+        ) { }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SseClientTransport"/> class using dedicated clients for requests and streaming.
+    /// </summary>
+    /// <param name="requestHttpClient">HTTP client used for JSON-RPC POST requests.</param>
+    /// <param name="streamHttpClient">HTTP client used for the SSE stream.</param>
+    /// <param name="logger">Optional logger.</param>
+    /// <param name="apiKey">Optional API key for authentication.</param>
+    /// <param name="tokenProvider">Optional OAuth token provider used to acquire bearer tokens.</param>
+    public SseClientTransport(
+        HttpClient requestHttpClient,
+        HttpClient streamHttpClient,
         ILogger? logger = null,
         string? apiKey = null,
         IOAuthTokenProvider? tokenProvider = null
     )
         : this(
-            httpClient ?? throw new ArgumentNullException(nameof(httpClient)),
+            requestHttpClient ?? throw new ArgumentNullException(nameof(requestHttpClient)),
+            streamHttpClient ?? throw new ArgumentNullException(nameof(streamHttpClient)),
             logger,
             apiKey,
-            ResolveEndpointUri(httpClient.BaseAddress),
+            ResolveEndpointUri(
+                requestHttpClient?.BaseAddress ?? streamHttpClient?.BaseAddress
+            ),
             tokenProvider,
-            ownsClient: false
+            ownsRequestClient: false,
+            ownsStreamClient: false
         ) { }
 
     private SseClientTransport(
         HttpClient httpClient,
+        HttpClient streamHttpClient,
         ILogger? logger,
         string? apiKey,
         Uri endpointUri,
         IOAuthTokenProvider? tokenProvider,
-        bool ownsClient
+        bool ownsRequestClient,
+        bool ownsStreamClient
     )
         : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
     {
-        _httpClient = httpClient;
+        _requestHttpClient = httpClient;
+        _streamHttpClient = streamHttpClient;
         _endpointUri = endpointUri;
-        _ownsHttpClient = ownsClient;
+        _ownsRequestHttpClient = ownsRequestClient;
+        _ownsStreamHttpClient = ownsStreamClient;
         _apiKey = apiKey;
         _tokenManager = new OAuthTokenManager(tokenProvider, logger);
 
-        if (
-            !string.IsNullOrEmpty(_apiKey)
-            && !_httpClient.DefaultRequestHeaders.Contains("X-API-Key")
-        )
+        EnsureClientHeaders(_requestHttpClient, endpointUri);
+        EnsureClientHeaders(_streamHttpClient, endpointUri);
+
+        if (!string.IsNullOrEmpty(_apiKey))
         {
-            _httpClient.DefaultRequestHeaders.Add("X-API-Key", _apiKey);
+            AddApiKeyHeader(_requestHttpClient, _apiKey);
+            AddApiKeyHeader(_streamHttpClient, _apiKey);
+        }
+    }
+
+    private static void EnsureClientHeaders(HttpClient client, Uri endpointUri)
+    {
+        if (client.BaseAddress == null)
+        {
+            client.BaseAddress = new Uri(endpointUri.GetLeftPart(UriPartial.Authority));
+        }
+
+        if (client.Timeout != Timeout.InfiniteTimeSpan)
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
         }
     }
 
@@ -117,6 +176,10 @@ public class SseClientTransport : ClientTransportBase
         Logger.LogDebug("Opening SSE stream at {Endpoint}", _endpointUri);
 
         var response = await OpenSseStreamAsync();
+        Logger.LogInformation(
+            "SSE stream HTTP status: {StatusCode}",
+            response.StatusCode
+        );
 
         if (!response.IsSuccessStatusCode)
         {
@@ -129,16 +192,24 @@ public class SseClientTransport : ClientTransportBase
         _sessionId = ExtractHeader(response.Headers, "Mcp-Session-Id");
         if (string.IsNullOrWhiteSpace(_sessionId))
         {
+            Logger.LogError(
+                "SSE stream established but server did not provide Mcp-Session-Id header. Headers: {Headers}",
+                string.Join(
+                    "; ",
+                    response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")
+                )
+            );
             response.Dispose();
             throw new InvalidOperationException("Server did not return a session identifier.");
         }
 
+        Logger.LogInformation("SSE session established with ID {SessionId}", _sessionId);
         _sseResponse = response;
         _sseReader = new StreamReader(
             await response.Content.ReadAsStreamAsync(CancellationTokenSource.Token),
             Encoding.UTF8
         );
-
+        Logger.LogDebug("SSE response stream acquired; launching background listener.");
         _sseListenTask = Task.Run(() => ListenToServerEventsAsync(), CancellationTokenSource.Token);
         IsStarted = true;
         Logger.LogInformation("SSE transport started with session {SessionId}", _sessionId);
@@ -149,6 +220,7 @@ public class SseClientTransport : ClientTransportBase
     {
         EnsureActiveSession();
 
+        Logger.LogInformation("Preparing to send JSON-RPC request '{Method}'", method);
         var id = Guid.NewGuid().ToString("N");
         var tcs = new TaskCompletionSource<object>(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -183,6 +255,7 @@ public class SseClientTransport : ClientTransportBase
     {
         EnsureActiveSession();
 
+        Logger.LogDebug("Sending JSON-RPC notification '{Method}'", method);
         var notification = new JsonRpcNotificationMessage(
             "2.0",
             method,
@@ -195,6 +268,23 @@ public class SseClientTransport : ClientTransportBase
     private async Task SendJsonRpcPayloadAsync(object payload)
     {
         var payloadJson = SerializeMessage(payload);
+
+        if (payload is JsonRpcRequestMessage requestMessage)
+        {
+            Logger.LogDebug(
+                "Sending JSON-RPC request: {Method} (Id: {Id})",
+                requestMessage.Method,
+                requestMessage.Id
+            );
+        }
+        else if (payload is JsonRpcNotificationMessage notificationMessage)
+        {
+            Logger.LogDebug("Sending JSON-RPC notification: {Method}", notificationMessage.Method);
+        }
+        else
+        {
+            Logger.LogDebug("Sending JSON-RPC payload of type {Type}", payload.GetType().Name);
+        }
 
         var response = await SendWithAuthenticationAsync(
             () =>
@@ -225,6 +315,7 @@ public class SseClientTransport : ClientTransportBase
         );
 
         await HandleHttpResponseAsync(response);
+        Logger.LogInformation("JSON-RPC payload delivered successfully.");
     }
 
     private async Task HandleHttpResponseAsync(HttpResponseMessage response)
@@ -236,6 +327,12 @@ public class SseClientTransport : ClientTransportBase
                 var errorBody = await response.Content.ReadAsStringAsync(
                     CancellationTokenSource.Token
                 );
+                Logger.LogWarning(
+                    "HTTP request to {Uri} failed with {StatusCode}: {Body}",
+                    response.RequestMessage?.RequestUri,
+                    response.StatusCode,
+                    errorBody
+                );
                 throw new HttpRequestException(
                     $"HTTP error: {(int)response.StatusCode} {response.StatusCode} - {errorBody}"
                 );
@@ -246,6 +343,11 @@ public class SseClientTransport : ClientTransportBase
             {
                 _sessionId = sessionHeader;
             }
+            Logger.LogDebug(
+                "Response headers confirmed session {SessionId} and protocol {Protocol}",
+                _sessionId,
+                _negotiatedProtocolVersion ?? "<not set>"
+            );
 
             var protocolHeader = ExtractHeader(response.Headers, "MCP-Protocol-Version");
             if (!string.IsNullOrWhiteSpace(protocolHeader))
@@ -269,11 +371,33 @@ public class SseClientTransport : ClientTransportBase
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
             await AttachAuthorizationAsync(request);
 
-            var response = await _httpClient.SendAsync(
+            Logger.LogDebug(
+                "Opening SSE stream attempt {Attempt} to {Uri}",
+                attempt + 1,
+                request.RequestUri
+            );
+            var response = await _streamHttpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 CancellationTokenSource.Token
             );
+
+            Logger.LogInformation(
+                "SSE GET {Uri} returned {StatusCode}",
+                response.RequestMessage?.RequestUri,
+                response.StatusCode
+            );
+
+            if (response.IsSuccessStatusCode)
+            {
+                Logger.LogDebug(
+                    "SSE response headers: {Headers}",
+                    string.Join(
+                        "; ",
+                        response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")
+                    )
+                );
+            }
 
             if (
                 response.StatusCode == HttpStatusCode.Unauthorized
@@ -281,10 +405,15 @@ public class SseClientTransport : ClientTransportBase
                 && attempt < maxAttempts - 1
             )
             {
+                Logger.LogWarning("SSE stream unauthorized. Retrying after acquiring token.");
                 response.Dispose();
                 continue;
             }
 
+            Logger.LogInformation(
+                "SSE GET handshake succeeded with status {StatusCode}",
+                response.StatusCode
+            );
             return response;
         }
 
@@ -304,10 +433,23 @@ public class SseClientTransport : ClientTransportBase
             using var request = requestFactory();
             await AttachAuthorizationAsync(request);
 
-            var response = await _httpClient.SendAsync(
+            Logger.LogInformation(
+                "Sending HTTP {Method} request to {Uri} (attempt {Attempt})",
+                request.Method,
+                request.RequestUri,
+                attempt + 1
+            );
+            var response = await _requestHttpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 CancellationTokenSource.Token
+            );
+
+            Logger.LogInformation(
+                "Received HTTP {StatusCode} for {Method} {Uri}",
+                response.StatusCode,
+                response.RequestMessage?.Method,
+                response.RequestMessage?.RequestUri
             );
 
             if (
@@ -316,6 +458,10 @@ public class SseClientTransport : ClientTransportBase
                 && attempt < maxAttempts - 1
             )
             {
+                Logger.LogWarning(
+                    "Request to {Uri} unauthorized; attempting token acquisition and retry.",
+                    response.RequestMessage?.RequestUri
+                );
                 response.Dispose();
                 continue;
             }
@@ -336,6 +482,19 @@ public class SseClientTransport : ClientTransportBase
         if (!string.IsNullOrWhiteSpace(token))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            Logger.LogTrace(
+                "Attached bearer token to request {Method} {Uri}",
+                request.Method,
+                request.RequestUri
+            );
+        }
+        else
+        {
+            Logger.LogTrace(
+                "No bearer token available for request {Method} {Uri}",
+                request.Method,
+                request.RequestUri
+            );
         }
     }
 
@@ -355,6 +514,11 @@ public class SseClientTransport : ClientTransportBase
             return false;
         }
 
+        Logger.LogInformation(
+            "Processing OAuth challenge (scheme={Scheme}, resource_metadata={Resource})",
+            challenge.Scheme,
+            challenge.ResourceMetadata
+        );
         return await _tokenManager.HandleUnauthorizedAsync(
             _endpointUri,
             challenge,
@@ -378,8 +542,11 @@ public class SseClientTransport : ClientTransportBase
                 var line = await _sseReader.ReadLineAsync();
                 if (line == null)
                 {
+                    Logger.LogInformation("SSE stream ended by remote host.");
                     break;
                 }
+
+                Logger.LogTrace("SSE line received: {Line}", line);
 
                 if (line.Length == 0)
                 {
@@ -408,6 +575,10 @@ public class SseClientTransport : ClientTransportBase
         catch (OperationCanceledException)
         {
             Logger.LogDebug("SSE listen cancelled");
+        }
+        catch (IOException ex) when (IsCancellationException(ex))
+        {
+            Logger.LogDebug("SSE listen closed due to transport shutdown.");
         }
         catch (Exception ex)
         {
@@ -450,9 +621,14 @@ public class SseClientTransport : ClientTransportBase
         }
         finally
         {
-            if (_ownsHttpClient)
+            if (_ownsStreamHttpClient)
             {
-                _httpClient.Dispose();
+                _streamHttpClient.Dispose();
+            }
+
+            if (_ownsRequestHttpClient)
+            {
+                _requestHttpClient.Dispose();
             }
 
             _sessionId = null;
@@ -476,20 +652,37 @@ public class SseClientTransport : ClientTransportBase
     private static string? ExtractHeader(HttpResponseHeaders headers, string name) =>
         headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
-    private static HttpClient CreateHttpClient(string baseUrl, out Uri endpointUri)
+    private static HttpClient CreateRequestClient(string baseUrl, out Uri endpointUri, out Uri authorityUri)
     {
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new ArgumentException("Base URL cannot be null or empty.", nameof(baseUrl));
         }
 
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
         {
             throw new ArgumentException("Base URL must be an absolute URI.", nameof(baseUrl));
         }
 
-        endpointUri = ResolveEndpointUri(uri);
-        return new HttpClient();
+        endpointUri = ResolveEndpointUri(baseUri);
+        authorityUri = GetAuthorityUri(endpointUri);
+        return new HttpClient { BaseAddress = authorityUri };
+    }
+
+    private static HttpClient CreateStreamClient(Uri authorityUri)
+    {
+        return new HttpClient { BaseAddress = authorityUri };
+    }
+
+    private static Uri GetAuthorityUri(Uri endpointUri) =>
+        new(endpointUri.GetLeftPart(UriPartial.Authority));
+
+    private static void AddApiKeyHeader(HttpClient client, string apiKey)
+    {
+        if (!client.DefaultRequestHeaders.Contains("X-API-Key"))
+        {
+            client.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+        }
     }
 
     private static Uri ResolveEndpointUri(Uri? uri)
@@ -505,5 +698,17 @@ public class SseClientTransport : ClientTransportBase
         }
 
         return uri;
+    }
+
+    private static bool IsCancellationException(IOException ex)
+    {
+        if (ex.InnerException is SocketException socketException)
+        {
+            return socketException.SocketErrorCode == SocketError.OperationAborted
+                || socketException.SocketErrorCode == SocketError.Interrupted
+                || socketException.SocketErrorCode == SocketError.TimedOut;
+        }
+
+        return false;
     }
 }

@@ -70,6 +70,7 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
         {
             Logger.LogWarning("Received response for unknown request: {Id}", response.Id);
         }
+        Logger.LogInformation("Completed JSON-RPC response processing for id {Id}", response.Id);
     }
 
     /// <summary>

@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
@@ -7,6 +9,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.Shared;
+using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Examples.SimpleClient.Examples;
 
@@ -31,10 +34,22 @@ public class SseClientExample
         };
         var baseUri = baseUriBuilder.Uri;
 
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder
+                .AddSimpleConsole(options =>
+                {
+                    options.SingleLine = true;
+                    options.TimestampFormat = "HH:mm:ss ";
+                })
+                .SetMinimumLevel(LogLevel.Debug);
+        });
+
         var clientBuilder = new McpClientBuilder()
             .WithName("SimpleClientExample")
             .WithVersion("1.0.0")
             .WithTitle("Simple Client Example")
+            .WithLogger(loggerFactory.CreateLogger("SimpleClient"))
             .UseSseTransport(options.ServerUrl);
 
         if (options.UseAuthentication)
@@ -61,6 +76,10 @@ public class SseClientExample
             Console.WriteLine("Initializing client...");
             await client.Initialize();
             Console.WriteLine("Client initialized");
+
+            await DisplayServerMetadataAsync(client);
+            await InspectResourcesAsync(client);
+            await InspectPromptsAsync(client);
 
             // List available tools
             var tools = await client.ListTools();
@@ -120,9 +139,9 @@ public class SseClientExample
             DisplayToolResponse(divideResult);
 
             // Division (error case - divide by zero)
-            Console.WriteLine("\nCalling calculator.divide with 10 and 0 (divide by zero):");
+            Console.WriteLine("\nCalling calculator_divide with 10 and 0 (divide by zero):");
             var divideByZeroResult = await client.CallTool(
-                "calculator.divide",
+                "calculator_divide",
                 new { a = 10, b = 0 }
             );
             DisplayToolResponse(divideByZeroResult);
@@ -131,7 +150,7 @@ public class SseClientExample
             Console.WriteLine("\nCalling calculator_power with 2 and 8:");
             var powerResult = await client.CallTool(
                 "calculator_power",
-                new { basenumber = 2, exponent = 8 } // Lower case parameter name to match server expectation
+                new { baseNumber = 2, exponent = 8 }
             );
             DisplayToolResponse(powerResult);
         }
@@ -161,8 +180,8 @@ public class SseClientExample
                 "wh40k_roll_dice",
                 new
                 {
-                    dicecount = 3,
-                    dicesides = 6,
+                    diceCount = 3,
+                    diceSides = 6,
                     flavor = "hit",
                 }
             );
@@ -171,14 +190,117 @@ public class SseClientExample
             // Battle Simulation (async tool)
             Console.WriteLine("\nCalling wh40k_battle_simulation (asynchronous tool):");
             var battleResult = await client.CallTool(
-                "wh40k_battle_simulation", 
-                new { imperialforce = "Space Marines", enemyforce = "Orks" } // Lower case parameter names for consistency
+                "wh40k_battle_simulation",
+                new { imperialForce = "Space Marines", enemyForce = "Orks" }
             );
             DisplayToolResponse(battleResult);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error demonstrating Warhammer 40k tools: {ex.Message}");
+        }
+    }
+
+    private static Task DisplayServerMetadataAsync(IMcpClient client)
+    {
+        Console.WriteLine("\n=== Server Metadata ===");
+
+        Console.WriteLine(
+            $"Protocol version: {client.NegotiatedProtocolVersion ?? "(unknown)"}"
+        );
+
+        if (client.ServerInfo != null)
+        {
+            Console.WriteLine(
+                $"Server info: {client.ServerInfo.Name} v{client.ServerInfo.Version}"
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(client.Instructions))
+        {
+            Console.WriteLine($"Server instructions: {client.Instructions}");
+        }
+
+        if (client.ServerCapabilities != null)
+        {
+            var capabilitiesJson = JsonSerializer.Serialize(
+                client.ServerCapabilities,
+                new JsonSerializerOptions { WriteIndented = true }
+            );
+            Console.WriteLine("Server capabilities:");
+            Console.WriteLine(capabilitiesJson);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static async Task InspectResourcesAsync(IMcpClient client)
+    {
+        Console.WriteLine("\n=== Resources ===");
+
+        try
+        {
+            var resources = await client.ListResources();
+            Console.WriteLine($"Resources available: {resources.Length}");
+
+            if (resources.Length > 0)
+            {
+                foreach (var resource in resources.Take(Math.Min(3, resources.Length)))
+                {
+                    Console.WriteLine(
+                        $"- {resource.Uri} ({resource.Description ?? "no description"})"
+                    );
+                }
+
+                var first = resources[0];
+                var contents = await client.ReadResource(first.Uri);
+                Console.WriteLine(
+                    $"Sample resource '{first.Uri}' returned {contents.Length} content item(s)."
+                );
+            }
+        }
+        catch (NotImplementedException)
+        {
+            Console.WriteLine("Resources API not implemented by this server.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Unable to inspect resources: {ex.Message}");
+        }
+    }
+
+    private static async Task InspectPromptsAsync(IMcpClient client)
+    {
+        Console.WriteLine("\n=== Prompts ===");
+
+        try
+        {
+            var prompts = await client.ListPrompts();
+            Console.WriteLine($"Prompts available: {prompts.Length}");
+
+            if (prompts.Length > 0)
+            {
+                foreach (var prompt in prompts.Take(Math.Min(3, prompts.Length)))
+                {
+                    Console.WriteLine(
+                        $"- {prompt.Name}: {prompt.Description ?? "no description"}"
+                    );
+                }
+
+                var first = prompts[0];
+                var promptMessages = await client.GetPrompt(first.Name);
+                Console.WriteLine(
+                    $"Prompt '{first.Name}' contains {promptMessages.Length} message(s)."
+                );
+            }
+        }
+        catch (NotImplementedException)
+        {
+            Console.WriteLine("Prompts API not implemented by this server.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Unable to inspect prompts: {ex.Message}");
         }
     }
 
@@ -209,9 +331,9 @@ public class SseClientExample
                 // Try to serialize the content as JSON for display
                 try
                 {
-                    var json = System.Text.Json.JsonSerializer.Serialize(
+                    var json = JsonSerializer.Serialize(
                         content,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+                        new JsonSerializerOptions { WriteIndented = true }
                     );
                     Console.WriteLine($"Content type: {content.GetType().Name}");
                     Console.WriteLine(json);

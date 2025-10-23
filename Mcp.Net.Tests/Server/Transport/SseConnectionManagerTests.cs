@@ -52,8 +52,9 @@ public class SseConnectionManagerTests
         context.Response.Headers["Mcp-Session-Id"].ToString().Should().Be(transport.SessionId);
         context.Response.Headers.ContainsKey("MCP-Protocol-Version").Should().BeFalse();
         context.Response.Body.Length.Should().Be(0);
-        writer.WrittenPayloads.Should().NotBeEmpty();
-        var payload = writer.WrittenPayloads.Single();
+        var dataPayloads = writer.WrittenPayloads.Where(p => p.StartsWith("data: ")).ToList();
+        dataPayloads.Should().NotBeEmpty();
+        var payload = dataPayloads.Single();
         payload.Should().StartWith("data: ");
         payload.Should().Contain("\"id\":\"list-1\"");
     }
@@ -65,7 +66,7 @@ public class SseConnectionManagerTests
 
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
-        var initializeResponse = writer.WrittenPayloads.First();
+        var initializeResponse = writer.WrittenPayloads.First(p => p.StartsWith("data: "));
         initializeResponse.Should().Contain("\"id\":\"init-1\"");
 
         var requestContext = CreatePostContext(
