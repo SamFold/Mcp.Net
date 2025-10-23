@@ -8,6 +8,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
@@ -26,6 +28,13 @@ internal static class DemoOAuthServer
 
     private static readonly ConcurrentDictionary<string, RefreshTokenRecord> s_refreshTokens =
         new(StringComparer.Ordinal);
+
+    private static readonly DemoOAuthClientRegistry s_clientRegistry = new();
+
+    private static readonly JsonSerializerOptions s_jsonSerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     internal static DemoOAuthConfiguration CreateConfiguration(Uri baseUri)
     {
@@ -65,6 +74,8 @@ internal static class DemoOAuthServer
     {
         var logger = app.Logger;
 
+        EnsureDefaultClients(logger);
+
         app.MapGet(DemoOAuthDefaults.ProtectedResourceMetadataPath, () =>
         {
             return Results.Json(new
@@ -83,6 +94,7 @@ internal static class DemoOAuthServer
                 token_endpoint = new Uri(config.BaseUri, DemoOAuthDefaults.TokenEndpointPath).ToString(),
                 jwks_uri = new Uri(config.BaseUri, DemoOAuthDefaults.JwksPath).ToString(),
                 device_authorization_endpoint = new Uri(config.BaseUri, DemoOAuthDefaults.DeviceEndpointPath).ToString(),
+                registration_endpoint = new Uri(config.BaseUri, DemoOAuthDefaults.ClientRegistrationEndpointPath).ToString(),
             });
         });
 
@@ -90,6 +102,64 @@ internal static class DemoOAuthServer
         {
             var jwk = JsonWebKeyConverter.ConvertFromSymmetricSecurityKey(config.SigningKey);
             return Results.Json(new { keys = new[] { jwk } });
+        });
+
+        app.MapPost(DemoOAuthDefaults.ClientRegistrationEndpointPath, async context =>
+        {
+            DynamicClientRegistrationRequest? request;
+            try
+            {
+                request = await JsonSerializer.DeserializeAsync<DynamicClientRegistrationRequest>(
+                    context.Request.Body,
+                    s_jsonSerializerOptions,
+                    context.RequestAborted
+                );
+            }
+            catch (JsonException ex)
+            {
+                await WriteOAuthError(context, "invalid_request", $"Invalid JSON payload: {ex.Message}");
+                return;
+            }
+
+            if (request == null)
+            {
+                await WriteOAuthError(context, "invalid_request", "Request body is required.");
+                return;
+            }
+
+            RegisteredClientRecord record;
+            try
+            {
+                record = s_clientRegistry.RegisterPublicClient(request);
+            }
+            catch (InvalidOperationException ex)
+            {
+                await WriteOAuthError(context, "invalid_request", ex.Message);
+                return;
+            }
+
+            logger.LogInformation(
+                "Registered dynamic OAuth client {ClientId} ({ClientName})",
+                record.ClientId,
+                record.ClientName ?? "unnamed"
+            );
+
+            var responsePayload = new
+            {
+                client_id = record.ClientId,
+                client_id_issued_at = record.IssuedAt.ToUnixTimeSeconds(),
+                redirect_uris = record.RedirectUris.Select(uri => uri.ToString()).ToArray(),
+                grant_types = record.GrantTypes,
+                response_types = record.ResponseTypes,
+                token_endpoint_auth_method = record.TokenEndpointAuthMethod,
+                client_secret = record.ClientSecret,
+                client_secret_expires_at = record.ClientSecretExpiresAt?.ToUnixTimeSeconds() ?? 0,
+                client_name = record.ClientName,
+                require_pkce = record.RequirePkce,
+            };
+
+            context.Response.StatusCode = StatusCodes.Status201Created;
+            await context.Response.WriteAsJsonAsync(responsePayload, s_jsonSerializerOptions);
         });
 
         app.MapPost(DemoOAuthDefaults.TokenEndpointPath, async context =>
@@ -100,19 +170,19 @@ internal static class DemoOAuthServer
             if (string.Equals(grantType, "client_credentials", StringComparison.Ordinal))
             {
                 var clientId = form["client_id"].ToString();
-                var clientSecret = form["client_secret"].ToString();
+                var clientSecret = form.TryGetValue("client_secret", out var secretValues)
+                    ? secretValues.ToString()
+                    : null;
 
-                if (
-                    !string.Equals(clientId, DemoOAuthDefaults.ClientId, StringComparison.Ordinal)
-                    || !string.Equals(
-                        clientSecret,
-                        DemoOAuthDefaults.ClientSecret,
-                        StringComparison.Ordinal
-                    )
-                )
+                if (!s_clientRegistry.TryValidateSecret(clientId, clientSecret, out var clientRecord))
                 {
-                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                    await context.Response.WriteAsJsonAsync(new { error = "invalid_client" });
+                    await WriteOAuthError(context, "invalid_client", "Client authentication failed.", StatusCodes.Status401Unauthorized);
+                    return;
+                }
+
+                if (!clientRecord.SupportsGrant("client_credentials"))
+                {
+                    await WriteOAuthError(context, "unauthorized_client", "Client is not permitted to use the client_credentials grant.");
                     return;
                 }
 
@@ -122,8 +192,8 @@ internal static class DemoOAuthServer
                         ? resourceValues.ToString()
                         : config.ResourceUri.ToString();
 
-                var token = IssueToken(config, subject: clientId, resource, issueRefreshToken: false);
-                logger.LogInformation("Issued demo access token for {ClientId}", clientId);
+                var token = IssueToken(config, clientRecord.ClientId, resource, issueRefreshToken: false);
+                logger.LogInformation("Issued demo access token for {ClientId}", clientRecord.ClientId);
                 await context.Response.WriteAsJsonAsync(token.ToResponse());
                 return;
             }
@@ -180,6 +250,13 @@ internal static class DemoOAuthServer
                 return;
             }
 
+            if (!s_clientRegistry.TryGetClient(clientId, out var clientRecord))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { error = "invalid_client", error_description = "client_id is not registered." });
+                return;
+            }
+
             var redirectUriValue = query["redirect_uri"].ToString();
             if (string.IsNullOrWhiteSpace(redirectUriValue) || !Uri.TryCreate(redirectUriValue, UriKind.Absolute, out var redirectUri))
             {
@@ -188,12 +265,35 @@ internal static class DemoOAuthServer
                 return;
             }
 
+            if (!s_clientRegistry.IsRedirectUriAllowed(clientId, redirectUri))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { error = "invalid_request", error_description = "redirect_uri is not registered for this client." });
+                return;
+            }
+
             var codeChallenge = query["code_challenge"].ToString();
             var codeChallengeMethod = query["code_challenge_method"].ToString();
-            if (string.IsNullOrWhiteSpace(codeChallenge) || !string.Equals(codeChallengeMethod, "S256", StringComparison.OrdinalIgnoreCase))
+            if (clientRecord.RequirePkce)
+            {
+                if (string.IsNullOrWhiteSpace(codeChallenge) || !string.Equals(codeChallengeMethod, "S256", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    await context.Response.WriteAsJsonAsync(new { error = "invalid_request", error_description = "PKCE S256 code challenge is required." });
+                    return;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(codeChallengeMethod) && !string.Equals(codeChallengeMethod, "S256", StringComparison.OrdinalIgnoreCase))
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
                 await context.Response.WriteAsJsonAsync(new { error = "invalid_request", error_description = "PKCE S256 code challenge is required." });
+                return;
+            }
+
+            if (!clientRecord.SupportsGrant("authorization_code"))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { error = "unauthorized_client", error_description = "Client is not permitted to request authorization codes." });
                 return;
             }
 
@@ -243,6 +343,22 @@ internal static class DemoOAuthServer
             return false;
         }
 
+        var clientSecret = form.TryGetValue("client_secret", out var secretValues)
+            ? secretValues.ToString()
+            : null;
+
+        if (!s_clientRegistry.TryValidateSecret(clientId, clientSecret, out var clientRecord))
+        {
+            await WriteOAuthError(context, "invalid_client", "Client authentication failed.", StatusCodes.Status401Unauthorized);
+            return false;
+        }
+
+        if (!clientRecord.SupportsGrant("authorization_code"))
+        {
+            await WriteOAuthError(context, "unauthorized_client", "Client is not permitted to use the authorization_code grant.");
+            return false;
+        }
+
         var code = form["code"].ToString();
         if (string.IsNullOrWhiteSpace(code))
         {
@@ -281,6 +397,12 @@ internal static class DemoOAuthServer
         if (!RedirectUrisMatch(redirectUri, record.RedirectUri))
         {
             await WriteOAuthError(context, "invalid_grant", "redirect_uri does not match the authorization request.");
+            return false;
+        }
+
+        if (!s_clientRegistry.IsRedirectUriAllowed(clientId, redirectUri))
+        {
+            await WriteOAuthError(context, "invalid_grant", "redirect_uri is not registered for this client.");
             return false;
         }
 
@@ -327,6 +449,22 @@ internal static class DemoOAuthServer
         if (string.IsNullOrWhiteSpace(clientId))
         {
             await WriteOAuthError(context, "invalid_client", "client_id is required.");
+            return false;
+        }
+
+        var clientSecret = form.TryGetValue("client_secret", out var secretValues)
+            ? secretValues.ToString()
+            : null;
+
+        if (!s_clientRegistry.TryValidateSecret(clientId, clientSecret, out var clientRecord))
+        {
+            await WriteOAuthError(context, "invalid_client", "Client authentication failed.", StatusCodes.Status401Unauthorized);
+            return false;
+        }
+
+        if (!clientRecord.SupportsGrant("refresh_token"))
+        {
+            await WriteOAuthError(context, "unauthorized_client", "Client is not permitted to use the refresh_token grant.");
             return false;
         }
 
@@ -413,13 +551,39 @@ internal static class DemoOAuthServer
         return new TokenEnvelope(accessToken, refreshToken, (int)(expires - now).TotalSeconds);
     }
 
+    private static void EnsureDefaultClients(ILogger logger)
+    {
+        var defaultClient = new RegisteredClientRecord(
+            ClientId: DemoOAuthDefaults.ClientId,
+            ClientSecret: DemoOAuthDefaults.ClientSecret,
+            TokenEndpointAuthMethod: "client_secret_post",
+            RedirectUris: new[] { DemoOAuthDefaults.DefaultRedirectUri },
+            GrantTypes: new[] { "authorization_code", "refresh_token", "client_credentials" },
+            ResponseTypes: new[] { "code" },
+            RequirePkce: false,
+            ClientName: "Simple MCP Demo Client",
+            IssuedAt: DateTimeOffset.UtcNow,
+            ClientSecretExpiresAt: null
+        );
+
+        var stored = s_clientRegistry.EnsureClient(defaultClient);
+        if (ReferenceEquals(stored, defaultClient))
+        {
+            logger.LogInformation(
+                "Registered built-in OAuth client {ClientId}.",
+                defaultClient.ClientId
+            );
+        }
+    }
+
     private static async Task WriteOAuthError(
         HttpContext context,
         string error,
-        string description
+        string description,
+        int statusCode = StatusCodes.Status400BadRequest
     )
     {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        context.Response.StatusCode = statusCode;
         await context.Response.WriteAsJsonAsync(new { error, error_description = description });
     }
 

@@ -10,13 +10,11 @@
     <AssemblyName>Mcp.Net.Examples.SimpleServer</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Mcp.Net.Core\Mcp.Net.Core.csproj" />
-    <ProjectReference Include="..\Mcp.Net.Examples.ExternalTools\Mcp.Net.Examples.ExternalTools.csproj" />
-    <ProjectReference Include="..\Mcp.Net.Server\Mcp.Net.Server.csproj" />
-    <ProjectReference Include="..\Mcp.Net.Client\Mcp.Net.Client.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <Compile Include="..\Mcp.Net.Examples.Shared\DemoOAuthDefaults.cs" Link="DemoOAuthDefaults.cs" />
+    <ProjectReference Include="../Mcp.Net.Core/Mcp.Net.Core.csproj" />
+    <ProjectReference Include="../Mcp.Net.Examples.ExternalTools/Mcp.Net.Examples.ExternalTools.csproj" />
+    <ProjectReference Include="../Mcp.Net.Server/Mcp.Net.Server.csproj" />
+    <ProjectReference Include="../Mcp.Net.Client/Mcp.Net.Client.csproj" />
+    <ProjectReference Include="../Mcp.Net.Examples.Shared/Mcp.Net.Examples.Shared.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.3" />

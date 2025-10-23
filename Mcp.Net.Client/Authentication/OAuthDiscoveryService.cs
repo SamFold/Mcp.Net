@@ -58,6 +58,7 @@ public class OAuthDiscoveryService
             TokenEndpoint = new Uri(tokenEndpointProperty.GetString()!, UriKind.Absolute),
             DeviceAuthorizationEndpoint = TryReadAbsoluteUri(root, "device_authorization_endpoint"),
             AuthorizationEndpoint = TryReadAbsoluteUri(root, "authorization_endpoint"),
+            RegistrationEndpoint = TryReadAbsoluteUri(root, "registration_endpoint"),
         };
 
         return discovery;

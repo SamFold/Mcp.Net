@@ -16,6 +16,7 @@ public static class DemoOAuthDefaults
     public const string JwksPath = "/oauth/jwks";
     public const string AuthorizationServerMetadataPath = "/.well-known/oauth-authorization-server";
     public const string ProtectedResourceMetadataPath = "/.well-known/oauth-protected-resource";
+    public const string ClientRegistrationEndpointPath = "/oauth/register";
     public const string ResourcePath = "/mcp";
     public static readonly Uri DefaultRedirectUri = new("https://example-app.local/oauth/callback");
 

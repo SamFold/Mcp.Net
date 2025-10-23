@@ -15,11 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Mcp.Net.Examples.Shared\DemoOAuthDefaults.cs" Link="DemoOAuthDefaults.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Mcp.Net.Client\Mcp.Net.Client.csproj" />
+    <ProjectReference Include="..\Mcp.Net.Examples.Shared\Mcp.Net.Examples.Shared.csproj" />
   </ItemGroup>
 
 </Project>
