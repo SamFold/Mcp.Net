@@ -50,6 +50,12 @@ Run with stdio transport (for direct process-to-process communication):
 dotnet run -- --stdio
 ```
 
+Disable authentication (all requests allowed without tokens):
+
+```bash
+dotnet run -- --no-auth
+```
+
 Use other command-line options:
 
 ```bash
@@ -126,11 +132,23 @@ The SimpleServer includes the following example tools:
 - `wh40k.roll_dice`: Roll dice with Warhammer 40k flavor
 - `wh40k.battle_simulation`: Simulate a battle (asynchronous tool)
 
+### Seeded Resources & Prompts
+
+- Resources:
+  - `mcp://docs/simple-server/getting-started`
+  - `mcp://docs/simple-server/oauth-flow`
+- Prompts:
+  - `summarize-resource`
+  - `draft-follow-up-email`
+
+These are registered at startup so clients can test MCP resource and prompt capabilities without additional configuration.
+
 ## Key Components
 
 - **Program.cs**: Main entry point that sets up and starts the server
 - **CalculatorTools.cs**: Simple calculator tools example
 - **Warhammer40kTools.cs**: Themed tools demonstrating different MCP capabilities
+- **SampleContentCatalog.cs**: Seeds demo resources and prompts for integration testing
 
 ## Environment Variables
 
@@ -185,6 +203,14 @@ The server can be configured with:
 - Custom instructions
 
 See `Program.cs` for examples of different configuration options.
+
+## OAuth 2.1 Demo Overview
+
+- `/oauth/register`: Supports dynamic client registration (public clients). The SimpleClient uses this endpoint automatically in PKCE mode.
+- `/oauth/authorize`: Issues authorization codes and enforces S256 PKCE challenges and the `resource` indicator.
+- `/oauth/token`: Handles authorization-code exchange and refresh tokens, validating audience and resource values.
+- Access tokens are JWTs signed with an in-memory test key and scoped to the MCP resource (`http://localhost:5000/mcp` by default).
+- Run with `--no-auth` to disable authentication when experimenting.
 
 ## Related Resources
 

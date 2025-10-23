@@ -48,6 +48,21 @@ dotnet add package Mcp.Net.Server
 dotnet add package Mcp.Net.Client
 ```
 
+### Run the sample server + client with OAuth 2.1
+
+```bash
+# Terminal 1 — start the demo server (SSE on http://localhost:5000)
+dotnet run --project Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj
+
+# Terminal 2 — launch the client (performs dynamic registration + PKCE)
+dotnet run --project Mcp.Net.Examples.SimpleClient -- --url http://localhost:5000 --auth-mode pkce
+```
+
+> ℹ️ The first SSE GET returns `401 Unauthorized` by design. The client follows the
+> `WWW-Authenticate` challenge, registers itself at `/oauth/register`, completes the PKCE
+> handshake, and reconnects with a bearer token. Watch the logs to see resources, prompts,
+> and tools being exercised end-to-end.
+
 ### Create your first MCP server in 2 minutes
 
 ```csharp
@@ -197,6 +212,11 @@ Console.WriteLine(((TextContent)weatherResult.Content.First()).Text);
   - ✅ JSON Schema validation for parameters
   - ✅ Both synchronous and async tool support
   - ✅ Error handling and result formatting
+
+- **OAuth 2.1 Reference Flow**:
+  - ✅ Dynamic client registration (`/oauth/register`) with in-memory persistence
+  - ✅ Authorization code + PKCE with enforced `resource` indicators
+  - ✅ Refresh-token rotation and audience validation in the demo server/client samples
 
 - **Flexible Hosting**:
   - ✅ Use as standalone server
@@ -455,12 +475,35 @@ This implementation is currently at version 0.9.0:
 - ✅ Text-based content responses
 - ✅ Client connection and initialization flow
 - ✅ Configurable server port and hostname
+- ✅ Resource catalogue (list/read) with sample markdown content
+- ✅ Prompt catalogue (list/get) demonstrated by SimpleServer
 
 ### Partially Implemented Features
-- ⚠️ Resource management
-- ⚠️ Prompt management
 - ⚠️ Advanced content types (Image, Resource, Embedded)
 - ⚠️ XML documentation
+
+## 🧪 Testing & Development
+
+```bash
+dotnet build Mcp.Net.sln
+dotnet test Mcp.Net.Tests/Mcp.Net.Tests.csproj
+```
+
+The test suite covers happy-path tool invocation and negative-path OAuth scenarios (dynamic
+registration failures, PKCE mismatches, resource-indicator validation, and refresh-token
+replays). The sample server seeds markdown resources and reusable prompts so integration
+runs exercise the entire capability surface.
+
+## 🔒 Authentication & Security Notes
+
+- The demo server includes a lightweight OAuth 2.1 resource server with dynamic registration,
+  authorization code + PKCE, refresh tokens, and resource indicators. Use it for local testing;
+  production systems should wire in a dedicated identity provider (e.g., Supabase, Auth0,
+  Azure AD).
+- Clients must include `Authorization: Bearer <token>` plus the negotiated `Mcp-Session-Id`
+  and `MCP-Protocol-Version` headers on every POST/GET to `/mcp`.
+- SimpleClient defaults to PKCE (`--auth-mode pkce`) but still supports legacy
+  client-credentials mode (`--auth-mode client`) when interacting with static client IDs.
 
 ## 📚 Learn More
 

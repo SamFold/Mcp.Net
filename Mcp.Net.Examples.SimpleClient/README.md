@@ -22,10 +22,10 @@ The SimpleClient example shows how to:
 
 ### Running the Client
 
-Run the client with default settings (SSE transport to localhost:5000):
+Run the client with default settings (SSE transport to localhost:5000, PKCE auth):
 
 ```bash
-dotnet run
+dotnet run -- --url http://localhost:5000 --auth-mode pkce
 ```
 
 Connect to a specific server URL:
@@ -39,6 +39,33 @@ Connect using stdio transport to a local server process:
 ```bash
 dotnet run -- --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio"
 ```
+
+### Authentication modes
+
+The sample client supports several auth strategies:
+
+| Mode (flag)        | Description |
+|--------------------|-------------|
+| `pkce` (default)   | Performs dynamic client registration and the OAuth 2.1 PKCE flow against the demo issuer. |
+| `client`           | Uses the built-in confidential client (`demo-client` / `demo-client-secret`). |
+| `none`             | Skips bearer tokens (useful when the server runs with `--no-auth`). |
+
+Examples:
+
+```bash
+# Dynamic registration + PKCE (after starting SimpleServer)
+dotnet run -- --url http://localhost:5000 --auth-mode pkce
+
+# Legacy client-credentials flow
+dotnet run -- --url http://localhost:5000 --auth-mode client
+
+# Anonymous / no auth mode
+dotnet run -- --url http://localhost:5000 --auth-mode none
+```
+
+> ℹ️ In PKCE mode the first SSE GET intentionally returns `401 Unauthorized`. The client follows
+> the challenge, registers itself at `/oauth/register`, completes the handshake, and reconnects with
+> a bearer token. You will see "Dynamic client registered…" in the logs when this succeeds.
 
 ## Examples
 
@@ -100,6 +127,13 @@ try {
 - **Program.cs**: Main entry point that parses command-line arguments and starts the appropriate client
 - **SseClientExample.cs**: Example of using SSE transport to connect to an MCP server
 - **StdioClientExample.cs**: Example of using stdio transport to connect to an MCP server
+
+## What you’ll see in the demo
+
+- Tool listings and invocations for the calculator and Warhammer 40k samples
+- Resource enumeration and previews for the seeded markdown docs
+- Prompt enumeration plus the first prompt message dumped as formatted JSON
+- Detailed logging for OAuth discovery, dynamic registration, and retry behaviour
 
 ## Environment Variables
 
