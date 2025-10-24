@@ -199,6 +199,105 @@ public class SseTransport : ServerTransportBase
         }
     }
 
+    /// <inheritdoc />
+    public override async Task SendRequestAsync(JsonRpcRequestMessage requestMessage)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        using (Logger.BeginConnectionScope(SessionId))
+        using (Logger.BeginRequestScope(requestMessage.Id, requestMessage.Method))
+        using (Logger.BeginTimingScope($"SendRequest_{requestMessage.Id}"))
+        {
+            try
+            {
+                string serialized = SerializeMessage(requestMessage);
+                int payloadSize = serialized.Length;
+
+                Logger.LogMessageSent(
+                    SessionId,
+                    "Request",
+                    requestMessage.Id,
+                    payloadSize,
+                    TRANSPORT_TYPE
+                );
+
+                await SendDataAsync(serialized);
+
+                _messagesSent++;
+                _bytesSent += payloadSize;
+
+                Logger.LogDebug(
+                    "Sent JSON-RPC request: Method={Method}, Id={Id}",
+                    requestMessage.Method,
+                    requestMessage.Id
+                );
+            }
+            catch (Exception ex)
+            {
+                Logger.LogTransportError(
+                    ex,
+                    SessionId,
+                    "SendRequestAsync",
+                    TRANSPORT_TYPE,
+                    requestMessage.Id
+                );
+                RaiseOnError(ex);
+                throw;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public override async Task SendNotificationAsync(JsonRpcNotificationMessage notificationMessage)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        using (Logger.BeginConnectionScope(SessionId))
+        using (Logger.BeginTimingScope($"SendNotification_{notificationMessage.Method}"))
+        {
+            try
+            {
+                string serialized = SerializeMessage(notificationMessage);
+                int payloadSize = serialized.Length;
+
+                Logger.LogMessageSent(
+                    SessionId,
+                    "Notification",
+                    notificationMessage.Method,
+                    payloadSize,
+                    TRANSPORT_TYPE
+                );
+
+                await SendDataAsync(serialized);
+
+                _messagesSent++;
+                _bytesSent += payloadSize;
+
+                Logger.LogDebug(
+                    "Sent JSON-RPC notification: Method={Method}",
+                    notificationMessage.Method
+                );
+            }
+            catch (Exception ex)
+            {
+                Logger.LogTransportError(
+                    ex,
+                    SessionId,
+                    "SendNotificationAsync",
+                    TRANSPORT_TYPE
+                );
+                RaiseOnError(ex);
+                throw;
+            }
+        }
+    }
+
     /// <summary>
     /// Serializes a message to JSON
     /// </summary>
@@ -269,6 +368,29 @@ public class SseTransport : ServerTransportBase
                 );
                 throw;
             }
+        }
+    }
+
+    /// <summary>
+    /// Handles a JSON-RPC response received from the client.
+    /// </summary>
+    /// <param name="responseMessage">The JSON-RPC response message.</param>
+    public void HandleResponse(JsonRpcResponseMessage responseMessage)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        using (Logger.BeginConnectionScope(SessionId))
+        {
+            Logger.LogDebug(
+                "Processing client response: Id={Id}, HasError={HasError}",
+                responseMessage.Id,
+                responseMessage.Error != null
+            );
+
+                RaiseOnResponse(responseMessage);
         }
     }
 

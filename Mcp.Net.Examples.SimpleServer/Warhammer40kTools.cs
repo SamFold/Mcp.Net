@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Attributes;
+using Mcp.Net.Core.Models.Elicitation;
+using Mcp.Net.Server.Elicitation;
 
 namespace Mcp.Net.Examples.SimpleServer
 {
@@ -297,8 +300,16 @@ namespace Mcp.Net.Examples.SimpleServer
         /// </summary>
         /// <param name="includeTitle">Whether to include a title prefix.</param>
         /// <returns>Information about the generated Inquisitor.</returns>
+        private readonly IElicitationService _elicitationService;
+
+        public Warhammer40kTools(IElicitationService elicitationService)
+        {
+            _elicitationService = elicitationService
+                ?? throw new ArgumentNullException(nameof(elicitationService));
+        }
+
         [McpTool("wh40k_inquisitor_name", "Generate a name for a Warhammer 40k Inquisitor")]
-        public static InquisitorInfo GenerateInquisitorName(
+        public async Task<InquisitorInfo> GenerateInquisitorName(
             [McpParameter(required: false, description: "Include title")] bool includeTitle = true
         )
         {
@@ -342,6 +353,61 @@ namespace Mcp.Net.Examples.SimpleServer
             string achievement = _achievements[_random.Next(_achievements.Length)];
             int yearsOfService = _random.Next(15, 201); // Between 15 and 200 years
 
+            var prompt = new ElicitationPrompt(
+                "Customize the inquisitor's profile or leave fields empty to keep the generated values.",
+                new ElicitationSchema()
+                    .AddProperty(
+                        "homeworld",
+                        ElicitationSchemaProperty.ForString(
+                            title: "Homeworld",
+                            description: "Override the inquisitor's origin world"
+                        )
+                    )
+                    .AddProperty(
+                        "signatureWeapon",
+                        ElicitationSchemaProperty.ForString(
+                            title: "Signature Weapon",
+                            description: "Override the inquisitor's favored weapon"
+                        )
+                    )
+                    .AddProperty(
+                        "yearsOfService",
+                        ElicitationSchemaProperty.ForInteger(
+                            title: "Years of Service",
+                            description: "Override the years of service",
+                            minimum: 1,
+                            maximum: 1000
+                        )
+                    )
+            );
+
+            var elicitationResult = await _elicitationService
+                .RequestAsync(prompt)
+                .ConfigureAwait(false);
+
+            if (
+                elicitationResult.Action == ElicitationAction.Accept
+                && elicitationResult.Content.HasValue
+            )
+            {
+                var content = elicitationResult.Content.Value;
+
+                if (TryGetString(content, "homeworld", out var homeworldOverride))
+                {
+                    homeworld = homeworldOverride;
+                }
+
+                if (TryGetString(content, "signatureWeapon", out var weaponOverride))
+                {
+                    weapon = weaponOverride;
+                }
+
+                if (TryGetInt(content, "yearsOfService", out var yearsOverride))
+                {
+                    yearsOfService = Math.Clamp(yearsOverride, 1, 1000);
+                }
+            }
+
             return new InquisitorInfo
             {
                 Name = fullName,
@@ -354,6 +420,45 @@ namespace Mcp.Net.Examples.SimpleServer
                 SignatureWeapon = weapon,
                 NotableAchievement = achievement,
             };
+        }
+
+        private static bool TryGetString(JsonElement element, string propertyName, out string value)
+        {
+            value = string.Empty;
+
+            if (
+                element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty(propertyName, out var property)
+                && property.ValueKind == JsonValueKind.String
+            )
+            {
+                var candidate = property.GetString();
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    value = candidate;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryGetInt(JsonElement element, string propertyName, out int value)
+        {
+            value = 0;
+
+            if (
+                element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty(propertyName, out var property)
+                && property.ValueKind == JsonValueKind.Number
+                && property.TryGetInt32(out var parsed)
+            )
+            {
+                value = parsed;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

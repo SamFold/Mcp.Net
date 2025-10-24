@@ -13,10 +13,13 @@ public class MockTransport : IServerTransport
 
     public event Action<JsonRpcRequestMessage>? OnRequest;
     public event Action<JsonRpcNotificationMessage>? OnNotification;
+    public event Action<JsonRpcResponseMessage>? OnResponse;
     public event Action<Exception>? OnError;
     public event Action? OnClose;
 
     public List<JsonRpcResponseMessage> SentMessages => _sentMessages;
+    public List<JsonRpcRequestMessage> SentRequests { get; } = new();
+    public List<JsonRpcNotificationMessage> SentNotifications { get; } = new();
     public bool IsStarted { get; private set; }
     public bool IsClosed { get; private set; }
 
@@ -29,6 +32,18 @@ public class MockTransport : IServerTransport
     public Task SendAsync(JsonRpcResponseMessage message)
     {
         _sentMessages.Add(message);
+        return Task.CompletedTask;
+    }
+
+    public Task SendRequestAsync(JsonRpcRequestMessage message)
+    {
+        SentRequests.Add(message);
+        return Task.CompletedTask;
+    }
+
+    public Task SendNotificationAsync(JsonRpcNotificationMessage message)
+    {
+        SentNotifications.Add(message);
         return Task.CompletedTask;
     }
 
@@ -47,6 +62,11 @@ public class MockTransport : IServerTransport
     public void SimulateNotification(JsonRpcNotificationMessage notification)
     {
         OnNotification?.Invoke(notification);
+    }
+
+    public void SimulateResponse(JsonRpcResponseMessage response)
+    {
+        OnResponse?.Invoke(response);
     }
 
     public void SimulateError(Exception exception)

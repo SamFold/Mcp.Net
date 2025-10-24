@@ -630,7 +630,14 @@ public class SseConnectionManager
 
         if (isResponsePayload)
         {
-            payload = JsonRpcPayload.CreateResponse();
+            var response = JsonSerializer.Deserialize<JsonRpcResponseMessage>(body, serializerOptions);
+            if (response == null)
+            {
+                error = "Invalid response payload";
+                return false;
+            }
+
+            payload = JsonRpcPayload.CreateResponse(response);
             return true;
         }
 
@@ -748,7 +755,15 @@ public class SseConnectionManager
         switch (payload.Kind)
         {
             case JsonRpcPayloadKind.Response:
-                logger.LogDebug("Received JSON-RPC response payload");
+                logger.LogDebug(
+                    "JSON-RPC Response: Id={Id}, HasError={HasError}",
+                    payload.Response?.Id,
+                    payload.Response?.Error != null
+                );
+                if (payload.Response != null)
+                {
+                    transport.HandleResponse(payload.Response);
+                }
                 await WriteAcceptedAsync(context, sessionId, _server.NegotiatedProtocolVersion);
                 return;
 
@@ -911,23 +926,25 @@ public class SseConnectionManager
     /// <param name="Method">Method name (when applicable).</param>
     /// <param name="Request">Typed JSON-RPC request when <paramref name="Kind"/> is <see cref="JsonRpcPayloadKind.Request"/>.</param>
     /// <param name="Notification">Typed JSON-RPC notification when <paramref name="Kind"/> is <see cref="JsonRpcPayloadKind.Notification"/>.</param>
+    /// <param name="Response">Typed JSON-RPC response when <paramref name="Kind"/> is <see cref="JsonRpcPayloadKind.Response"/>.</param>
     private sealed record JsonRpcPayload(
         JsonRpcPayloadKind Kind,
         string? Method,
         JsonRpcRequestMessage? Request,
-        JsonRpcNotificationMessage? Notification
+        JsonRpcNotificationMessage? Notification,
+        JsonRpcResponseMessage? Response
     )
     {
-        public static JsonRpcPayload CreateResponse() =>
-            new(JsonRpcPayloadKind.Response, null, null, null);
+        public static JsonRpcPayload CreateResponse(JsonRpcResponseMessage response) =>
+            new(JsonRpcPayloadKind.Response, null, null, null, response);
 
         public static JsonRpcPayload CreateNotification(
             string? method,
             JsonRpcNotificationMessage notification
-        ) => new(JsonRpcPayloadKind.Notification, method, null, notification);
+        ) => new(JsonRpcPayloadKind.Notification, method, null, notification, null);
 
         public static JsonRpcPayload CreateRequest(string? method, JsonRpcRequestMessage request) =>
-            new(JsonRpcPayloadKind.Request, method, request, null);
+            new(JsonRpcPayloadKind.Request, method, request, null, null);
     }
 
     private enum JsonRpcPayloadKind

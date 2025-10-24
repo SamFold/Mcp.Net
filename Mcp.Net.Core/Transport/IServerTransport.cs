@@ -21,9 +21,28 @@ public interface IServerTransport : ITransport
     event Action<JsonRpcNotificationMessage>? OnNotification;
 
     /// <summary>
+    /// Event triggered when a response is received for a server-initiated request.
+    /// </summary>
+    event Action<JsonRpcResponseMessage>? OnResponse;
+
+    /// <summary>
     /// Sends a JSON-RPC response to the client
     /// </summary>
     /// <param name="message">The response to send</param>
     /// <returns>A task representing the asynchronous send operation</returns>
     Task SendAsync(JsonRpcResponseMessage message);
+
+    /// <summary>
+    /// Sends a JSON-RPC request to the client.
+    /// </summary>
+    /// <param name="message">The request to send.</param>
+    /// <returns>A task representing the asynchronous send operation.</returns>
+    Task SendRequestAsync(JsonRpcRequestMessage message);
+
+    /// <summary>
+    /// Sends a JSON-RPC notification to the client.
+    /// </summary>
+    /// <param name="message">The notification to send.</param>
+    /// <returns>A task representing the asynchronous send operation.</returns>
+    Task SendNotificationAsync(JsonRpcNotificationMessage message);
 }

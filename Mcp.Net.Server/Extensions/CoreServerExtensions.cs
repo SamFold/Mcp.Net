@@ -1,5 +1,6 @@
 using System.Reflection;
 using Mcp.Net.Server.Authentication;
+using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Options;
 using Mcp.Net.Server.ServerBuilder;
 using Microsoft.Extensions.Options;
@@ -76,6 +77,8 @@ public static class CoreServerExtensions
             var server = builder.Build();
             return server;
         });
+
+        services.AddSingleton<IElicitationService, ElicitationService>();
 
         return services;
     }
@@ -156,6 +159,8 @@ public static class CoreServerExtensions
             var server = builder.Build();
             return server;
         });
+
+        services.AddSingleton<IElicitationService, ElicitationService>();
 
         // Register the options for other services to use
         services.AddSingleton(options);

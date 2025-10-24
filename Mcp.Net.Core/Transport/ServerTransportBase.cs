@@ -16,6 +16,9 @@ public abstract class ServerTransportBase : TransportBase, IServerTransport
     /// <inheritdoc />
     public event Action<JsonRpcNotificationMessage>? OnNotification;
 
+    /// <inheritdoc />
+    public event Action<JsonRpcResponseMessage>? OnResponse;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ServerTransportBase"/> class
     /// </summary>
@@ -26,6 +29,12 @@ public abstract class ServerTransportBase : TransportBase, IServerTransport
 
     /// <inheritdoc />
     public abstract Task SendAsync(JsonRpcResponseMessage message);
+
+    /// <inheritdoc />
+    public abstract Task SendRequestAsync(JsonRpcRequestMessage message);
+
+    /// <inheritdoc />
+    public abstract Task SendNotificationAsync(JsonRpcNotificationMessage message);
 
     /// <summary>
     /// Raises the OnRequest event with the specified request message
@@ -45,6 +54,20 @@ public abstract class ServerTransportBase : TransportBase, IServerTransport
     {
         Logger.LogDebug("Processing notification: Method={Method}", notification.Method);
         OnNotification?.Invoke(notification);
+    }
+
+    /// <summary>
+    /// Raises the OnResponse event with the specified response message.
+    /// </summary>
+    /// <param name="response">The JSON-RPC response message.</param>
+    protected void RaiseOnResponse(JsonRpcResponseMessage response)
+    {
+        Logger.LogDebug(
+            "Processing response: Id={Id}, HasError={HasError}",
+            response.Id,
+            response.Error != null
+        );
+        OnResponse?.Invoke(response);
     }
 
     /// <summary>
@@ -82,6 +105,11 @@ public abstract class ServerTransportBase : TransportBase, IServerTransport
                 );
 
                 RaiseOnNotification(notificationMessage);
+            }
+            else if (MessageParser.IsJsonRpcResponse(message))
+            {
+                var responseMessage = MessageParser.DeserializeResponse(message);
+                RaiseOnResponse(responseMessage);
             }
             else
             {

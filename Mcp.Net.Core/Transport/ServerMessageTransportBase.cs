@@ -16,8 +16,11 @@ namespace Mcp.Net.Core.Transport
         /// <inheritdoc />
         public event Action<JsonRpcRequestMessage>? OnRequest;
 
-        /// <inheritdoc />
-        public event Action<JsonRpcNotificationMessage>? OnNotification;
+    /// <inheritdoc />
+    public event Action<JsonRpcNotificationMessage>? OnNotification;
+
+    /// <inheritdoc />
+    public event Action<JsonRpcResponseMessage>? OnResponse;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ServerMessageTransportBase"/> class.
@@ -51,6 +54,20 @@ namespace Mcp.Net.Core.Transport
         {
             Logger.LogDebug("Processing notification: Method={Method}", notification.Method);
             OnNotification?.Invoke(notification);
+        }
+
+        /// <summary>
+        /// Raises the OnResponse event with the specified response message.
+        /// </summary>
+        /// <param name="response">The JSON-RPC response message.</param>
+        protected void RaiseOnResponse(JsonRpcResponseMessage response)
+        {
+            Logger.LogDebug(
+                "Processing response: Id={Id}, HasError={HasError}",
+                response.Id,
+                response.Error != null
+            );
+            OnResponse?.Invoke(response);
         }
 
         /// <summary>
@@ -88,6 +105,18 @@ namespace Mcp.Net.Core.Transport
                     );
 
                     RaiseOnNotification(notificationMessage);
+                }
+                else if (MessageParser.IsJsonRpcResponse(message))
+                {
+                    var responseMessage = MessageParser.DeserializeResponse(message);
+
+                    Logger.LogDebug(
+                        "Deserialized JSON-RPC response: Id={Id}, HasError={HasError}",
+                        responseMessage.Id,
+                        responseMessage.Error != null
+                    );
+
+                    RaiseOnResponse(responseMessage);
                 }
                 else
                 {
@@ -133,6 +162,53 @@ namespace Mcp.Net.Core.Transport
             catch (Exception ex)
             {
                 Logger.LogError(ex, "Error sending message");
+                RaiseOnError(ex);
+                throw;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual async Task SendRequestAsync(JsonRpcRequestMessage message)
+        {
+            if (IsClosed)
+            {
+                throw new InvalidOperationException("Transport is closed");
+            }
+
+            try
+            {
+                Logger.LogDebug(
+                    "Sending request: Method={Method}, Id={Id}",
+                    message.Method,
+                    message.Id
+                );
+
+                await WriteMessageAsync(message);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error sending request message");
+                RaiseOnError(ex);
+                throw;
+            }
+        }
+
+        /// <inheritdoc />
+        public virtual async Task SendNotificationAsync(JsonRpcNotificationMessage message)
+        {
+            if (IsClosed)
+            {
+                throw new InvalidOperationException("Transport is closed");
+            }
+
+            try
+            {
+                Logger.LogDebug("Sending notification: Method={Method}", message.Method);
+                await WriteMessageAsync(message);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error sending notification message");
                 RaiseOnError(ex);
                 throw;
             }

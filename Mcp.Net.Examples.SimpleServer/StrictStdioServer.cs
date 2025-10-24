@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Server;
+using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Options;
@@ -211,6 +212,13 @@ internal static class StrictStdioServer
         services.AddLogging(logging =>
         {
             logging.SetMinimumLevel(LogLevel.Error); // Set very high threshold
+        });
+
+        services.AddSingleton(server);
+        services.AddSingleton<IElicitationService>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<ElicitationService>>();
+            return new ElicitationService(server, logger);
         });
 
         // Set up logging options

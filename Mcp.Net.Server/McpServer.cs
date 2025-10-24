@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -42,6 +43,8 @@ public class McpServer : IMcpServer
     private readonly object _resourceLock = new();
     private readonly object _promptLock = new();
     private IServerTransport? _transport;
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
+    private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
     private readonly ServerCapabilities _capabilities;
@@ -254,6 +257,26 @@ public class McpServer : IMcpServer
 
     public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
 
+    /// <summary>
+    /// Gets or sets the default timeout applied to server-initiated client requests.
+    /// </summary>
+    public TimeSpan ClientRequestTimeout
+    {
+        get => _clientRequestTimeout;
+        set
+        {
+            if (value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    "Client request timeout must be non-negative or Timeout.InfiniteTimeSpan."
+                );
+            }
+
+            _clientRequestTimeout = value;
+        }
+    }
+
     public async Task ConnectAsync(IServerTransport transport)
     {
         _transport = transport;
@@ -262,6 +285,7 @@ public class McpServer : IMcpServer
         // Set up event handlers
         transport.OnRequest += HandleRequest;
         transport.OnNotification += HandleNotification;
+        transport.OnResponse += HandleClientResponse;
         transport.OnError += HandleTransportError;
         transport.OnClose += HandleTransportClose;
 
@@ -307,6 +331,51 @@ public class McpServer : IMcpServer
         }
     }
 
+    private void HandleClientResponse(JsonRpcResponseMessage response)
+    {
+        if (response == null)
+        {
+            return;
+        }
+
+        using (_logger.BeginRequestScope(response.Id, "clientResponse"))
+        {
+            if (_pendingClientRequests.TryRemove(response.Id, out var pendingRequest))
+            {
+                if (response.Error != null)
+                {
+                    var message = string.IsNullOrWhiteSpace(response.Error.Message)
+                        ? "Client returned an error response."
+                        : response.Error.Message;
+
+                    var errorCode = Enum.IsDefined(typeof(ErrorCode), response.Error.Code)
+                        ? (ErrorCode)response.Error.Code
+                        : ErrorCode.InternalError;
+
+                    _logger.LogWarning(
+                        "Client request {RequestId} failed: {Message}",
+                        response.Id,
+                        message
+                    );
+
+                    var exception = new McpException(errorCode, message, response.Error.Data);
+                    pendingRequest.TrySetException(exception);
+                }
+                else
+                {
+                    pendingRequest.TrySetResult(response);
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Received response for unknown or completed client request: {RequestId}",
+                    response.Id
+                );
+            }
+        }
+    }
+
     private async Task ProcessRequestAsync(JsonRpcRequestMessage request)
     {
         // Use timing scope to automatically log execution time
@@ -340,14 +409,112 @@ public class McpServer : IMcpServer
         }
     }
 
+    internal async Task<JsonRpcResponseMessage> SendClientRequestAsync(
+        string method,
+        object? parameters,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (string.IsNullOrWhiteSpace(method))
+        {
+            throw new ArgumentException("Method name must be provided.", nameof(method));
+        }
+
+        if (_transport == null)
+        {
+            throw new InvalidOperationException("No active transport connection is available.");
+        }
+
+        var requestId = Guid.NewGuid().ToString("N");
+        var requestMessage = new JsonRpcRequestMessage("2.0", requestId, method, parameters);
+
+        var tcs = new TaskCompletionSource<JsonRpcResponseMessage>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        if (!_pendingClientRequests.TryAdd(requestId, tcs))
+        {
+            throw new InvalidOperationException(
+                $"Failed to register pending client request with id '{requestId}'."
+            );
+        }
+
+        _logger.LogDebug(
+            "Sending client request {RequestId} for method {Method}",
+            requestId,
+            method
+        );
+
+        try
+        {
+            await _transport.SendRequestAsync(requestMessage).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (_pendingClientRequests.TryRemove(requestId, out var pending))
+            {
+                pending.TrySetException(ex);
+            }
+
+            throw;
+        }
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (_clientRequestTimeout != Timeout.InfiniteTimeSpan)
+        {
+            linkedCts.CancelAfter(_clientRequestTimeout);
+        }
+
+        using var registration = linkedCts.Token.Register(() =>
+        {
+            if (_pendingClientRequests.TryRemove(requestId, out var pending))
+            {
+                if (!cancellationToken.IsCancellationRequested && _clientRequestTimeout != Timeout.InfiniteTimeSpan)
+                {
+                    var timeoutException = new McpException(
+                        ErrorCode.RequestTimeout,
+                        $"Client request '{method}' timed out."
+                    );
+                    pending.TrySetException(timeoutException);
+                }
+                else
+                {
+                    pending.TrySetCanceled(cancellationToken.IsCancellationRequested ? cancellationToken : linkedCts.Token);
+                }
+            }
+        });
+
+        return await tcs.Task.ConfigureAwait(false);
+    }
+
     private void HandleTransportError(Exception ex)
     {
         _logger.LogError(ex, "Transport error");
+        CancelPendingRequests(ex);
     }
 
     private void HandleTransportClose()
     {
         _logger.LogInformation("Transport connection closed");
+        CancelPendingRequests(new OperationCanceledException("Transport connection closed."));
+    }
+
+    private void CancelPendingRequests(Exception? reason)
+    {
+        foreach (var pending in _pendingClientRequests.ToArray())
+        {
+            if (_pendingClientRequests.TryRemove(pending.Key, out var tcs))
+            {
+                if (reason != null)
+                {
+                    tcs.TrySetException(reason);
+                }
+                else
+                {
+                    tcs.TrySetCanceled();
+                }
+            }
+        }
     }
 
     private void InitializeDefaultMethods()
