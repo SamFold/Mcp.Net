@@ -417,6 +417,7 @@ Ideal for CLI tools and AI model integration:
 - Works great with Claude, GPT tools
 - Simple line-based protocol
 - Lightweight and efficient
+- Requests now honour newline-delimited framing and expose a configurable `StdioClientTransport.RequestTimeout` (default 60s, set to `Timeout.InfiniteTimeSpan` to disable). Pending requests are cancelled automatically when the transport closes so callers can surface clean shutdown errors.
 
 ## 🧩 Advanced Usage
 

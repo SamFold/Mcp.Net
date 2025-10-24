@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
@@ -21,6 +22,8 @@ public class StdioClientTransport : ClientMessageTransportBase
     private readonly Stream _outputStream;
     private readonly Process? _serverProcess;
     private Task? _readTask;
+    private StreamReader? _reader;
+    private TimeSpan _requestTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioClientTransport"/> class using default stdin/stdout.
@@ -107,7 +110,7 @@ public class StdioClientTransport : ClientMessageTransportBase
 
         // Create a unique ID for this request
         var id = Guid.NewGuid().ToString("N");
-        var tcs = new TaskCompletionSource<object>();
+        var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingRequests[id] = tcs;
 
         // Create the request message
@@ -118,13 +121,22 @@ public class StdioClientTransport : ClientMessageTransportBase
             // Send the request
             await WriteMessageAsync(request);
 
-            // Wait for the response with a timeout
-            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(60), CancellationTokenSource.Token);
+            if (_requestTimeout == Timeout.InfiniteTimeSpan)
+            {
+                return await tcs.Task;
+            }
+
+            var timeoutTask = Task.Delay(_requestTimeout, CancellationTokenSource.Token);
             var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
 
             if (completedTask == timeoutTask)
             {
                 _pendingRequests.TryRemove(id, out _);
+                if (timeoutTask.IsCanceled)
+                {
+                    throw new OperationCanceledException("Request was cancelled.", CancellationTokenSource.Token);
+                }
+
                 throw new TimeoutException($"Request timed out: {method}");
             }
 
@@ -164,91 +176,35 @@ public class StdioClientTransport : ClientMessageTransportBase
 
     private async Task ProcessMessagesAsync()
     {
-        var buffer = new byte[4096];
-        var messageBuffer = new StringBuilder();
+        _reader ??= new StreamReader(
+            _inputStream,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: false,
+            bufferSize: 4096,
+            leaveOpen: true
+        );
 
         try
         {
             while (!CancellationTokenSource.Token.IsCancellationRequested)
             {
-                var bytesRead = await _inputStream.ReadAsync(
-                    buffer,
-                    0,
-                    buffer.Length,
-                    CancellationTokenSource.Token
-                );
-
-                if (bytesRead == 0)
+                var line = await _reader.ReadLineAsync(CancellationTokenSource.Token);
+                if (line == null)
                 {
-                    // End of stream
                     Logger.LogInformation("End of input stream detected");
                     break;
                 }
 
-                var chunk = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                messageBuffer.Append(chunk);
-
-                // Process buffer and find complete messages
-                string content = messageBuffer.ToString();
-                int newlineIndex;
-
-                while ((newlineIndex = content.IndexOf('\n')) >= 0)
+                if (line.Length == 0)
                 {
-                    string line = content.Substring(0, newlineIndex).Trim();
-                    content = content.Substring(newlineIndex + 1);
-
-                    if (!string.IsNullOrEmpty(line))
-                    {
-                        // Process the JSON-RPC message
-                        if (MessageParser.IsJsonRpcResponse(line))
-                        {
-                            var response = MessageParser.DeserializeResponse(line);
-
-                            // Find and complete the pending request
-                            if (_pendingRequests.TryRemove(response.Id, out var tcs))
-                            {
-                                if (response.Error != null)
-                                {
-                                    Logger.LogError(
-                                        "Request {Id} failed: {ErrorMessage}",
-                                        response.Id,
-                                        response.Error.Message
-                                    );
-                                    tcs.SetException(
-                                        new Exception($"RPC Error: {response.Error.Message}")
-                                    );
-                                }
-                                else
-                                {
-                                    Logger.LogDebug("Request {Id} succeeded", response.Id);
-                                    tcs.SetResult(response.Result ?? new { });
-                                }
-                            }
-                            else
-                            {
-                                Logger.LogWarning(
-                                    "Received response for unknown request: {Id}",
-                                    response.Id
-                                );
-                            }
-
-                            // Also process in the base class for events
-                            ProcessResponse(response);
-                        }
-                        else
-                        {
-                            Logger.LogWarning("Received unexpected message: {Line}", line);
-                        }
-                    }
+                    continue;
                 }
 
-                messageBuffer.Clear();
-                messageBuffer.Append(content);
+                ProcessJsonRpcMessage(line);
             }
         }
         catch (OperationCanceledException)
         {
-            // Normal cancellation
             Logger.LogDebug("Message processing cancelled");
         }
         catch (Exception ex)
@@ -263,6 +219,36 @@ public class StdioClientTransport : ClientMessageTransportBase
     }
 
     /// <inheritdoc />
+    protected override void ProcessResponse(JsonRpcResponseMessage response)
+    {
+        if (_pendingRequests.TryRemove(response.Id, out var tcs))
+        {
+            if (response.Error != null)
+            {
+                Logger.LogError(
+                    "Request {Id} failed: {ErrorMessage}",
+                    response.Id,
+                    response.Error.Message
+                );
+                tcs.TrySetException(
+                    new Exception($"RPC Error ({response.Error.Code}): {response.Error.Message}")
+                );
+            }
+            else
+            {
+                Logger.LogDebug("Request {Id} succeeded", response.Id);
+                tcs.TrySetResult(response.Result ?? new { });
+            }
+        }
+        else
+        {
+            Logger.LogWarning("Received response for unknown request: {Id}", response.Id);
+        }
+
+        base.ProcessResponse(response);
+    }
+
+    /// <inheritdoc />
     protected override async Task WriteRawAsync(byte[] data)
     {
         await _outputStream.WriteAsync(data, 0, data.Length, CancellationTokenSource.Token);
@@ -272,6 +258,30 @@ public class StdioClientTransport : ClientMessageTransportBase
     /// <inheritdoc />
     protected override async Task OnClosingAsync()
     {
+        foreach (var kvp in _pendingRequests)
+        {
+            if (kvp.Value.TrySetException(new OperationCanceledException("Transport is closing.", CancellationTokenSource.Token)))
+            {
+                _pendingRequests.TryRemove(kvp.Key, out _);
+            }
+        }
+
+        if (_readTask != null)
+        {
+            try
+            {
+                await _readTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Read loop terminated with exception during shutdown.");
+            }
+        }
+
         // Terminate the server process if we started it
         if (_serverProcess != null && !_serverProcess.HasExited)
         {
@@ -287,5 +297,25 @@ public class StdioClientTransport : ClientMessageTransportBase
         }
 
         await base.OnClosingAsync();
+    }
+
+    /// <summary>
+    /// Gets or sets the request timeout applied to stdio RPC requests. Use <see cref="Timeout.InfiniteTimeSpan"/> to disable the timeout.
+    /// </summary>
+    public TimeSpan RequestTimeout
+    {
+        get => _requestTimeout;
+        set
+        {
+            if (value < TimeSpan.Zero && value != Timeout.InfiniteTimeSpan)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    "Request timeout must be non-negative or Timeout.InfiniteTimeSpan."
+                );
+            }
+
+            _requestTimeout = value;
+        }
     }
 }
