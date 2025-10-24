@@ -14,6 +14,9 @@ namespace Mcp.Net.Core.Transport
     public abstract class ClientMessageTransportBase : MessageTransportBase, IClientTransport
     {
         /// <inheritdoc />
+        public event Action<JsonRpcRequestMessage>? OnRequest;
+
+        /// <inheritdoc />
         public event Action<JsonRpcResponseMessage>? OnResponse;
 
         /// <summary>
@@ -28,6 +31,21 @@ namespace Mcp.Net.Core.Transport
         /// <param name="logger">Logger for transport operations</param>
         protected ClientMessageTransportBase(IMessageParser messageParser, ILogger logger)
             : base(messageParser, logger) { }
+
+        /// <summary>
+        /// Processes a JSON-RPC request message.
+        /// </summary>
+        /// <param name="request">The request message to process.</param>
+        protected virtual void ProcessRequest(JsonRpcRequestMessage request)
+        {
+            Logger.LogDebug(
+                "Received request from server: method={Method}, id={Id}",
+                request.Method,
+                request.Id
+            );
+
+            OnRequest?.Invoke(request);
+        }
 
         /// <summary>
         /// Process a JSON-RPC response message.
@@ -81,7 +99,12 @@ namespace Mcp.Net.Core.Transport
             try
             {
                 // For client transports, we mostly expect responses
-                if (MessageParser.IsJsonRpcResponse(message))
+                if (MessageParser.IsJsonRpcRequest(message))
+                {
+                    var requestMessage = MessageParser.DeserializeRequest(message);
+                    ProcessRequest(requestMessage);
+                }
+                else if (MessageParser.IsJsonRpcResponse(message))
                 {
                     var responseMessage = MessageParser.DeserializeResponse(message);
                     ProcessResponse(responseMessage);
@@ -118,5 +141,30 @@ namespace Mcp.Net.Core.Transport
 
         /// <inheritdoc />
         public abstract Task SendNotificationAsync(string method, object? parameters = null);
+
+        /// <inheritdoc />
+        public virtual async Task SendResponseAsync(JsonRpcResponseMessage message)
+        {
+            if (IsClosed)
+            {
+                throw new InvalidOperationException("Transport is closed");
+            }
+
+            try
+            {
+                Logger.LogDebug(
+                    "Sending response: ID={Id}, HasError={HasError}",
+                    message.Id,
+                    message.Error != null
+                );
+                await WriteMessageAsync(message);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error sending response to server");
+                RaiseOnError(ex);
+                throw;
+            }
+        }
     }
 }

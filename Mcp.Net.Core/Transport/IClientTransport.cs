@@ -11,6 +11,11 @@ namespace Mcp.Net.Core.Transport;
 public interface IClientTransport : ITransport
 {
     /// <summary>
+    /// Event triggered when a request is received from the server.
+    /// </summary>
+    event Action<JsonRpcRequestMessage>? OnRequest;
+
+    /// <summary>
     /// Event triggered when a response is received
     /// </summary>
     event Action<JsonRpcResponseMessage>? OnResponse;
@@ -35,4 +40,11 @@ public interface IClientTransport : ITransport
     /// <param name="parameters">Optional parameters for the notification</param>
     /// <returns>A task that completes when the notification is sent</returns>
     Task SendNotificationAsync(string method, object? parameters = null);
+
+    /// <summary>
+    /// Sends a JSON-RPC response back to the server.
+    /// </summary>
+    /// <param name="message">The response message to send.</param>
+    /// <returns>A task that completes when the response has been transmitted.</returns>
+    Task SendResponseAsync(JsonRpcResponseMessage message);
 }

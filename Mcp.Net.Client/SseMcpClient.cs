@@ -69,7 +69,6 @@ public class SseMcpClient : McpClient
     {
         // Wire up events from the transport
         _transport.OnError += (ex) => RaiseOnError(ex);
-        _transport.OnClose += () => RaiseOnClose();
     }
 
     /// <summary>

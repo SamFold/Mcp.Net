@@ -1,5 +1,8 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
@@ -40,6 +43,9 @@ public abstract class McpClient : IMcpClient, IDisposable
     private string? _instructions;
     private string? _negotiatedProtocolVersion;
     protected readonly ILogger? _logger;
+    private IElicitationRequestHandler? _elicitationHandler;
+    private IClientTransport? _activeTransport;
+    private CancellationTokenSource? _requestCancellationSource;
 
     // These are implemented as regular fields rather than auto-properties to allow derived classes to invoke them
     private Action<JsonRpcResponseMessage>? _onResponse;
@@ -133,11 +139,15 @@ public abstract class McpClient : IMcpClient, IDisposable
     /// <returns>A task representing the asynchronous operation.</returns>
     protected async Task InitializeProtocolAsync(IClientTransport transport)
     {
+        _activeTransport = transport ?? throw new ArgumentNullException(nameof(transport));
+        ResetRequestCancellationSource();
+
         // Hook up event handlers
         transport.OnError += RaiseOnError;
-        transport.OnClose += RaiseOnClose;
+        transport.OnClose += HandleTransportClose;
         transport.OnResponse += response => RaiseOnResponse(response);
         transport.OnNotification += notification => RaiseOnNotification(notification);
+        transport.OnRequest += HandleTransportRequest;
 
         // Send initialize request with client info
         var initializeParams = new InitializeRequest
@@ -200,6 +210,15 @@ public abstract class McpClient : IMcpClient, IDisposable
 
             throw new Exception($"Failed to parse initialization response: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Registers the handler responsible for satisfying server-initiated elicitation prompts.
+    /// </summary>
+    /// <param name="handler">The handler to invoke when an elicitation request arrives.</param>
+    public void SetElicitationHandler(IElicitationRequestHandler? handler)
+    {
+        _elicitationHandler = handler;
     }
 
     public async Task<Tool[]> ListTools()
@@ -340,6 +359,288 @@ public abstract class McpClient : IMcpClient, IDisposable
     {
         _logger?.LogDebug("Received notification: {Method}", notification.Method);
         _onNotification?.Invoke(notification);
+    }
+
+    private void HandleTransportClose()
+    {
+        _logger?.LogInformation("Transport closed");
+        _activeTransport = null;
+        if (_requestCancellationSource != null)
+        {
+            try
+            {
+                _requestCancellationSource.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already disposed; ignore.
+            }
+            finally
+            {
+                _requestCancellationSource.Dispose();
+                _requestCancellationSource = null;
+            }
+        }
+
+        RaiseOnClose();
+    }
+
+    private void HandleTransportRequest(JsonRpcRequestMessage request)
+    {
+        if (request == null)
+        {
+            return;
+        }
+
+        _ = Task.Run(() => ProcessServerRequestAsync(request));
+    }
+
+    private async Task ProcessServerRequestAsync(JsonRpcRequestMessage request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Id))
+        {
+            _logger?.LogWarning(
+                "Ignoring server request '{Method}' without an identifier.",
+                request.Method
+            );
+            return;
+        }
+
+        var transport = _activeTransport;
+        if (transport == null)
+        {
+            _logger?.LogWarning(
+                "Received server request '{Method}' but no active transport is available.",
+                request.Method
+            );
+            return;
+        }
+
+        JsonRpcResponseMessage response;
+        try
+        {
+            response = await HandleServerRequestAsync(request).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            response = CreateErrorResponse(request, -32800, "Client cancelled the request.");
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Unhandled exception while processing server request '{Method}'.",
+                request.Method
+            );
+            response = CreateErrorResponse(
+                request,
+                -32603,
+                "Client failed to process the request."
+            );
+        }
+
+        try
+        {
+            await transport.SendResponseAsync(response).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Failed to transmit response for server request '{Method}' ({RequestId}).",
+                request.Method,
+                request.Id
+            );
+        }
+    }
+
+    private Task<JsonRpcResponseMessage> HandleServerRequestAsync(JsonRpcRequestMessage request)
+    {
+        if (string.Equals(
+                request.Method,
+                "elicitation/create",
+                StringComparison.OrdinalIgnoreCase
+            ))
+        {
+            return HandleElicitationCreateRequestAsync(request);
+        }
+
+        _logger?.LogWarning(
+            "Server invoked unsupported client method '{Method}'.",
+            request.Method
+        );
+        return Task.FromResult(
+            CreateErrorResponse(
+                request,
+                -32601,
+                $"Client does not support method '{request.Method}'."
+            )
+        );
+    }
+
+    private async Task<JsonRpcResponseMessage> HandleElicitationCreateRequestAsync(
+        JsonRpcRequestMessage request
+    )
+    {
+        if (_elicitationHandler == null)
+        {
+            _logger?.LogWarning(
+                "Received elicitation request '{RequestId}' but no handler is configured.",
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32601,
+                "Client does not support elicitation."
+            );
+        }
+
+        ElicitationRequestContext context;
+        try
+        {
+            context = new ElicitationRequestContext(request);
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or JsonException or InvalidOperationException
+        )
+        {
+            _logger?.LogWarning(
+                ex,
+                "Failed to deserialize elicitation request payload for request {RequestId}.",
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32602,
+                "Elicitation request parameters were invalid."
+            );
+        }
+
+        _logger?.LogInformation(
+            "Handling elicitation request '{RequestId}' with message '{Message}'.",
+            request.Id,
+            context.Message
+        );
+
+        var cancellationToken = _requestCancellationSource?.Token ?? CancellationToken.None;
+        ElicitationClientResponse? handlerResponse;
+        try
+        {
+            handlerResponse = await _elicitationHandler
+                .HandleAsync(context, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger?.LogWarning(
+                "Elicitation handler cancelled request {RequestId}.",
+                request.Id
+            );
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Elicitation handler threw an exception for request {RequestId}.",
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32603,
+                "Elicitation handler failed."
+            );
+        }
+
+        if (handlerResponse == null)
+        {
+            _logger?.LogWarning(
+                "Elicitation handler returned null for request {RequestId}.",
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32603,
+                "Elicitation handler returned no response."
+            );
+        }
+
+        var normalizedAction = handlerResponse.Action?.Trim().ToLowerInvariant();
+        if (normalizedAction != "accept" && normalizedAction != "decline" && normalizedAction != "cancel")
+        {
+            _logger?.LogWarning(
+                "Handler produced unsupported elicitation action '{Action}' for request {RequestId}.",
+                handlerResponse.Action,
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32602,
+                $"Unsupported elicitation action '{handlerResponse.Action}'."
+            );
+        }
+
+        if (normalizedAction == "accept" && handlerResponse.Content is null)
+        {
+            _logger?.LogWarning(
+                "Handler accepted elicitation {RequestId} without providing content.",
+                request.Id
+            );
+            return CreateErrorResponse(
+                request,
+                -32602,
+                "Elicitation accept responses must include content."
+            );
+        }
+
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["action"] = normalizedAction,
+        };
+
+        if (handlerResponse.Content is JsonElement contentElement)
+        {
+            result["content"] = contentElement;
+        }
+
+        _logger?.LogInformation(
+            "Elicitation request {RequestId} completed with action {Action}.",
+            request.Id,
+            normalizedAction
+        );
+
+        return new JsonRpcResponseMessage("2.0", request.Id, result, null);
+    }
+
+    private static JsonRpcResponseMessage CreateErrorResponse(
+        JsonRpcRequestMessage request,
+        int code,
+        string message,
+        object? data = null
+    )
+    {
+        return new JsonRpcResponseMessage(
+            "2.0",
+            request.Id,
+            null,
+            new JsonRpcError
+            {
+                Code = code,
+                Message = message,
+                Data = data,
+            }
+        );
+    }
+
+    private void ResetRequestCancellationSource()
+    {
+        if (_requestCancellationSource != null)
+        {
+            _requestCancellationSource.Cancel();
+            _requestCancellationSource.Dispose();
+        }
+
+        _requestCancellationSource = new CancellationTokenSource();
     }
 
     public abstract void Dispose();

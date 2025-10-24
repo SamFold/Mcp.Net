@@ -146,6 +146,12 @@ public class McpClientInitializationTests
 
     private sealed class FakeClientTransport : IClientTransport
     {
+        public event Action<JsonRpcRequestMessage>? OnRequest
+        {
+            add { }
+            remove { }
+        }
+
         public event Action<JsonRpcResponseMessage>? OnResponse
         {
             add { }
@@ -194,6 +200,8 @@ public class McpClientInitializationTests
             OnClose?.Invoke();
             return Task.CompletedTask;
         }
+
+        public Task SendResponseAsync(JsonRpcResponseMessage message) => Task.CompletedTask;
 
         public void Dispose()
         {

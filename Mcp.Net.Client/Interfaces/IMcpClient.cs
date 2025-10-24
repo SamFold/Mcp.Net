@@ -97,4 +97,13 @@ public interface IMcpClient : IDisposable
     /// <param name="name">The name of the prompt to get.</param>
     /// <returns>The prompt messages.</returns>
     Task<object[]> GetPrompt(string name);
+
+    /// <summary>
+    /// Registers the handler that fulfills server-initiated elicitation prompts.
+    /// </summary>
+    /// <param name="handler">
+    /// The handler to invoke. Supply <c>null</c> to disable elicitation support and respond with
+    /// a method-not-found error.
+    /// </param>
+    void SetElicitationHandler(IElicitationRequestHandler? handler);
 }

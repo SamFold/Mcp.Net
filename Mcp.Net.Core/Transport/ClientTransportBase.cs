@@ -18,6 +18,9 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
         new();
 
     /// <inheritdoc />
+    public event Action<JsonRpcRequestMessage>? OnRequest;
+
+    /// <inheritdoc />
     public event Action<JsonRpcResponseMessage>? OnResponse;
 
     /// <inheritdoc />
@@ -87,6 +90,21 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
     }
 
     /// <summary>
+    /// Processes a JSON-RPC request message received from the server.
+    /// </summary>
+    /// <param name="request">The request message to process.</param>
+    protected virtual void ProcessRequest(JsonRpcRequestMessage request)
+    {
+        Logger.LogDebug(
+            "Received request from server: method={Method}, id={Id}",
+            request.Method,
+            request.Id
+        );
+
+        OnRequest?.Invoke(request);
+    }
+
+    /// <summary>
     /// Processes a JSON-RPC message and dispatches it to the appropriate handler
     /// </summary>
     /// <param name="message">The JSON-RPC message to process</param>
@@ -112,8 +130,12 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
 
         try
         {
-            // For client transports, we mostly expect responses
-            if (MessageParser.IsJsonRpcResponse(message))
+            if (MessageParser.IsJsonRpcRequest(message))
+            {
+                var requestMessage = MessageParser.DeserializeRequest(message);
+                ProcessRequest(requestMessage);
+            }
+            else if (MessageParser.IsJsonRpcResponse(message))
             {
                 var responseMessage = MessageParser.DeserializeResponse(message);
                 ProcessResponse(responseMessage);
@@ -150,6 +172,9 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
 
     /// <inheritdoc />
     public abstract Task SendNotificationAsync(string method, object? parameters = null);
+
+    /// <inheritdoc />
+    public abstract Task SendResponseAsync(JsonRpcResponseMessage message);
 
     /// <inheritdoc />
     protected override Task OnClosingAsync()

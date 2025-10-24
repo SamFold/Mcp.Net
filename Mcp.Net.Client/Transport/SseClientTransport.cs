@@ -266,6 +266,24 @@ public class SseClientTransport : ClientTransportBase
         await SendJsonRpcPayloadAsync(notification);
     }
 
+    /// <inheritdoc />
+    public override async Task SendResponseAsync(JsonRpcResponseMessage message)
+    {
+        EnsureActiveSession();
+
+        if (message == null)
+        {
+            throw new ArgumentNullException(nameof(message));
+        }
+
+        Logger.LogDebug(
+            "Sending JSON-RPC response for request {Id}",
+            message.Id
+        );
+
+        await SendJsonRpcPayloadAsync(message);
+    }
+
     private async Task SendJsonRpcPayloadAsync(object payload)
     {
         var payloadJson = SerializeMessage(payload);
@@ -276,6 +294,14 @@ public class SseClientTransport : ClientTransportBase
                 "Sending JSON-RPC request: {Method} (Id: {Id})",
                 requestMessage.Method,
                 requestMessage.Id
+            );
+        }
+        else if (payload is JsonRpcResponseMessage responseMessage)
+        {
+            Logger.LogDebug(
+                "Sending JSON-RPC response: Id {Id}, HasError: {HasError}",
+                responseMessage.Id,
+                responseMessage.Error != null
             );
         }
         else if (payload is JsonRpcNotificationMessage notificationMessage)
