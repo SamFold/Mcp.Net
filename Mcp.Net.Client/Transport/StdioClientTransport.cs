@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
@@ -24,6 +25,7 @@ public class StdioClientTransport : ClientMessageTransportBase
     private Task? _readTask;
     private StreamReader? _reader;
     private TimeSpan _requestTimeout = TimeSpan.FromSeconds(60);
+    private string? _negotiatedProtocolVersion;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioClientTransport"/> class using default stdin/stdout.
@@ -107,6 +109,12 @@ public class StdioClientTransport : ClientMessageTransportBase
         {
             throw new InvalidOperationException("Transport is closed");
         }
+
+        Logger.LogDebug(
+            "Stdio sending request '{Method}' using protocol {Protocol}",
+            method,
+            _negotiatedProtocolVersion ?? "<unknown>"
+        );
 
         // Create a unique ID for this request
         var id = Guid.NewGuid().ToString("N");
@@ -297,6 +305,7 @@ public class StdioClientTransport : ClientMessageTransportBase
         }
 
         await base.OnClosingAsync();
+        _negotiatedProtocolVersion = null;
     }
 
     /// <summary>
@@ -317,5 +326,39 @@ public class StdioClientTransport : ClientMessageTransportBase
 
             _requestTimeout = value;
         }
+    }
+
+    /// <summary>
+    /// Gets the negotiated MCP protocol version once initialization completes.
+    /// </summary>
+    public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
+
+    /// <summary>
+    /// Updates the negotiated protocol version so diagnostics can surface it alongside requests.
+    /// </summary>
+    /// <param name="protocolVersion">The protocol revision negotiated during initialization.</param>
+    internal void UpdateNegotiatedProtocolVersion(string? protocolVersion)
+    {
+        if (string.Equals(_negotiatedProtocolVersion, protocolVersion, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _negotiatedProtocolVersion = protocolVersion;
+        Logger.LogInformation(
+            "Stdio transport now operating with MCP protocol version {Protocol}",
+            _negotiatedProtocolVersion ?? "<unknown>"
+        );
+    }
+
+    /// <inheritdoc />
+    protected override void ProcessNotification(JsonRpcNotificationMessage notification)
+    {
+        if (string.Equals(notification.Method, "notifications/progress", StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.LogInformation("Progress update received: {Params}", notification.Params);
+        }
+
+        base.ProcessNotification(notification);
     }
 }

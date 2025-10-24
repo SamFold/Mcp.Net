@@ -18,6 +18,11 @@ public interface IMcpClient : IDisposable
     event Action<JsonRpcResponseMessage>? OnResponse;
 
     /// <summary>
+    /// Event raised when a notification is received from the server.
+    /// </summary>
+    event Action<JsonRpcNotificationMessage>? OnNotification;
+
+    /// <summary>
     /// Event raised when an error occurs in the client.
     /// </summary>
     event Action<Exception>? OnError;

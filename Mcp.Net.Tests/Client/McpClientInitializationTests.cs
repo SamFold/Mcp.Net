@@ -152,6 +152,12 @@ public class McpClientInitializationTests
             remove { }
         }
 
+        public event Action<JsonRpcNotificationMessage>? OnNotification
+        {
+            add { }
+            remove { }
+        }
+
         public event Action<Exception>? OnError
         {
             add { }

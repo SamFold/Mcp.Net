@@ -43,6 +43,7 @@ public abstract class McpClient : IMcpClient, IDisposable
 
     // These are implemented as regular fields rather than auto-properties to allow derived classes to invoke them
     private Action<JsonRpcResponseMessage>? _onResponse;
+    private Action<JsonRpcNotificationMessage>? _onNotification;
     private Action<Exception>? _onError;
     private Action? _onClose;
 
@@ -51,6 +52,12 @@ public abstract class McpClient : IMcpClient, IDisposable
     {
         add => _onResponse += value;
         remove => _onResponse -= value;
+    }
+
+    public event Action<JsonRpcNotificationMessage>? OnNotification
+    {
+        add => _onNotification += value;
+        remove => _onNotification -= value;
     }
 
     public event Action<Exception>? OnError
@@ -127,8 +134,10 @@ public abstract class McpClient : IMcpClient, IDisposable
     protected async Task InitializeProtocolAsync(IClientTransport transport)
     {
         // Hook up event handlers
-        transport.OnError += (ex) => _onError?.Invoke(ex);
-        transport.OnClose += () => _onClose?.Invoke();
+        transport.OnError += RaiseOnError;
+        transport.OnClose += RaiseOnClose;
+        transport.OnResponse += response => RaiseOnResponse(response);
+        transport.OnNotification += notification => RaiseOnNotification(notification);
 
         // Send initialize request with client info
         var initializeParams = new InitializeRequest
@@ -321,6 +330,16 @@ public abstract class McpClient : IMcpClient, IDisposable
     {
         _logger?.LogDebug("Received response with ID: {Id}", response.Id);
         _onResponse?.Invoke(response);
+    }
+
+    /// <summary>
+    /// Invokes the OnNotification event.
+    /// </summary>
+    /// <param name="notification">The notification received from the server.</param>
+    protected void RaiseOnNotification(JsonRpcNotificationMessage notification)
+    {
+        _logger?.LogDebug("Received notification: {Method}", notification.Method);
+        _onNotification?.Invoke(notification);
     }
 
     public abstract void Dispose();

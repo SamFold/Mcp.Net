@@ -393,6 +393,11 @@ public class McpServer : IMcpServer
 
         _negotiatedProtocolVersion = negotiatedVersion;
 
+        _logger.LogInformation(
+            "Negotiated MCP protocol version {NegotiatedVersion}",
+            negotiatedVersion
+        );
+
         return Task.FromResult<object>(
             new
             {

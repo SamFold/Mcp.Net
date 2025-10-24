@@ -17,6 +17,11 @@ namespace Mcp.Net.Core.Transport
         public event Action<JsonRpcResponseMessage>? OnResponse;
 
         /// <summary>
+        /// Event triggered when a notification is received.
+        /// </summary>
+        public event Action<JsonRpcNotificationMessage>? OnNotification;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="ClientMessageTransportBase"/> class.
         /// </summary>
         /// <param name="messageParser">Parser for JSON-RPC messages</param>
@@ -40,6 +45,16 @@ namespace Mcp.Net.Core.Transport
         }
 
         /// <summary>
+        /// Process a JSON-RPC notification message.
+        /// </summary>
+        /// <param name="notification">The notification message to process.</param>
+        protected virtual void ProcessNotification(JsonRpcNotificationMessage notification)
+        {
+            Logger.LogDebug("Received notification: method={Method}", notification.Method);
+            OnNotification?.Invoke(notification);
+        }
+
+        /// <summary>
         /// Processes a JSON-RPC message and dispatches it to the appropriate handler.
         /// </summary>
         /// <param name="message">The JSON-RPC message to process.</param>
@@ -52,11 +67,29 @@ namespace Mcp.Net.Core.Transport
 
             try
             {
+                using var _ = JsonDocument.Parse(message);
+            }
+            catch (JsonException ex)
+            {
+                string truncated =
+                    message.Length > 100 ? message.Substring(0, 97) + "..." : message;
+                Logger.LogError(ex, "Invalid JSON message: {TruncatedMessage}", truncated);
+                RaiseOnError(new Exception($"Invalid JSON message: {ex.Message}", ex));
+                return;
+            }
+
+            try
+            {
                 // For client transports, we mostly expect responses
                 if (MessageParser.IsJsonRpcResponse(message))
                 {
                     var responseMessage = MessageParser.DeserializeResponse(message);
                     ProcessResponse(responseMessage);
+                }
+                else if (MessageParser.IsJsonRpcNotification(message))
+                {
+                    var notificationMessage = MessageParser.DeserializeNotification(message);
+                    ProcessNotification(notificationMessage);
                 }
                 else
                 {

@@ -20,6 +20,9 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
     /// <inheritdoc />
     public event Action<JsonRpcResponseMessage>? OnResponse;
 
+    /// <inheritdoc />
+    public event Action<JsonRpcNotificationMessage>? OnNotification;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="ClientTransportBase"/> class
     /// </summary>
@@ -74,6 +77,16 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
     }
 
     /// <summary>
+    /// Processes a JSON-RPC notification message.
+    /// </summary>
+    /// <param name="notification">The notification to process.</param>
+    protected virtual void ProcessNotification(JsonRpcNotificationMessage notification)
+    {
+        Logger.LogDebug("Received notification: method={Method}", notification.Method);
+        OnNotification?.Invoke(notification);
+    }
+
+    /// <summary>
     /// Processes a JSON-RPC message and dispatches it to the appropriate handler
     /// </summary>
     /// <param name="message">The JSON-RPC message to process</param>
@@ -86,11 +99,29 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
 
         try
         {
+            using var _ = JsonDocument.Parse(message);
+        }
+        catch (JsonException ex)
+        {
+            string truncatedMessage =
+                message.Length > 100 ? message.Substring(0, 97) + "..." : message;
+            Logger.LogError(ex, "Invalid JSON message: {TruncatedMessage}", truncatedMessage);
+            RaiseOnError(new Exception($"Invalid JSON message: {ex.Message}", ex));
+            return;
+        }
+
+        try
+        {
             // For client transports, we mostly expect responses
             if (MessageParser.IsJsonRpcResponse(message))
             {
                 var responseMessage = MessageParser.DeserializeResponse(message);
                 ProcessResponse(responseMessage);
+            }
+            else if (MessageParser.IsJsonRpcNotification(message))
+            {
+                var notificationMessage = MessageParser.DeserializeNotification(message);
+                ProcessNotification(notificationMessage);
             }
             else
             {

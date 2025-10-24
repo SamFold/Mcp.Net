@@ -77,10 +77,6 @@ public class StdioMcpClient : McpClient
 
     private void InitializeTransport()
     {
-        // Wire up events from the transport
-        _transport.OnError += (ex) => RaiseOnError(ex);
-        _transport.OnClose += () => RaiseOnClose();
-
         // Start the transport
         _transport.StartAsync().GetAwaiter().GetResult();
     }
@@ -92,6 +88,7 @@ public class StdioMcpClient : McpClient
     {
         _logger?.LogInformation("Initializing StdioMcpClient...");
         await InitializeProtocolAsync(_transport);
+        _transport.UpdateNegotiatedProtocolVersion(NegotiatedProtocolVersion);
     }
 
     /// <summary>

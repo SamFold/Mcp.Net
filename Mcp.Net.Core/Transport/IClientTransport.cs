@@ -16,6 +16,11 @@ public interface IClientTransport : ITransport
     event Action<JsonRpcResponseMessage>? OnResponse;
 
     /// <summary>
+    /// Event triggered when a notification is received.
+    /// </summary>
+    event Action<JsonRpcNotificationMessage>? OnNotification;
+
+    /// <summary>
     /// Sends a JSON-RPC request to the server and returns the response
     /// </summary>
     /// <param name="method">The method name to invoke</param>
