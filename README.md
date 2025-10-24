@@ -504,6 +504,51 @@ runs exercise the entire capability surface.
   and `MCP-Protocol-Version` headers on every POST/GET to `/mcp`.
 - SimpleClient defaults to PKCE (`--auth-mode pkce`) but still supports legacy
   client-credentials mode (`--auth-mode client`) when interacting with static client IDs.
+- Tool code can read the authenticated principal from `context.Items["AuthenticatedUserId"]`
+  (and other claims via `AuthResult`) to enforce user-level authorization before touching
+  downstream APIs or databases.
+
+### Connecting to External Identity Providers
+
+The server now accepts production configuration via `appsettings.json` (or environment variables):
+
+```jsonc
+{
+  "Server": {
+    "Authentication": {
+      "OAuth": {
+        "Authority": "https://your-idp.example",
+        "Resource": "https://your-mcp.example/mcp",
+        "ResourceMetadataPath": "/.well-known/oauth-protected-resource",
+        "AuthorizationServers": [
+          "https://your-idp.example/.well-known/oauth-authorization-server"
+        ],
+        "ValidAudiences": [ "https://your-mcp.example/mcp" ],
+        "ValidIssuers": [ "https://your-idp.example" ],
+        "SigningKeys": [
+          "base64-or-base64url-encoded-HS256-key-if-jwks-not-available"
+        ]
+      }
+    }
+  }
+}
+```
+
+- **Auth0 / Entra ID**: point `Authority` at the OpenID metadata endpoint, add the MCP endpoint as
+  an API/audience, and ensure issued tokens include the user’s stable identifier (`sub`). The server
+  will fetch signing keys from JWKS automatically.
+- **Supabase**: either mark Supabase as the authority (if JWT signing enabled) or run a lightweight
+  exchange service that mints MCP-scoped tokens using Supabase session claims. Map `sub` to your
+  database row IDs and store the Supabase signing secret in `SigningKeys` when JWKS is not exposed.
+- **Clerk**: register an OAuth application that scopes tokens to the MCP resource, then configure
+  Clerk’s issuer/JWKS URLs. Tokens arrive with the Clerk user ID in the `sub` claim, which your tools
+  can trust after validation.
+- HTTP failures now raise `McpClientHttpException`, which captures the status code, response body, and
+  originating request so host applications can surface actionable error messages to users.
+
+When writing MCP tools that touch per-user resources, compare the incoming request parameters to the
+authenticated subject (or enforce role claims) before executing queries—this prevents a caller from
+mutating data for another account even if the tool input is tampered.
 
 ## 📚 Learn More
 

@@ -51,6 +51,49 @@ public class OAuthTokenManagerTests
         result.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task GetAccessToken_ShouldLimitRefreshAttempts()
+    {
+        var provider = new RefreshFailureProvider();
+        var manager = new OAuthTokenManager(provider);
+        var resource = new Uri("https://mcp.example.com");
+        var challenge = new OAuthChallenge("Bearer", new Dictionary<string, string>(), "Bearer");
+
+        await manager.HandleUnauthorizedAsync(resource, challenge, CancellationToken.None);
+
+        var token = await manager.GetAccessTokenAsync(resource, CancellationToken.None);
+        token.Should().BeNull();
+        provider.RefreshAttempts.Should().Be(1);
+
+        // Subsequent calls should not invoke additional refresh attempts once the failure cap is reached.
+        for (var i = 0; i < 3; i++)
+        {
+            var followupToken = await manager.GetAccessTokenAsync(resource, CancellationToken.None);
+            followupToken.Should().BeNull();
+        }
+
+        provider.RefreshAttempts.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetAccessToken_ShouldRefreshTokenWhenProviderSucceeds()
+    {
+        var provider = new RefreshSuccessProvider();
+        var manager = new OAuthTokenManager(provider);
+        var resource = new Uri("https://mcp.example.com");
+        var challenge = new OAuthChallenge("Bearer", new Dictionary<string, string>(), "Bearer");
+
+        await manager.HandleUnauthorizedAsync(resource, challenge, CancellationToken.None);
+
+        var refreshedToken = await manager.GetAccessTokenAsync(resource, CancellationToken.None);
+        refreshedToken.Should().Be("fresh-token");
+        provider.RefreshAttempts.Should().Be(1);
+
+        var cachedToken = await manager.GetAccessTokenAsync(resource, CancellationToken.None);
+        cachedToken.Should().Be("fresh-token");
+        provider.RefreshAttempts.Should().Be(1);
+    }
+
     private sealed class SequencedTokenProvider : IOAuthTokenProvider
     {
         private readonly Queue<string?> _tokens;
@@ -86,5 +129,58 @@ public class OAuthTokenManagerTests
             OAuthTokenResponse currentToken,
             CancellationToken cancellationToken
         ) => AcquireTokenAsync(context, cancellationToken);
+    }
+
+    private sealed class RefreshFailureProvider : IOAuthTokenProvider
+    {
+        public int RefreshAttempts { get; private set; }
+
+        public Task<OAuthTokenResponse?> AcquireTokenAsync(
+            OAuthTokenRequestContext context,
+            CancellationToken cancellationToken
+        )
+        {
+            // Return an already expired token so GetAccessTokenAsync attempts to refresh.
+            return Task.FromResult<OAuthTokenResponse?>(
+                new OAuthTokenResponse("expired-token", DateTimeOffset.UtcNow.AddMinutes(-1))
+            );
+        }
+
+        public Task<OAuthTokenResponse?> RefreshTokenAsync(
+            OAuthTokenRequestContext context,
+            OAuthTokenResponse currentToken,
+            CancellationToken cancellationToken
+        )
+        {
+            RefreshAttempts++;
+            return Task.FromResult<OAuthTokenResponse?>(null);
+        }
+    }
+
+    private sealed class RefreshSuccessProvider : IOAuthTokenProvider
+    {
+        public int RefreshAttempts { get; private set; }
+
+        public Task<OAuthTokenResponse?> AcquireTokenAsync(
+            OAuthTokenRequestContext context,
+            CancellationToken cancellationToken
+        )
+        {
+            return Task.FromResult<OAuthTokenResponse?>(
+                new OAuthTokenResponse("expired-token", DateTimeOffset.UtcNow.AddMinutes(-1))
+            );
+        }
+
+        public Task<OAuthTokenResponse?> RefreshTokenAsync(
+            OAuthTokenRequestContext context,
+            OAuthTokenResponse currentToken,
+            CancellationToken cancellationToken
+        )
+        {
+            RefreshAttempts++;
+            return Task.FromResult<OAuthTokenResponse?>(
+                new OAuthTokenResponse("fresh-token", DateTimeOffset.UtcNow.AddMinutes(30))
+            );
+        }
     }
 }

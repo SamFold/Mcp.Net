@@ -9,6 +9,7 @@ using System.IO.Pipelines;
 using FluentAssertions;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
+using Mcp.Net.Client.Exceptions;
 using Mcp.Net.Client.Transport;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -304,9 +305,11 @@ public class SseClientTransportTests
         };
         var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
 
-        await FluentActions.Invoking(() => transport.StartAsync())
+        var exception = await FluentActions.Invoking(() => transport.StartAsync())
             .Should()
-            .ThrowAsync<HttpRequestException>();
+            .ThrowAsync<McpClientHttpException>();
+
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -340,10 +343,12 @@ public class SseClientTransportTests
         var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
         await transport.StartAsync();
 
-        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+        var exception = await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
             .Should()
-            .ThrowAsync<HttpRequestException>()
-            .WithMessage("*403*");
+            .ThrowAsync<McpClientHttpException>();
+
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        exception.Which.ResponseBody.Should().Be("forbidden");
     }
 
     [Fact]
@@ -377,10 +382,12 @@ public class SseClientTransportTests
         var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
         await transport.StartAsync();
 
-        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+        var exception = await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
             .Should()
-            .ThrowAsync<HttpRequestException>()
-            .WithMessage("*400*");
+            .ThrowAsync<McpClientHttpException>();
+
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        exception.Which.ResponseBody.Should().Be("bad request");
     }
 
     [Fact]
@@ -425,9 +432,64 @@ public class SseClientTransportTests
         );
         await transport.StartAsync();
 
-        await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+        var exception = await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
             .Should()
-            .ThrowAsync<HttpRequestException>();
+            .ThrowAsync<McpClientHttpException>();
+
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldCaptureJsonErrorSummary()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session" );
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        var jsonError = JsonSerializer.Serialize(new
+        {
+            error = new
+            {
+                code = -32000,
+                message = "Tool execution failed",
+            },
+        });
+
+        requestHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(jsonError, Encoding.UTF8, "application/json"),
+            };
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        var exception = await FluentActions.Invoking(() => transport.SendRequestAsync("tools/list", new { }))
+            .Should()
+            .ThrowAsync<McpClientHttpException>();
+
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        exception.Which.ResponseBody.Should().Be(jsonError);
+        exception.Which.Message.Should().Contain("Tool execution failed");
     }
 
     private sealed class TestMessageHandler : HttpMessageHandler

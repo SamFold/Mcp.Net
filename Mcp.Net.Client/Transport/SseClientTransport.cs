@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Mcp.Net.Client.Authentication;
+using Mcp.Net.Client.Exceptions;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging;
@@ -324,18 +325,14 @@ public class SseClientTransport : ClientTransportBase
         {
             if (!response.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(
-                    CancellationTokenSource.Token
-                );
+                var exception = await CreateHttpExceptionAsync(response);
                 Logger.LogWarning(
-                    "HTTP request to {Uri} failed with {StatusCode}: {Body}",
+                    "HTTP request to {Uri} failed with {StatusCode}. Response body: {Body}",
                     response.RequestMessage?.RequestUri,
                     response.StatusCode,
-                    errorBody
+                    exception.ResponseBody
                 );
-                throw new HttpRequestException(
-                    $"HTTP error: {(int)response.StatusCode} {response.StatusCode} - {errorBody}"
-                );
+                throw exception;
             }
 
             var sessionHeader = ExtractHeader(response.Headers, "Mcp-Session-Id");
@@ -364,6 +361,7 @@ public class SseClientTransport : ClientTransportBase
     private async Task<HttpResponseMessage> OpenSseStreamAsync()
     {
         const int maxAttempts = 3;
+        McpClientHttpException? lastUnauthorized = null;
 
         for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
@@ -410,6 +408,20 @@ public class SseClientTransport : ClientTransportBase
                 continue;
             }
 
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                lastUnauthorized = await CreateHttpExceptionAsync(response);
+                response.Dispose();
+                break;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var exception = await CreateHttpExceptionAsync(response);
+                response.Dispose();
+                throw exception;
+            }
+
             Logger.LogInformation(
                 "SSE GET handshake succeeded with status {StatusCode}",
                 response.StatusCode
@@ -417,9 +429,15 @@ public class SseClientTransport : ClientTransportBase
             return response;
         }
 
-        throw new HttpRequestException(
-            "Unable to satisfy authorization challenge for SSE stream."
-        );
+        throw lastUnauthorized
+            ?? new McpClientHttpException(
+                HttpStatusCode.Unauthorized,
+                "Unable to satisfy authorization challenge for SSE stream.",
+                null,
+                null,
+                _endpointUri,
+                HttpMethod.Get.Method
+            );
     }
 
     private async Task<HttpResponseMessage> SendWithAuthenticationAsync(
@@ -427,6 +445,7 @@ public class SseClientTransport : ClientTransportBase
     )
     {
         const int maxAttempts = 3;
+        McpClientHttpException? lastUnauthorized = null;
 
         for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
@@ -466,10 +485,32 @@ public class SseClientTransport : ClientTransportBase
                 continue;
             }
 
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                lastUnauthorized = await CreateHttpExceptionAsync(response);
+                response.Dispose();
+                break;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var exception = await CreateHttpExceptionAsync(response);
+                response.Dispose();
+                throw exception;
+            }
+
             return response;
         }
 
-        throw new HttpRequestException("Unable to satisfy authorization challenge for request.");
+        throw lastUnauthorized
+            ?? new McpClientHttpException(
+                HttpStatusCode.Unauthorized,
+                "Unable to satisfy authorization challenge for request.",
+                null,
+                null,
+                _endpointUri,
+                null
+            );
     }
 
     private async Task AttachAuthorizationAsync(HttpRequestMessage request)
@@ -698,6 +739,102 @@ public class SseClientTransport : ClientTransportBase
         }
 
         return uri;
+    }
+
+    private async Task<McpClientHttpException> CreateHttpExceptionAsync(HttpResponseMessage response)
+    {
+        var statusCode = response.StatusCode;
+        var contentType = response.Content?.Headers?.ContentType?.MediaType;
+        string? body = null;
+
+        if (response.Content != null)
+        {
+            try
+            {
+                body = await response.Content.ReadAsStringAsync(CancellationTokenSource.Token);
+            }
+            catch (Exception readEx)
+            {
+                Logger.LogDebug(
+                    readEx,
+                    "Failed to read response body for {Method} {Uri}.",
+                    response.RequestMessage?.Method,
+                    response.RequestMessage?.RequestUri
+                );
+            }
+        }
+
+        var summary = SummarizeError(body, contentType);
+        var requestUri = response.RequestMessage?.RequestUri;
+        var method = response.RequestMessage?.Method?.Method;
+        var message = summary != null
+            ? $"{(int)statusCode} {statusCode} returned by {method} {requestUri}: {summary}"
+            : $"{(int)statusCode} {statusCode} returned by {method} {requestUri}";
+
+        return new McpClientHttpException(
+            statusCode,
+            message,
+            body,
+            contentType,
+            requestUri,
+            method
+        );
+    }
+
+    private static string? SummarizeError(string? body, string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(contentType) && contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("error", out var errorElement))
+                {
+                    if (errorElement.ValueKind == JsonValueKind.Object)
+                    {
+                        if (
+                            errorElement.TryGetProperty("message", out var messageProperty)
+                            && messageProperty.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            return messageProperty.GetString();
+                        }
+
+                        if (
+                            errorElement.TryGetProperty("error_description", out var descriptionProperty)
+                            && descriptionProperty.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            return descriptionProperty.GetString();
+                        }
+                    }
+                    else if (errorElement.ValueKind == JsonValueKind.String)
+                    {
+                        return errorElement.GetString();
+                    }
+                }
+
+                if (
+                    doc.RootElement.TryGetProperty("message", out var messageElement)
+                    && messageElement.ValueKind == JsonValueKind.String
+                )
+                {
+                    return messageElement.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed JSON and fall back to plain text summary.
+            }
+        }
+
+        var trimmed = body.Trim();
+        return trimmed.Length <= 256 ? trimmed : $"{trimmed[..256]}…";
     }
 
     private static bool IsCancellationException(IOException ex)

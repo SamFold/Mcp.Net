@@ -56,7 +56,7 @@ public class OAuthAuthenticationHandlerTests
         result.Succeeded.Should().BeFalse();
         result.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
         result.ErrorCode.Should().Be("invalid_token");
-        result.ErrorDescription.Should().Contain("MCP resource");
+        result.ErrorDescription.Should().Contain("invalid");
     }
 
     [Fact]

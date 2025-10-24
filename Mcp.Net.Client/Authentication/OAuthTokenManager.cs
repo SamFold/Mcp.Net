@@ -15,6 +15,7 @@ public sealed class OAuthTokenManager
     private readonly IOAuthTokenProvider? _tokenProvider;
     private readonly ILogger _logger;
     private readonly ConcurrentDictionary<string, TokenEntry> _tokenCache = new();
+    private const int MaxRefreshFailures = 3;
 
     public OAuthTokenManager(IOAuthTokenProvider? tokenProvider, ILogger? logger = null)
     {
@@ -53,6 +54,17 @@ public sealed class OAuthTokenManager
                 return entry.Token.AccessToken;
             }
 
+            if (entry.RefreshFailureCount >= MaxRefreshFailures)
+            {
+                _logger.LogWarning(
+                    "Skipping token refresh for {Resource} after {Attempts} failed attempt(s).",
+                    resource,
+                    entry.RefreshFailureCount
+                );
+                entry.Token = null;
+                return null;
+            }
+
             _logger.LogDebug("Access token expired for {Resource}, attempting refresh.", resource);
             var challenge = entry.LastChallenge;
             if (challenge == null)
@@ -69,9 +81,11 @@ public sealed class OAuthTokenManager
             if (refreshed != null && !string.IsNullOrEmpty(refreshed.AccessToken))
             {
                 entry.Token = refreshed;
+                entry.RefreshFailureCount = 0;
                 return refreshed.AccessToken;
             }
 
+            entry.RefreshFailureCount++;
             entry.Token = null;
             return null;
         }
@@ -118,6 +132,7 @@ public sealed class OAuthTokenManager
 
             entry.Token = token;
             entry.LastChallenge = challenge;
+            entry.RefreshFailureCount = 0;
             _logger.LogInformation("OAuth token acquired for resource {Resource}.", resource);
             return true;
         }
@@ -138,5 +153,6 @@ public sealed class OAuthTokenManager
         public SemaphoreSlim Semaphore { get; } = new(1, 1);
         public OAuthTokenResponse? Token { get; set; }
         public OAuthChallenge? LastChallenge { get; set; }
+        public int RefreshFailureCount { get; set; }
     }
 }
