@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -69,9 +70,9 @@ internal sealed class OAuthAuthenticationHandler : IAuthHandler
     /// <inheritdoc />
     public async Task<AuthResult> AuthenticateAsync(HttpContext context)
     {
-        if (!TryGetBearerToken(context, out var token, out var failure))
+        if (!TryGetBearerToken(context, out var token, out var failureResult))
         {
-            return AuthResult.Fail(failure!);
+            return failureResult!;
         }
 
         try
@@ -85,7 +86,12 @@ internal sealed class OAuthAuthenticationHandler : IAuthHandler
                     "Bearer token audience does not include required resource {Resource}",
                     _options.Resource
                 );
-                return AuthResult.Fail("Bearer token audience does not match the MCP resource.");
+                return AuthResult.Fail(
+                    "Bearer token audience does not match the MCP resource.",
+                    StatusCodes.Status403Forbidden,
+                    "insufficient_scope",
+                    "Access token is not valid for the requested MCP resource."
+                );
             }
 
             var userId = DetermineUserId(principal);
@@ -100,47 +106,77 @@ internal sealed class OAuthAuthenticationHandler : IAuthHandler
                 "Signing key not found while validating bearer token. Triggering metadata refresh."
             );
             _configurationManager?.RequestRefresh();
-            return AuthResult.Fail("Unable to validate bearer token signature.");
+            return AuthResult.Fail(
+                "Unable to validate bearer token signature.",
+                StatusCodes.Status401Unauthorized,
+                "invalid_token",
+                "Resource server is unable to validate the bearer token signature."
+            );
         }
         catch (SecurityTokenExpiredException ex)
         {
             _logger.LogInformation(ex, "Bearer token expired.");
-            return AuthResult.Fail("Bearer token has expired.");
+            return AuthResult.Fail(
+                "Bearer token has expired.",
+                StatusCodes.Status401Unauthorized,
+                "invalid_token",
+                "Bearer token has expired."
+            );
         }
         catch (SecurityTokenException ex)
         {
             _logger.LogWarning(ex, "Bearer token validation failed: {Message}", ex.Message);
-            return AuthResult.Fail("Bearer token is invalid.");
+            return AuthResult.Fail(
+                "Bearer token is invalid.",
+                StatusCodes.Status401Unauthorized,
+                "invalid_token",
+                "Bearer token is invalid."
+            );
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled error during OAuth authentication.");
-            return AuthResult.Fail("OAuth authentication error.");
+            return AuthResult.Fail(
+                "OAuth authentication error.",
+                StatusCodes.Status500InternalServerError,
+                "server_error",
+                "Unexpected error encountered while validating the bearer token."
+            );
         }
     }
 
     private bool TryGetBearerToken(
         HttpContext context,
         out string token,
-        out string? failureReason
+        out AuthResult? failureResult
     )
     {
         token = string.Empty;
-        failureReason = null;
+        failureResult = null;
 
         if (context.Request.Headers.TryGetValue("Authorization", out var authHeaderValues))
         {
             var headerValue = authHeaderValues.ToString();
             if (!headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
-                failureReason = "Authorization header must use the Bearer scheme.";
+                failureResult = AuthResult.Fail(
+                    "Authorization header must use the Bearer scheme.",
+                    StatusCodes.Status401Unauthorized,
+                    "invalid_request",
+                    "Authorization header must use the Bearer scheme."
+                );
                 return false;
             }
 
             var candidate = headerValue.Substring("Bearer ".Length).Trim();
             if (string.IsNullOrEmpty(candidate))
             {
-                failureReason = "Bearer token is missing.";
+                failureResult = AuthResult.Fail(
+                    "Bearer token is missing.",
+                    StatusCodes.Status401Unauthorized,
+                    "invalid_token",
+                    "Bearer token is missing."
+                );
                 return false;
             }
 
@@ -158,7 +194,12 @@ internal sealed class OAuthAuthenticationHandler : IAuthHandler
             }
         }
 
-        failureReason = "Missing bearer token.";
+        failureResult = AuthResult.Fail(
+            "Missing bearer token.",
+            StatusCodes.Status401Unauthorized,
+            "invalid_token",
+            "Request did not include bearer token credentials."
+        );
         return false;
     }
 

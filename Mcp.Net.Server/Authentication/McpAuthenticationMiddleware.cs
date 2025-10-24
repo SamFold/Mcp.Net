@@ -162,7 +162,7 @@ public class McpAuthenticationMiddleware
     )
     {
         // Log failure with appropriate level and details
-        string reason = authResult.FailureReason ?? "Unknown reason";
+        string reason = authResult.FailureReason ?? authResult.ErrorDescription ?? "Unknown reason";
         string clientIp = GetClientIpAddress(context);
 
         _logger.LogWarning(
@@ -172,34 +172,25 @@ public class McpAuthenticationMiddleware
             reason
         );
 
-        // Set appropriate status code based on the type of failure
-        context.Response.StatusCode = 401; // Default to 401 Unauthorized
-
-        // Add WWW-Authenticate header to suggest to clients how to authenticate
-        var scheme =
-            _authHandler?.SchemeName
-            ?? (!string.IsNullOrWhiteSpace(_options.SchemeName) ? _options.SchemeName : "MCP");
-
-        if (_options is OAuthResourceServerOptions oauthOptions)
+        var statusCode = authResult.StatusCode;
+        if (statusCode <= 0)
         {
-            var metadataUrl = BuildMetadataUrl(context, oauthOptions);
-            if (!string.IsNullOrEmpty(metadataUrl))
-            {
-                context.Response.Headers["WWW-Authenticate"] =
-                    $"Bearer resource_metadata=\"{metadataUrl}\"";
-            }
-            else
-            {
-                context.Response.Headers.Append("WWW-Authenticate", scheme);
-            }
+            statusCode = StatusCodes.Status401Unauthorized;
         }
-        else
+
+        context.Response.StatusCode = statusCode;
+
+        if (statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
         {
-            context.Response.Headers.Append("WWW-Authenticate", scheme);
+            var headerValue = BuildWwwAuthenticateHeader(context, authResult);
+            if (!string.IsNullOrEmpty(headerValue))
+            {
+                context.Response.Headers["WWW-Authenticate"] = headerValue;
+            }
         }
 
         // Write a structured error response
-        await WriteErrorResponse(context, "Unauthorized", reason);
+        await WriteErrorResponse(context, authResult);
     }
 
     /// <summary>
@@ -231,6 +222,32 @@ public class McpAuthenticationMiddleware
             status = context.Response.StatusCode,
             timestamp = DateTimeOffset.UtcNow.ToString("o"),
         };
+
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(
+            response,
+            new JsonSerializerOptions { WriteIndented = true }
+        );
+    }
+
+    /// <summary>
+    /// Writes a structured error response based on the authentication result.
+    /// </summary>
+    private static async Task WriteErrorResponse(HttpContext context, AuthResult authResult)
+    {
+        var response = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["error"] = authResult.ErrorCode ?? "unauthorized",
+            ["error_description"] =
+                authResult.ErrorDescription ?? authResult.FailureReason ?? "Unauthorized request.",
+            ["status"] = context.Response.StatusCode,
+            ["timestamp"] = DateTimeOffset.UtcNow.ToString("o"),
+        };
+
+        if (!string.IsNullOrWhiteSpace(authResult.ErrorUri))
+        {
+            response["error_uri"] = authResult.ErrorUri;
+        }
 
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsJsonAsync(
@@ -283,10 +300,7 @@ public class McpAuthenticationMiddleware
         }
     }
 
-    private static string? BuildMetadataUrl(
-        HttpContext context,
-        OAuthResourceServerOptions oauthOptions
-    )
+    private static string? BuildMetadataUrl(HttpContext context, OAuthResourceServerOptions oauthOptions)
     {
         if (
             Uri.TryCreate(oauthOptions.ResourceMetadataPath, UriKind.Absolute, out var absoluteUri)
@@ -310,6 +324,59 @@ public class McpAuthenticationMiddleware
 
         return CombineAuthorityWithPath(context, oauthOptions, oauthOptions.ResourceMetadataPath);
     }
+
+    private string BuildWwwAuthenticateHeader(HttpContext context, AuthResult authResult)
+    {
+        var scheme =
+            _authHandler?.SchemeName
+            ?? (!string.IsNullOrWhiteSpace(_options.SchemeName) ? _options.SchemeName : "MCP");
+
+        var parameters = new List<string>();
+
+        if (_options is OAuthResourceServerOptions oauthOptions)
+        {
+            if (!string.IsNullOrWhiteSpace(oauthOptions.Resource))
+            {
+                parameters.Add(FormWwwAuthenticateTuple("resource", oauthOptions.Resource!));
+            }
+
+            var metadataUrl = BuildMetadataUrl(context, oauthOptions);
+            if (!string.IsNullOrEmpty(metadataUrl))
+            {
+                parameters.Add(FormWwwAuthenticateTuple("resource_metadata", metadataUrl));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(authResult.ErrorCode))
+        {
+            parameters.Add(FormWwwAuthenticateTuple("error", authResult.ErrorCode!));
+        }
+
+        if (!string.IsNullOrWhiteSpace(authResult.ErrorDescription))
+        {
+            parameters.Add(
+                FormWwwAuthenticateTuple(
+                    "error_description",
+                    authResult.ErrorDescription!.Replace("\"", "'", StringComparison.Ordinal)
+                )
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(authResult.ErrorUri))
+        {
+            parameters.Add(FormWwwAuthenticateTuple("error_uri", authResult.ErrorUri!));
+        }
+
+        if (parameters.Count == 0)
+        {
+            return scheme;
+        }
+
+        return $"{scheme} {string.Join(", ", parameters)}";
+    }
+
+    private static string FormWwwAuthenticateTuple(string name, string value) =>
+        $"{name}=\"{value}\"";
 
     private static string? CombineAuthorityWithPath(
         HttpContext context,

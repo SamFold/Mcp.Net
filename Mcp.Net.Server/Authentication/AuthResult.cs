@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 
 namespace Mcp.Net.Server.Authentication;
 
@@ -18,6 +19,7 @@ public class AuthResult
     public AuthResult()
     {
         Claims = new Dictionary<string, string>();
+        StatusCode = StatusCodes.Status401Unauthorized;
     }
 
     /// <summary>
@@ -31,6 +33,7 @@ public class AuthResult
         return new AuthResult
         {
             Succeeded = true,
+            StatusCode = StatusCodes.Status200OK,
             UserId = userId,
             Claims = claims ?? new Dictionary<string, string>(),
         };
@@ -40,10 +43,28 @@ public class AuthResult
     /// Creates a failed authentication result
     /// </summary>
     /// <param name="reason">The reason for the failure</param>
+    /// <param name="statusCode">HTTP status code that should be returned to the client.</param>
+    /// <param name="errorCode">Optional OAuth 2.1 compliant error code (e.g. invalid_token).</param>
+    /// <param name="errorDescription">Optional human-readable description for logging and clients.</param>
+    /// <param name="errorUri">Optional URI with additional error details.</param>
     /// <returns>A failed authentication result</returns>
-    public static AuthResult Fail(string reason)
+    public static AuthResult Fail(
+        string reason,
+        int statusCode = StatusCodes.Status401Unauthorized,
+        string? errorCode = null,
+        string? errorDescription = null,
+        string? errorUri = null
+    )
     {
-        return new AuthResult { Succeeded = false, FailureReason = reason };
+        return new AuthResult
+        {
+            Succeeded = false,
+            FailureReason = reason,
+            StatusCode = statusCode,
+            ErrorCode = errorCode,
+            ErrorDescription = errorDescription,
+            ErrorUri = errorUri,
+        };
     }
 
     /// <summary>
@@ -65,6 +86,26 @@ public class AuthResult
     /// Reason for failure, if authentication was not successful
     /// </summary>
     public string? FailureReason { get; set; }
+
+    /// <summary>
+    /// Gets or sets the HTTP status code that should be returned to the client.
+    /// </summary>
+    public int StatusCode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the OAuth 2.1 compatible error code (e.g. invalid_token, insufficient_scope).
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional human-readable error description.
+    /// </summary>
+    public string? ErrorDescription { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional URI with additional error information.
+    /// </summary>
+    public string? ErrorUri { get; set; }
 
     /// <summary>
     /// Converts this auth result to a ClaimsPrincipal

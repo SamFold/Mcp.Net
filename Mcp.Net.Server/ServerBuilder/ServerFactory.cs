@@ -139,6 +139,8 @@ public class ServerFactory
         // Create and configure the server using the options object
         var builder = McpServerBuilder.ForSse(serverOptions).WithLoggerFactory(_loggerFactory);
 
+        ApplyConfiguredAuthentication(builder, serverOptions);
+
         // Add tool assemblies if provided
         if (_options.ToolAssemblies != null)
         {
@@ -252,7 +254,7 @@ public class ServerFactory
             _logger.LogInformation("Stdio server started successfully");
 
             // Wait for cancellation (this is optional since the StartAsync may not return until stdio is closed)
-            await Task.Delay(Timeout.Infinite, cts.Token).ContinueWith(t => { });
+            await Task.Delay(Timeout.Infinite, cts.Token).ContinueWith(_ => { });
         }
         catch (TaskCanceledException)
         {
@@ -266,5 +268,38 @@ public class ServerFactory
         }
 
         _logger.LogInformation("Stdio server stopped");
+    }
+
+    private void ApplyConfiguredAuthentication(
+        McpServerBuilder builder,
+        SseServerOptions serverOptions
+    )
+    {
+        var authSection = _configuration.GetSection("Server:Authentication");
+        if (!authSection.Exists())
+        {
+            return;
+        }
+
+        var configuration = new AuthenticationConfiguration();
+        authSection.Bind(configuration);
+
+        builder.WithAuthentication(auth => configuration.ApplyTo(auth, _logger));
+
+        if (builder.ConfiguredAuthOptions != null)
+        {
+            serverOptions.Authentication = builder.ConfiguredAuthOptions;
+        }
+
+        if (
+            builder.AuthHandler == null
+            && configuration.Disable != true
+            && configuration.OAuth == null
+        )
+        {
+            _logger.LogWarning(
+                "Server authentication configuration was present, but no authentication handler was activated. Verify the Server:Authentication settings."
+            );
+        }
     }
 }
