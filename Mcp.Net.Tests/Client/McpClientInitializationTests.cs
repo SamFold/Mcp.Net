@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Mcp.Net.Client;
+using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Messages;
@@ -49,7 +50,7 @@ public class McpClientInitializationTests
         payload.Capabilities!.Roots.Should().NotBeNull();
         payload.Capabilities!.Roots!.ListChanged.Should().BeTrue();
         payload.Capabilities!.Sampling.Should().NotBeNull();
-        payload.Capabilities!.Elicitation.Should().NotBeNull();
+        payload.Capabilities!.Elicitation.Should().BeNull();
 
         transport.LastNotificationMethod.Should().Be("notifications/initialized");
         transport.LastNotificationParameters.Should().BeNull();
@@ -82,6 +83,29 @@ public class McpClientInitializationTests
         var payload = transport.LastRequestPayload.Should().BeOfType<InitializeRequest>().Subject;
         payload.ClientInfo.Should().NotBeNull();
         payload.ClientInfo!.Title.Should().Be("DefaultTitleClient");
+    }
+
+    [Fact]
+    public async Task Initialize_ShouldAdvertiseElicitation_WhenHandlerRegistered()
+    {
+        var transport = new FakeClientTransport
+        {
+            ResponseToReturn = new InitializeResponse
+            {
+                ProtocolVersion = McpClient.LatestProtocolVersion,
+                Capabilities = new ServerCapabilities(),
+                ServerInfo = new ServerInfo { Name = "Server", Version = "1.0.0" },
+            },
+        };
+
+        var client = new TestMcpClient(transport);
+        client.SetElicitationHandler((_, _) => Task.FromResult(ElicitationClientResponse.Decline()));
+
+        await client.Initialize();
+
+        var payload = transport.LastRequestPayload.Should().BeOfType<InitializeRequest>().Subject;
+        payload.Capabilities.Should().NotBeNull();
+        payload.Capabilities!.Elicitation.Should().NotBeNull();
     }
 
     [Fact]

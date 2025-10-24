@@ -1,5 +1,7 @@
+using System;
 using System.Threading;
 using Mcp.Net.Client.Authentication;
+using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Client.Transport;
 using Microsoft.Extensions.Logging;
@@ -23,6 +25,7 @@ public class McpClientBuilder
     private string? _apiKey;
     private string? _clientTitle;
     private IOAuthTokenProvider? _tokenProvider;
+    private Func<ElicitationRequestContext, CancellationToken, Task<ElicitationClientResponse>>? _elicitationHandler;
 
     public McpClientBuilder() { }
 
@@ -138,6 +141,21 @@ public class McpClientBuilder
     }
 
     /// <summary>
+    /// Registers an elicitation handler that will be installed on the constructed client.
+    /// </summary>
+    /// <param name="handler">
+    /// Delegate invoked whenever the server issues an <c>elicitation/create</c> request. Supply <c>null</c>
+    /// to disable elicitation handling.
+    /// </param>
+    public McpClientBuilder WithElicitationHandler(
+        Func<ElicitationRequestContext, CancellationToken, Task<ElicitationClientResponse>>? handler
+    )
+    {
+        _elicitationHandler = handler;
+        return this;
+    }
+
+    /// <summary>
     /// Configures the client to use Server-Sent Events transport with the specified URL.
     /// </summary>
     public McpClientBuilder UseSseTransport(string serverUrl)
@@ -192,7 +210,7 @@ public class McpClientBuilder
     /// </summary>
     public IMcpClient Build()
     {
-        return _transportType switch
+        IMcpClient client = _transportType switch
         {
             TransportType.SSE when _httpClient != null => new SseMcpClient(
                 _httpClient,
@@ -242,6 +260,13 @@ public class McpClientBuilder
 
             _ => throw new InvalidOperationException("Transport not properly configured"),
         };
+
+        if (_elicitationHandler != null)
+        {
+            client.SetElicitationHandler(_elicitationHandler);
+        }
+
+        return client;
     }
 
     /// <summary>

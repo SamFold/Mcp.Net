@@ -131,6 +131,7 @@ The SimpleServer includes the following example tools:
 - `wh40k.inquisitor_name`: Generate a Warhammer 40k Inquisitor name
 - `wh40k.roll_dice`: Roll dice with Warhammer 40k flavor
 - `wh40k.battle_simulation`: Simulate a battle (asynchronous tool)
+- `wh40k.inquisitor_profile`: Demonstrates `IElicitationService` by requesting additional user input (homeworld, weapon, years of service) and honoring accept/decline/cancel responses from the client.
 
 ### Seeded Resources & Prompts
 

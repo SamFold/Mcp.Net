@@ -13,6 +13,7 @@ using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.Shared;
 using Mcp.Net.Examples.SimpleClient.Authorization;
+using Mcp.Net.Examples.SimpleClient.Elicitation;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 
@@ -55,7 +56,8 @@ public class SseClientExample
             .WithVersion("1.0.0")
             .WithTitle("Simple Client Example")
             .WithLogger(loggerFactory.CreateLogger("SimpleClient"))
-            .UseSseTransport(options.ServerUrl);
+            .UseSseTransport(options.ServerUrl)
+            .WithElicitationHandler(ConsoleElicitationHandler.HandleAsync);
 
         HttpClient? pkceProviderHttpClient = null;
         HttpClient? pkceInteractionHttpClient = null;

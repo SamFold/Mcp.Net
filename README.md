@@ -61,7 +61,31 @@ dotnet run --project Mcp.Net.Examples.SimpleClient -- --url http://localhost:500
 > ℹ️ The first SSE GET returns `401 Unauthorized` by design. The client follows the
 > `WWW-Authenticate` challenge, registers itself at `/oauth/register`, completes the PKCE
 > handshake, and reconnects with a bearer token. Watch the logs to see resources, prompts,
-> and tools being exercised end-to-end.
+> and tools (including the new elicitation flow) being exercised end-to-end. When the
+> Warhammer inquisitor tool runs you’ll be prompted to accept/decline/cancel and optionally
+> override fields via the console handler in the sample client.
+
+### Enable elicitation in your own client
+
+The client advertises the `elicitation` capability only after you register a handler. Call
+`SetElicitationHandler` (or the builder helper) **before** `Initialize`:
+
+```csharp
+var client = new McpClientBuilder()
+    .UseSseTransport(serverUrl)
+    .WithElicitationHandler(async (context, ct) =>
+    {
+        // Render UI, validate against context.RequestedSchema, then respond
+        return ElicitationClientResponse.Decline();
+    })
+    .Build();
+
+await client.Initialize();
+```
+
+Handlers can accept, decline, or cancel and receive strongly typed schema details via
+`ElicitationRequestContext`. The SimpleClient console demo in `Mcp.Net.Examples.SimpleClient`
+shows a full end-to-end implementation.
 
 ### Create your first MCP server in 2 minutes
 
@@ -478,6 +502,7 @@ This implementation is currently at version 0.9.0:
 - ✅ Configurable server port and hostname
 - ✅ Resource catalogue (list/read) with sample markdown content
 - ✅ Prompt catalogue (list/get) demonstrated by SimpleServer
+- ✅ Elicitation (server + client) with console UX helpers and schema validation
 
 ### Partially Implemented Features
 - ⚠️ Advanced content types (Image, Resource, Embedded)

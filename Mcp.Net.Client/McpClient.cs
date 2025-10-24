@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -96,7 +97,7 @@ public abstract class McpClient : IMcpClient, IDisposable
         {
             Roots = new RootsCapabilities { ListChanged = true },
             Sampling = new { },
-            Elicitation = new { },
+            Elicitation = null,
         };
         _logger = logger;
     }
@@ -219,7 +220,15 @@ public abstract class McpClient : IMcpClient, IDisposable
     public void SetElicitationHandler(IElicitationRequestHandler? handler)
     {
         _elicitationHandler = handler;
+        _clientCapabilities.Elicitation = handler != null ? new { } : null;
+        if (_negotiatedProtocolVersion != null)
+        {
+            _logger?.LogWarning(
+                "Elicitation handler updated after initialization; the capability advertisement will not change until the next session."
+            );
+        }
     }
+
 
     public async Task<Tool[]> ListTools()
     {

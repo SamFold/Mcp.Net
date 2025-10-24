@@ -1,8 +1,10 @@
 using System;
 using System.Threading.Tasks;
 using Mcp.Net.Client;
+using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Examples.SimpleClient.Elicitation;
 
 namespace Mcp.Net.Examples.SimpleClient.Examples;
 
@@ -25,6 +27,7 @@ public class StdioClientExample
         {
             // Create a Stdio client
             client = new StdioMcpClient(options.ServerCommand, "SimpleClientExample", "1.0.0");
+            client.SetElicitationHandler(ConsoleElicitationHandler.HandleAsync);
 
             // Subscribe to events
             client.OnResponse += response => Console.WriteLine($"Received response: {response.Id}");
