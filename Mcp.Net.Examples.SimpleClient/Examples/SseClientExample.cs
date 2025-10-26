@@ -16,6 +16,7 @@ using Mcp.Net.Examples.SimpleClient.Authorization;
 using Mcp.Net.Examples.SimpleClient.Elicitation;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
+using Mcp.Net.Core.Models.Completion;
 
 namespace Mcp.Net.Examples.SimpleClient.Examples;
 
@@ -129,6 +130,7 @@ public class SseClientExample
             await DisplayServerMetadataAsync(client);
             await InspectResourcesAsync(client);
             await InspectPromptsAsync(client);
+            await DemonstrateCompletionsAsync(client);
 
             // List available tools
             var tools = await client.ListTools();
@@ -383,6 +385,65 @@ public class SseClientExample
         catch (Exception ex)
         {
             Console.WriteLine($"Unable to inspect prompts: {ex.Message}");
+        }
+    }
+
+    private static async Task DemonstrateCompletionsAsync(IMcpClient client)
+    {
+        Console.WriteLine("\n=== Completions ===");
+
+        if (client.ServerCapabilities?.Completions == null)
+        {
+            Console.WriteLine("Server does not advertise completion support.");
+            return;
+        }
+
+        try
+        {
+            var recipientSuggestions = await client.CompleteAsync(
+                new CompletionReference
+                {
+                    Type = "ref/prompt",
+                    Name = "draft-follow-up-email",
+                },
+                new CompletionArgument
+                {
+                    Name = "recipient",
+                    Value = "eng",
+                }
+            );
+
+            Console.WriteLine(
+                $"Suggested recipients for 'eng': {string.Join(", ", recipientSuggestions.Values)}"
+            );
+
+            var contextSuggestions = await client.CompleteAsync(
+                new CompletionReference
+                {
+                    Type = "ref/prompt",
+                    Name = "draft-follow-up-email",
+                },
+                new CompletionArgument
+                {
+                    Name = "context",
+                    Value = string.Empty,
+                },
+                new CompletionContext
+                {
+                    Arguments = new Dictionary<string, string>
+                    {
+                        ["recipient"] = "engineering@mcp.example",
+                    },
+                }
+            );
+
+            Console.WriteLine(
+                $"Suggested context entries: {string.Join(", ", contextSuggestions.Values)}"
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Completion request failed: {ex.Message}");
         }
     }
 

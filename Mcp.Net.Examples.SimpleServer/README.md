@@ -12,6 +12,7 @@ The SimpleServer example shows how to:
 4. Process tool invocations
 5. Return different types of responses (simple values and complex objects)
 6. Implement asynchronous tools
+7. Provide completion suggestions for prompt arguments
 
 ## Getting Started
 
@@ -141,8 +142,19 @@ The SimpleServer includes the following example tools:
 - Prompts:
   - `summarize-resource`
   - `draft-follow-up-email`
+- Completion suggestions:
+  - `draft-follow-up-email` prompt: `recipient` and `context` arguments
 
 These are registered at startup so clients can test MCP resource and prompt capabilities without additional configuration.
+
+### Completion Suggestions
+
+The sample server advertises the `completions` capability and returns suggestions for the `draft-follow-up-email` prompt:
+
+- Typing the `recipient` argument yields common team aliases such as `engineering@mcp.example`
+- The `context` argument provides helpful hints once a recipient is selected
+
+Try it with the SimpleClient example—after initialization the client will request completions and display the suggested values.
 
 ## Key Components
 

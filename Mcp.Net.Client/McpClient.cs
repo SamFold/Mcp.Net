@@ -7,6 +7,7 @@ using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
+using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Messages;
@@ -307,6 +308,48 @@ public abstract class McpClient : IMcpClient, IDisposable
         var response = await SendRequest("prompts/get", new { name });
         var promptResponse = DeserializeResponse<PromptsGetResponse>(response);
         return promptResponse?.Messages ?? throw new Exception("Failed to parse prompt response");
+    }
+
+    public async Task<CompletionValues> CompleteAsync(
+        CompletionReference reference,
+        CompletionArgument argument,
+        CompletionContext? context = null
+    )
+    {
+        if (_serverCapabilities == null)
+        {
+            throw new InvalidOperationException("Client not initialized. Call Initialize() first.");
+        }
+
+        if (_serverCapabilities.Completions == null)
+        {
+            throw new InvalidOperationException(
+                "Server does not advertise completion support."
+            );
+        }
+
+        if (reference == null)
+        {
+            throw new ArgumentNullException(nameof(reference));
+        }
+
+        if (argument == null)
+        {
+            throw new ArgumentNullException(nameof(argument));
+        }
+
+        var payload = new CompletionCompleteParams
+        {
+            Reference = reference,
+            Argument = argument,
+            Context = context,
+        };
+
+        var response = await SendRequest("completion/complete", payload);
+        var completionResponse = DeserializeResponse<CompletionCompleteResult>(response)
+            ?? throw new Exception("Failed to parse completion response");
+
+        return completionResponse.Completion ?? new CompletionValues();
     }
 
     /// <summary>

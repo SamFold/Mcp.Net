@@ -2,7 +2,7 @@
 
 The SimpleClient project demonstrates how to connect to an MCP server using the `Mcp.Net.Client`
 SDK. It showcases both transports (SSE and stdio), OAuth flows, resource/prompt discovery, and
-now the full elicitation feature introduced in the 2025-06-18 specification.
+now the elicitation and completion features introduced in the 2025-06-18 specification.
 
 ## Running the Sample
 
@@ -24,7 +24,7 @@ now the full elicitation feature introduced in the 2025-06-18 specification.
 
 The first connection performs capability negotiation, lists prompts/resources, and exercises the
 calculator and Warhammer tools. During the Warhammer demo you will be prompted with an elicitation
-request.
+request, and the completions section demonstrates how prompt arguments receive suggestions.
 
 ## Elicitation Walkthrough
 
@@ -52,6 +52,17 @@ The handler lives in `Elicitation/ConsoleElicitationHandler.cs` and demonstrates
 Both SSE and stdio demos register the handler via `McpClientBuilder.WithElicitationHandler(...)`
 or `client.SetElicitationHandler(...)`. The client only advertises the `elicitation` capability
 when a handler is registered, so call one of these before `Initialize`.
+
+## Completion Demo
+
+After prompts are listed the sample requests suggestions for the
+`draft-follow-up-email` prompt:
+
+- Typing `eng` for the `recipient` argument returns team aliases seeded by the server
+- Providing the recipient and requesting completions for `context` surfaces helpful phrasing hints
+
+Both SSE and stdio demos use the new `IMcpClient.CompleteAsync` helper. The client only calls
+`completion/complete` when the server advertises the capability negotiated during initialization.
 
 ## Authentication Modes
 

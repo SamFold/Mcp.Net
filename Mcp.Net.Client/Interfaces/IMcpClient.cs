@@ -1,6 +1,7 @@
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Core.Models.Tools;
@@ -106,4 +107,17 @@ public interface IMcpClient : IDisposable
     /// a method-not-found error.
     /// </param>
     void SetElicitationHandler(IElicitationRequestHandler? handler);
+
+    /// <summary>
+    /// Requests completion suggestions for the specified reference and argument.
+    /// </summary>
+    /// <param name="reference">The prompt or resource reference to complete.</param>
+    /// <param name="argument">The argument being completed.</param>
+    /// <param name="context">Optional context arguments previously resolved.</param>
+    /// <returns>The suggestion payload returned by the server.</returns>
+    Task<CompletionValues> CompleteAsync(
+        CompletionReference reference,
+        CompletionArgument argument,
+        CompletionContext? context = null
+    );
 }

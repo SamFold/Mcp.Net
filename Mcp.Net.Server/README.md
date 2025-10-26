@@ -12,6 +12,7 @@ This is a reference implementation of the Model Context Protocol (MCP) server. T
 - Automatic JSON Schema generation
 - Cloud-ready configuration
 - Improved connection management
+- Optional completion suggestions for prompts and resources
 
 ## Running the Server
 
@@ -119,6 +120,102 @@ In upcoming releases, we plan to implement:
 - Authentication and authorization mechanisms
 - Distributed connection management
 - Resource quota and rate limiting
+- Additional completion providers (filesystem, project-specific data)
+
+## Enabling Completion Suggestions
+
+The 2025-06-18 MCP revision introduces the `completion/complete` method so clients can request
+contextual suggestions while filling prompt arguments or resource URIs. The server only
+advertises this capability when you register at least one completion handler.
+
+### Registering Prompt Completions
+
+Use `RegisterPromptCompletion` to attach a handler that returns `CompletionValues` for a prompt.
+The handler receives a `CompletionRequestContext` containing the original request, the argument
+name/value being completed, and any previously supplied arguments.
+
+```csharp
+var server = services.GetRequiredService<McpServer>();
+
+server.RegisterPromptCompletion(
+    promptName: "draft-follow-up-email",
+    handler: async (context, cancellationToken) =>
+    {
+        // Argument metadata
+        var argument = context.Parameters.Argument;
+
+        if (string.Equals(argument.Name, "recipient", StringComparison.OrdinalIgnoreCase))
+        {
+            var candidates = new[]
+            {
+                "engineering@mcp.example",
+                "product@mcp.example",
+                "security@mcp.example",
+            };
+
+            var filtered = candidates
+                .Where(candidate =>
+                    string.IsNullOrWhiteSpace(argument.Value)
+                    || candidate.StartsWith(argument.Value, StringComparison.OrdinalIgnoreCase))
+                .Take(100)
+                .ToArray();
+
+            return new CompletionValues
+            {
+                Values = filtered,
+                Total = filtered.Length,
+                HasMore = false,
+            };
+        }
+
+        return new CompletionValues(); // empty result for unsupported arguments
+    }
+);
+```
+
+When the first handler is registered the server automatically advertises the `completions`
+capability during the MCP initialize handshake. Removing all handlers drops the capability.
+
+### Registering Resource Completions
+
+For URI-style completions (for example, filesystem or database aliases) call
+`RegisterResourceCompletion`. The handler signature matches the prompt version, but the reference
+type is `ref/resource` and the `CompletionRequestContext` contains the target URI in
+`context.Parameters.Reference.Uri`.
+
+```csharp
+server.RegisterResourceCompletion(
+    resourceUri: "mcp://docs",
+    handler: async (context, cancellationToken) =>
+    {
+        var prefix = context.Parameters.Argument?.Value ?? string.Empty;
+        var suggestions = Directory
+            .EnumerateFiles("/docs", "*.md")
+            .Select(path => Path.GetFileName(path))
+            .Where(name => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Take(50)
+            .ToArray();
+
+        return new CompletionValues
+        {
+            Values = suggestions,
+            Total = suggestions.Length,
+            HasMore = false,
+        };
+    }
+);
+```
+
+### Testing & Samples
+
+- Unit coverage for the server dispatcher lives in
+  `Mcp.Net.Tests/Server/Completions/McpServerCompletionTests.cs`.
+- The SimpleServer demo seeds completions for the `draft-follow-up-email` prompt in
+  `SampleContentCatalog.cs`, and the SimpleClient example prints the resulting suggestions.
+
+Clients must still opt into the capability. The companion `IMcpClient.CompleteAsync` helper throws
+when the server does not advertise completions, so pair these handlers with client updates if you
+control both ends.
 
 ## Transport Modes
 

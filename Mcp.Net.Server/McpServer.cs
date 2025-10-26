@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.JsonRpc;
+using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Exceptions;
@@ -14,9 +15,11 @@ using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Logging;
+using Mcp.Net.Server.Completions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Threading;
+using System.Threading.Tasks;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
 public class McpServer : IMcpServer
@@ -42,6 +45,9 @@ public class McpServer : IMcpServer
     private readonly List<string> _promptOrder = new();
     private readonly object _resourceLock = new();
     private readonly object _promptLock = new();
+    private readonly Dictionary<string, CompletionHandler> _completionHandlers =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _completionLock = new();
     private IServerTransport? _transport;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
@@ -229,6 +235,90 @@ public class McpServer : IMcpServer
         }
 
         RegisterPrompt(prompt, _ => Task.FromResult(messages), overwrite);
+    }
+
+    /// <summary>
+    /// Registers a completion handler scoped to a specific prompt.
+    /// </summary>
+    /// <param name="promptName">The prompt name for which suggestions will be provided.</param>
+    /// <param name="handler">The delegate responsible for producing completion suggestions.</param>
+    /// <param name="overwrite">Set to <c>true</c> to replace an existing handler.</param>
+    public void RegisterPromptCompletion(
+        string promptName,
+        CompletionHandler handler,
+        bool overwrite = false
+    )
+    {
+        if (string.IsNullOrWhiteSpace(promptName))
+        {
+            throw new ArgumentException("Prompt name must be provided.", nameof(promptName));
+        }
+
+        if (handler == null)
+        {
+            throw new ArgumentNullException(nameof(handler));
+        }
+
+        var key = BuildCompletionKey("ref/prompt", promptName);
+        lock (_completionLock)
+        {
+            if (!overwrite && _completionHandlers.ContainsKey(key))
+            {
+                throw new InvalidOperationException(
+                    $"A completion handler is already registered for prompt '{promptName}'."
+                );
+            }
+
+            _completionHandlers[key] = handler;
+            EnsureCompletionCapabilityAdvertised();
+        }
+
+        _logger.LogInformation(
+            "Registered completion handler for prompt {PromptName}",
+            promptName
+        );
+    }
+
+    /// <summary>
+    /// Registers a completion handler scoped to a specific resource.
+    /// </summary>
+    /// <param name="resourceUri">The resource URI for which suggestions will be provided.</param>
+    /// <param name="handler">The delegate responsible for producing completion suggestions.</param>
+    /// <param name="overwrite">Set to <c>true</c> to replace an existing handler.</param>
+    public void RegisterResourceCompletion(
+        string resourceUri,
+        CompletionHandler handler,
+        bool overwrite = false
+    )
+    {
+        if (string.IsNullOrWhiteSpace(resourceUri))
+        {
+            throw new ArgumentException("Resource URI must be provided.", nameof(resourceUri));
+        }
+
+        if (handler == null)
+        {
+            throw new ArgumentNullException(nameof(handler));
+        }
+
+        var key = BuildCompletionKey("ref/resource", resourceUri);
+        lock (_completionLock)
+        {
+            if (!overwrite && _completionHandlers.ContainsKey(key))
+            {
+                throw new InvalidOperationException(
+                    $"A completion handler is already registered for resource '{resourceUri}'."
+                );
+            }
+
+            _completionHandlers[key] = handler;
+            EnsureCompletionCapabilityAdvertised();
+        }
+
+        _logger.LogInformation(
+            "Registered completion handler for resource {ResourceUri}",
+            resourceUri
+        );
     }
 
     /// <summary>
@@ -527,6 +617,7 @@ public class McpServer : IMcpServer
         RegisterMethod<ResourcesReadRequest>("resources/read", HandleResourcesRead);
         RegisterMethod<PromptsListRequest>("prompts/list", HandlePromptsList);
         RegisterMethod<PromptsGetRequest>("prompts/get", HandlePromptsGet);
+        RegisterMethod<CompletionCompleteParams>("completion/complete", HandleCompletionComplete);
 
         _logger.LogDebug("Default MCP methods registered");
     }
@@ -831,6 +922,101 @@ public class McpServer : IMcpServer
         return new PromptsGetResponse { Messages = messages ?? Array.Empty<object>() };
     }
 
+    private async Task<object> HandleCompletionComplete(CompletionCompleteParams request)
+    {
+        if (_capabilities.Completions == null)
+        {
+            _logger.LogWarning(
+                "Received completion request but server does not advertise completion support."
+            );
+            throw new McpException(
+                ErrorCode.MethodNotFound,
+                "Server does not support completion/complete."
+            );
+        }
+
+        if (request.Reference == null)
+        {
+            throw new McpException(ErrorCode.InvalidParams, "Completion reference is required.");
+        }
+
+        if (request.Argument == null)
+        {
+            throw new McpException(ErrorCode.InvalidParams, "Completion argument is required.");
+        }
+
+        var referenceType = request.Reference.Type?.Trim();
+        if (string.IsNullOrWhiteSpace(referenceType))
+        {
+            throw new McpException(ErrorCode.InvalidParams, "Completion reference type is required.");
+        }
+
+        string identifier = referenceType switch
+        {
+            "ref/prompt" when !string.IsNullOrWhiteSpace(request.Reference.Name)
+                => request.Reference.Name,
+            "ref/resource" when !string.IsNullOrWhiteSpace(request.Reference.Uri)
+                => request.Reference.Uri!,
+            _ => throw new McpException(
+                ErrorCode.InvalidParams,
+                $"Unsupported completion reference '{referenceType}'."
+            ),
+        };
+
+        var key = BuildCompletionKey(referenceType, identifier);
+        CompletionHandler? handler;
+        lock (_completionLock)
+        {
+            _completionHandlers.TryGetValue(key, out handler);
+        }
+
+        if (handler == null)
+        {
+            throw new McpException(
+                ErrorCode.InvalidParams,
+                $"No completion handler registered for {referenceType} '{identifier}'."
+            );
+        }
+
+        _logger.LogDebug(
+            "Handling completion for {ReferenceType} '{Identifier}' argument '{ArgumentName}'.",
+            referenceType,
+            identifier,
+            request.Argument.Name
+        );
+
+        CompletionValues suggestions;
+        try
+        {
+            var context = new CompletionRequestContext(request);
+            suggestions = await handler(context, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (McpException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error generating completion values for {ReferenceType} '{Identifier}'.",
+                referenceType,
+                identifier
+            );
+            throw new McpException(
+                ErrorCode.InternalError,
+                "Failed to generate completion suggestions."
+            );
+        }
+
+        suggestions ??= new CompletionValues();
+
+        return new CompletionCompleteResult
+        {
+            Completion = suggestions,
+        };
+    }
+
     private static Resource CloneResource(Resource source)
     {
         return new Resource
@@ -891,6 +1077,21 @@ public class McpServer : IMcpServer
         Prompt Prompt,
         Func<CancellationToken, Task<object[]>> MessagesFactory
     );
+
+    private static string BuildCompletionKey(string referenceType, string identifier)
+    {
+        var normalizedType = referenceType?.Trim().ToLowerInvariant() ?? string.Empty;
+        var normalizedIdentifier = identifier?.Trim() ?? string.Empty;
+        return $"{normalizedType}::{normalizedIdentifier}";
+    }
+
+    private void EnsureCompletionCapabilityAdvertised()
+    {
+        if (_capabilities.Completions == null)
+        {
+            _capabilities.Completions = new { };
+        }
+    }
 
     /// <summary>
     /// Register a method handler for a specific request type

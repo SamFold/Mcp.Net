@@ -1,10 +1,14 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Server;
+using Mcp.Net.Server.Completions;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Examples.SimpleServer;
@@ -91,6 +95,21 @@ internal static class SampleContentCatalog
         },
     };
 
+    private static readonly string[] DraftEmailRecipientSuggestions =
+    {
+        "engineering@mcp.example",
+        "product@mcp.example",
+        "security@mcp.example",
+        "support@mcp.example",
+    };
+
+    private static readonly string[] DraftEmailContextSuggestions =
+    {
+        "Summarise the calculator tool results and next steps.",
+        "Include findings from the Warhammer inquisitor elicitation.",
+        "Highlight outstanding OAuth configuration items.",
+    };
+
     public static void Register(McpServer server, ILogger? logger = null)
     {
         if (server == null)
@@ -138,11 +157,54 @@ internal static class SampleContentCatalog
             overwrite: true
         );
 
+        server.RegisterPromptCompletion(
+            DraftEmailPrompt.Name,
+            (context, _) => Task.FromResult(BuildDraftEmailCompletions(context)),
+            overwrite: true
+        );
+
         logger?.LogInformation(
             "Seeded {ResourceCount} demo resources and {PromptCount} prompts.",
             2,
             2
         );
+    }
+
+    private static CompletionValues BuildDraftEmailCompletions(CompletionRequestContext context)
+    {
+        var argumentName = context.Parameters.Argument?.Name ?? string.Empty;
+        var currentValue = context.Parameters.Argument?.Value ?? string.Empty;
+
+        return argumentName switch
+        {
+            "recipient" => BuildCompletionValues(DraftEmailRecipientSuggestions, currentValue),
+            "context" => BuildCompletionValues(DraftEmailContextSuggestions, currentValue),
+            _ => new CompletionValues
+            {
+                Values = Array.Empty<string>(),
+                Total = 0,
+                HasMore = false,
+            },
+        };
+    }
+
+    private static CompletionValues BuildCompletionValues(IEnumerable<string> options, string prefix)
+    {
+        var normalizedPrefix = prefix?.Trim() ?? string.Empty;
+        var matches = options
+            .Where(option =>
+                string.IsNullOrEmpty(normalizedPrefix)
+                || option.StartsWith(normalizedPrefix, StringComparison.OrdinalIgnoreCase)
+            )
+            .Take(100)
+            .ToArray();
+
+        return new CompletionValues
+        {
+            Values = matches,
+            Total = matches.Length,
+            HasMore = false,
+        };
     }
 
     private static object[] CreateSummarizePromptMessages()
