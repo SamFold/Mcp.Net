@@ -1,8 +1,11 @@
+using System.Linq;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Examples.LLMConsole.UI;
 using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Elicitation;
+using Mcp.Net.Examples.LLMConsole.Elicitation;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -27,7 +30,19 @@ public class Program
             return;
         }
 
-        var mcpClient = await ConnectToMcpServer();
+        var loggerFactory = LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger, dispose: false));
+        var chatUI = new ChatUI();
+
+        var elicitationCoordinator = new ElicitationCoordinator(
+            loggerFactory.CreateLogger<ElicitationCoordinator>()
+        );
+        var elicitationProvider = new ConsoleElicitationPromptProvider(
+            chatUI,
+            loggerFactory.CreateLogger<ConsoleElicitationPromptProvider>()
+        );
+        elicitationCoordinator.SetProvider(elicitationProvider);
+
+        var mcpClient = await ConnectToMcpServer(elicitationCoordinator);
 
         var toolRegistry = await LoadMcpTools(mcpClient);
 
@@ -35,13 +50,9 @@ public class Program
 
         var services = new ServiceCollection();
 
-        services.AddSingleton<ILoggerFactory>(
-            LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger, dispose: false))
-        );
+        services.AddSingleton(loggerFactory);
         services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
-
-        // Register UI components
-        services.AddSingleton<ChatUI>();
+        services.AddSingleton(chatUI);
         services.AddSingleton<ToolSelectionService>();
 
         // Build temporary service provider for tool selection
@@ -77,21 +88,21 @@ public class Program
                 $"Please set the {GetApiKeyEnvVarName(provider)} environment variable"
             );
 
-            Console.WriteLine("\nTo set the environment variable:");
+            Console.WriteLine("To set the environment variable:");
             Console.WriteLine(
-                $"  • Bash/Zsh: export {GetApiKeyEnvVarName(provider)}=\"your-api-key\""
+                $"  - Bash/Zsh: export {GetApiKeyEnvVarName(provider)}=\"your-api-key\""
             );
             Console.WriteLine(
-                $"  • PowerShell: $env:{GetApiKeyEnvVarName(provider)} = \"your-api-key\""
+                $"  - PowerShell: $env:{GetApiKeyEnvVarName(provider)} = \"your-api-key\""
             );
             Console.WriteLine(
-                $"  • Command Prompt: set {GetApiKeyEnvVarName(provider)}=your-api-key"
+                $"  - Command Prompt: set {GetApiKeyEnvVarName(provider)}=your-api-key"
             );
 
             if (provider == LlmProvider.Anthropic)
-                Console.WriteLine("\nGet an API key from: https://console.anthropic.com/");
+                Console.WriteLine("Get an API key from: https://console.anthropic.com/");
             else
-                Console.WriteLine("\nGet an API key from: https://platform.openai.com/api-keys");
+                Console.WriteLine("Get an API key from: https://platform.openai.com/api-keys");
 
             return;
         }
@@ -100,19 +111,11 @@ public class Program
         string modelName = GetModelName(args, provider);
         _logger.LogInformation("Using model: {Model}", modelName);
 
-        // Create chat UI
-        var chatUI = new ChatUI();
-
-        // Create logger instances
-        var loggerFactory = LoggerFactory.Create(builder =>
-            builder.AddSerilog(Log.Logger, dispose: false)
-        );
         var chatSessionLogger = loggerFactory.CreateLogger<ChatSession>();
         var openAiLogger = loggerFactory.CreateLogger<LLM.OpenAI.OpenAiChatClient>();
         var anthropicLogger = loggerFactory.CreateLogger<LLM.Anthropic.AnthropicChatClient>();
         var chatUIHandlerLogger = loggerFactory.CreateLogger<ChatUIHandler>();
 
-        // Create chat client
         var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
         var chatClient =
             provider == LlmProvider.Anthropic
@@ -122,17 +125,13 @@ public class Program
 
         chatClient.RegisterTools(toolRegistry.EnabledTools);
 
-        // Create chat session
         var chatSession = new ChatSession(chatClient, mcpClient, toolRegistry, chatSessionLogger);
 
-        // Create UI handler
         var chatUIHandler = new ChatUIHandler(chatUI, chatSession, chatUIHandlerLogger);
 
-        // Create and start the console adapter
         var consoleAdapterLogger = loggerFactory.CreateLogger<ConsoleAdapter>();
         var consoleAdapter = new ConsoleAdapter(chatSession, chatUI, consoleAdapterLogger);
 
-        // Run the console adapter
         await consoleAdapter.RunAsync();
     }
 
@@ -242,10 +241,11 @@ public class Program
         };
     }
 
-    private static async Task<IMcpClient> ConnectToMcpServer()
+    private static async Task<IMcpClient> ConnectToMcpServer(ElicitationCoordinator coordinator)
     {
         var mcpClient = await new McpClientBuilder()
             .UseSseTransport("http://localhost:5000/")
+            .WithElicitationHandler(coordinator.HandleAsync)
             .BuildAndInitializeAsync();
 
         _logger.LogInformation("Connected to MCP server");

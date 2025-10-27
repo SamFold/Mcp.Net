@@ -4,6 +4,8 @@ using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Tools;
+using Mcp.Net.LLM.Elicitation;
+using System.Collections.Concurrent;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Chat.Interfaces;
@@ -35,6 +37,7 @@ public class ChatFactory : IChatFactory
     private readonly LlmClientFactory _clientFactory;
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
+    private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
 
     public ChatFactory(
         ILogger<ChatFactory> logger,
@@ -95,7 +98,14 @@ public class ChatFactory : IChatFactory
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
 
         // Create SignalR adapter
-        var adapter = new SignalRChatAdapter(chatSession, _hubContext, adapterLogger, sessionId);
+        _elicitationCoordinators.TryGetValue(sessionId, out var coordinator);
+        var adapter = new SignalRChatAdapter(
+            chatSession,
+            _hubContext,
+            adapterLogger,
+            sessionId,
+            coordinator
+        );
 
         _logger.LogInformation("Created SignalRChatAdapter for session {SessionId}", sessionId);
 
@@ -131,7 +141,14 @@ public class ChatFactory : IChatFactory
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
 
         // Create SignalR adapter
-        var adapter = new SignalRChatAdapter(chatSession, _hubContext, adapterLogger, sessionId);
+        _elicitationCoordinators.TryGetValue(sessionId, out var coordinator);
+        var adapter = new SignalRChatAdapter(
+            chatSession,
+            _hubContext,
+            adapterLogger,
+            sessionId,
+            coordinator
+        );
 
         _logger.LogInformation(
             "Created SignalRChatAdapter for session {SessionId} using agent {AgentName}",
@@ -281,7 +298,16 @@ public class ChatFactory : IChatFactory
 
         try
         {
-            var clientBuilder = new McpClientBuilder().UseSseTransport(mcpServerUrl);
+            var coordinator = _elicitationCoordinators.GetOrAdd(
+                sessionId,
+                sid => new ElicitationCoordinator(
+                    _loggerFactory.CreateLogger<ElicitationCoordinator>()
+                )
+            );
+
+            var clientBuilder = new McpClientBuilder()
+                .UseSseTransport(mcpServerUrl)
+                .WithElicitationHandler(coordinator.HandleAsync);
 
             if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
             {
@@ -385,5 +411,20 @@ public class ChatFactory : IChatFactory
         );
 
         return metadata;
+    }
+
+    /// <summary>
+    /// Releases per-session state retained by the factory (such as elicitation coordinators).
+    /// </summary>
+    public void ReleaseSessionResources(string sessionId)
+    {
+        if (_elicitationCoordinators.TryRemove(sessionId, out var coordinator))
+        {
+            coordinator.SetProvider(null);
+            _logger.LogDebug(
+                "Released session resources for {SessionId} (elicitation coordinator disposed).",
+                sessionId
+            );
+        }
     }
 }

@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
+using Microsoft.Extensions.Logging;
+using Mcp.Net.WebUi.Chat.Interfaces;
 
 namespace Mcp.Net.WebUi.Infrastructure.Services;
 
@@ -10,6 +12,7 @@ namespace Mcp.Net.WebUi.Infrastructure.Services;
 public class ChatAdapterManager : IChatAdapterManager, IHostedService, IDisposable
 {
     private readonly ILogger<ChatAdapterManager> _logger;
+    private readonly IChatFactory _chatFactory;
     private readonly ConcurrentDictionary<
         string,
         (ISignalRChatAdapter Adapter, DateTime LastActive)
@@ -17,9 +20,10 @@ public class ChatAdapterManager : IChatAdapterManager, IHostedService, IDisposab
     private readonly TimeSpan _inactivityThreshold = TimeSpan.FromMinutes(30);
     private Timer? _cleanupTimer;
 
-    public ChatAdapterManager(ILogger<ChatAdapterManager> logger)
+    public ChatAdapterManager(ILogger<ChatAdapterManager> logger, IChatFactory chatFactory)
     {
         _logger = logger;
+        _chatFactory = chatFactory;
     }
 
     /// <summary>
@@ -66,26 +70,40 @@ public class ChatAdapterManager : IChatAdapterManager, IHostedService, IDisposab
     /// <summary>
     /// Removes an adapter and properly disposes it
     /// </summary>
-    public Task RemoveAdapterAsync(string sessionId)
+    public async Task RemoveAdapterAsync(string sessionId)
     {
         if (_adapters.TryRemove(sessionId, out var adapterEntry))
         {
             _logger.LogInformation("Removed adapter for session {SessionId}", sessionId);
 
-            // If adapter implements IAsyncDisposable
-            if (adapterEntry.Adapter is IAsyncDisposable asyncDisposable)
+            try
             {
-                return asyncDisposable.DisposeAsync().AsTask();
+                if (adapterEntry.Adapter is IAsyncDisposable asyncDisposable)
+                {
+                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                }
+                else if (adapterEntry.Adapter is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
             }
-
-            // If adapter implements IDisposable
-            if (adapterEntry.Adapter is IDisposable disposable)
+            finally
             {
-                disposable.Dispose();
+                _chatFactory.ReleaseSessionResources(sessionId);
             }
         }
+    }
 
-        return Task.CompletedTask;
+    public bool TryGetAdapter(string sessionId, out ISignalRChatAdapter adapter)
+    {
+        if (_adapters.TryGetValue(sessionId, out var entry))
+        {
+            adapter = entry.Adapter;
+            return true;
+        }
+
+        adapter = null!;
+        return false;
     }
 
     /// <summary>
@@ -137,7 +155,7 @@ public class ChatAdapterManager : IChatAdapterManager, IHostedService, IDisposab
                 "Cleaning up inactive adapter for session {SessionId}",
                 sessionId
             );
-            RemoveAdapterAsync(sessionId).ConfigureAwait(false);
+            _ = RemoveAdapterAsync(sessionId);
         }
 
         _logger.LogInformation(

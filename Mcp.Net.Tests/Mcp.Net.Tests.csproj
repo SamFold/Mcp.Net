@@ -29,6 +29,7 @@
     <ProjectReference Include="..\Mcp.Net.LLM\Mcp.Net.LLM.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.SimpleServer\Mcp.Net.Examples.SimpleServer.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.SimpleClient\Mcp.Net.Examples.SimpleClient.csproj" />
+    <ProjectReference Include="..\Mcp.Net.WebUi\Mcp.Net.WebUi.csproj" />
   </ItemGroup>
 
 </Project>

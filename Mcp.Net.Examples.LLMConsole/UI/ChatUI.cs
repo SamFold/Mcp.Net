@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Mcp.Net.Core.Models.Elicitation;
 using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.Examples.LLMConsole.UI;
@@ -355,6 +356,43 @@ public class ChatUI
         ColorWrite("╰", ToolColor);
         ColorWrite(horizontalLine, ToolColor);
         ColorWriteLine("╯", ToolColor);
+        Console.WriteLine();
+    }
+
+    public void DisplayElicitationPrompt(string message, ElicitationSchema schema)
+    {
+        Console.WriteLine();
+        ColorWriteLine("=== Elicitation Request ===", SystemColor);
+        Console.WriteLine(message);
+        Console.WriteLine();
+
+        if (schema.Properties.Count > 0)
+        {
+            Console.WriteLine("Fields:");
+            foreach (var (name, property) in schema.Properties)
+            {
+                var required = schema.Required?.Contains(name) ?? false;
+                Console.Write($" - {name}");
+                if (required)
+                {
+                    Console.Write(" (required)");
+                }
+
+                if (!string.IsNullOrWhiteSpace(property.Description))
+                {
+                    Console.Write($": {property.Description}");
+                }
+
+                Console.WriteLine();
+            }
+
+            Console.WriteLine();
+        }
+    }
+
+    public void DisplayElicitationOutcome(string text)
+    {
+        ColorWriteLine(text, SystemColor);
         Console.WriteLine();
     }
 

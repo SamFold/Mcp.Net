@@ -28,6 +28,11 @@ public interface IChatAdapterManager
     Task RemoveAdapterAsync(string sessionId);
 
     /// <summary>
+    /// Attempts to retrieve an existing adapter without creating a new instance.
+    /// </summary>
+    bool TryGetAdapter(string sessionId, out ISignalRChatAdapter adapter);
+
+    /// <summary>
     /// Gets all active session IDs
     /// </summary>
     IEnumerable<string> GetActiveSessions();

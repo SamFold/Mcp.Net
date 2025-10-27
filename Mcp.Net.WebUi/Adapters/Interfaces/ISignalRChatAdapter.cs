@@ -1,6 +1,7 @@
-using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.WebUi.Adapters.SignalR;
+using Mcp.Net.WebUi.DTOs;
 
 namespace Mcp.Net.WebUi.Adapters.Interfaces;
 
@@ -45,7 +46,12 @@ public interface ISignalRChatAdapter : IDisposable
     Task NotifyMetadataUpdated(ChatSessionMetadata metadata);
 
     /// <summary>
+    /// Attempts to resolve a pending elicitation request with the supplied client response.
+    /// </summary>
+    Task<bool> TryResolveElicitationAsync(ElicitationResponseDto response);
+
+    /// <summary>
     /// Event raised when a message is received from the assistant
     /// </summary>
-    event EventHandler<ChatMessageEventArgs> MessageReceived;
+    event EventHandler<ChatMessageEventArgs>? MessageReceived;
 }

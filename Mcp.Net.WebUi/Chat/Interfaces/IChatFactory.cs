@@ -56,4 +56,9 @@ public interface IChatFactory
     /// <param name="agent">Agent definition to use for configuration</param>
     /// <returns>Configured ChatSessionMetadata</returns>
     ChatSessionMetadata CreateSessionMetadataFromAgent(string sessionId, AgentDefinition agent);
+
+    /// <summary>
+    /// Releases session-specific resources that were provisioned by the factory.
+    /// </summary>
+    void ReleaseSessionResources(string sessionId);
 }

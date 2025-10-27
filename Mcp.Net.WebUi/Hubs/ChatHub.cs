@@ -7,6 +7,7 @@ using Mcp.Net.WebUi.DTOs;
 using Mcp.Net.WebUi.Infrastructure.Services;
 using Mcp.Net.WebUi.LLM.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.WebUi.Hubs;
 
@@ -206,8 +207,43 @@ public class ChatHub : Hub
     }
 
     /// <summary>
-    /// Set the system prompt for a session
+    /// Receives an elicitation response from the web client and forwards it to the active adapter.
     /// </summary>
+    public async Task SubmitElicitationResponse(string sessionId, ElicitationResponseDto response)
+    {
+        try
+        {
+            var adapter = await GetExistingAdapterAsync(sessionId);
+            if (adapter == null)
+            {
+                _logger.LogWarning(
+                    "Received elicitation response for inactive session {SessionId}",
+                    sessionId
+                );
+                return;
+            }
+
+            var handled = await adapter.TryResolveElicitationAsync(response);
+            if (!handled)
+            {
+                _logger.LogWarning(
+                    "No pending elicitation request {RequestId} for session {SessionId}",
+                    response.RequestId,
+                    sessionId
+                );
+            }
+            else
+            {
+                _adapterManager.MarkAdapterAsActive(sessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling elicitation response for session {SessionId}", sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+        }
+    }
+
     public async Task SetSystemPrompt(string sessionId, string systemPrompt)
     {
         try
@@ -273,19 +309,14 @@ public class ChatHub : Hub
     /// <summary>
     /// Helper method to get an existing adapter without creating a new one
     /// </summary>
-    private async Task<ISignalRChatAdapter?> GetExistingAdapterAsync(string sessionId)
+    private Task<ISignalRChatAdapter?> GetExistingAdapterAsync(string sessionId)
     {
-        // Check if adapter exists in the manager
-        if (!_adapterManager.GetActiveSessions().Contains(sessionId))
+        if (_adapterManager.TryGetAdapter(sessionId, out var adapter))
         {
-            return null;
+            return Task.FromResult<ISignalRChatAdapter?>(adapter);
         }
 
-        // Get the adapter without creating a new one
-        return await _adapterManager.GetOrCreateAdapterAsync(
-            sessionId,
-            (sid) => Task.FromResult<ISignalRChatAdapter>(null!)
-        );
+        return Task.FromResult<ISignalRChatAdapter?>(null);
     }
 
     /// <summary>
