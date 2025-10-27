@@ -19,7 +19,9 @@ public static class ConsoleBanner
 
     public static void DisplayStartupBanner(
         Mcp.Net.Core.Models.Tools.Tool[] availableTools,
-        IEnumerable<string>? enabledToolNames = null
+        IEnumerable<string>? enabledToolNames = null,
+        int promptCount = 0,
+        int resourceCount = 0
     )
     {
         // Draw a fixed width banner
@@ -110,6 +112,9 @@ public static class ConsoleBanner
 
         // Log level
         DrawConfigLine("Logging Level", logLevel.ToString(), HighlightColor);
+
+        DrawConfigLine("Prompts", promptCount.ToString(), HighlightColor);
+        DrawConfigLine("Resources", resourceCount.ToString(), HighlightColor);
 
         // API Keys - check for presence and display
         bool anthropicKeyPresent = !string.IsNullOrEmpty(

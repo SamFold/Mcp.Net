@@ -1,3 +1,10 @@
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Mcp.Net.Core.Models.Completion;
+using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -54,4 +61,46 @@ public interface ISignalRChatAdapter : IDisposable
     /// Event raised when a message is received from the assistant
     /// </summary>
     event EventHandler<ChatMessageEventArgs>? MessageReceived;
+
+    /// <summary>
+    /// Provides the cached prompt descriptors for the session.
+    /// </summary>
+    Task<IReadOnlyList<Prompt>> GetPromptsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns the full prompt payload for a specific prompt.
+    /// </summary>
+    Task<object[]> GetPromptMessagesAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Provides the cached resource descriptors for the session.
+    /// </summary>
+    Task<IReadOnlyList<Resource>> GetResourcesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads the contents of a resource from the server.
+    /// </summary>
+    Task<ResourceContent[]> ReadResourceAsync(string uri, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Requests completion suggestions for a prompt argument.
+    /// </summary>
+    Task<CompletionValues> CompletePromptAsync(
+        string promptName,
+        string argumentName,
+        string currentValue,
+        IReadOnlyDictionary<string, string>? contextArguments = null,
+        CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
+    /// Requests completion suggestions for a resource argument.
+    /// </summary>
+    Task<CompletionValues> CompleteResourceAsync(
+        string resourceUri,
+        string argumentName,
+        string currentValue,
+        IReadOnlyDictionary<string, string>? contextArguments = null,
+        CancellationToken cancellationToken = default
+    );
 }

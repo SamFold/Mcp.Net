@@ -1,9 +1,14 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
 using Mcp.Net.Client.Elicitation;
+using Mcp.Net.Core.Models.Completion;
+using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Elicitation;
 using Mcp.Net.LLM.Events;
@@ -26,6 +31,8 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly ILogger<SignalRChatAdapter> _logger;
     private readonly string _sessionId;
+    private readonly IPromptResourceCatalog _catalog;
+    private readonly ICompletionService _completionService;
     private readonly ElicitationCoordinator? _elicitationCoordinator;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<ElicitationClientResponse>> _pendingElicitations = new();
 
@@ -38,6 +45,8 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         IHubContext<ChatHub> hubContext,
         ILogger<SignalRChatAdapter> logger,
         string sessionId,
+        IPromptResourceCatalog catalog,
+        ICompletionService completionService,
         ElicitationCoordinator? elicitationCoordinator = null
     )
     {
@@ -45,9 +54,14 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _hubContext = hubContext;
         _logger = logger;
         _sessionId = sessionId;
+        _catalog = catalog;
+        _completionService = completionService;
         _elicitationCoordinator = elicitationCoordinator;
 
         _elicitationCoordinator?.SetProvider(this);
+
+        _catalog.PromptsUpdated += OnPromptsUpdated;
+        _catalog.ResourcesUpdated += OnResourcesUpdated;
 
         // Set the session ID in the chat session
         _chatSession.SessionId = sessionId;
@@ -257,6 +271,32 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
             .SendAsync("ThinkingStateChanged", sessionId, args.IsThinking, thinkingContext);
     }
 
+    private async void OnPromptsUpdated(object? sender, IReadOnlyList<Prompt> prompts)
+    {
+        try
+        {
+            var payload = prompts.Select(DtoMappers.ToPromptSummary).ToArray();
+            await _hubContext.Clients.Group(_sessionId).SendAsync("PromptsUpdated", payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast prompt update for session {SessionId}", _sessionId);
+        }
+    }
+
+    private async void OnResourcesUpdated(object? sender, IReadOnlyList<Resource> resources)
+    {
+        try
+        {
+            var payload = resources.Select(DtoMappers.ToResourceSummary).ToArray();
+            await _hubContext.Clients.Group(_sessionId).SendAsync("ResourcesUpdated", payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast resource update for session {SessionId}", _sessionId);
+        }
+    }
+
     /// <summary>
     /// Attempts to resolve an outstanding elicitation request using input supplied by the web client.
     /// Called from <see cref="ChatHub"/> when the browser posts an elicitation response.
@@ -329,8 +369,12 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _chatSession.AssistantMessageReceived -= OnAssistantMessageReceived;
         _chatSession.ToolExecutionUpdated -= OnToolExecutionUpdated;
         _chatSession.ThinkingStateChanged -= OnThinkingStateChanged;
+        _catalog.PromptsUpdated -= OnPromptsUpdated;
+        _catalog.ResourcesUpdated -= OnResourcesUpdated;
 
         _elicitationCoordinator?.SetProvider(null);
+
+        _completionService.Clear();
 
         foreach (var key in _pendingElicitations.Keys)
         {
@@ -340,6 +384,34 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
             }
         }
     }
+
+    public Task<IReadOnlyList<Prompt>> GetPromptsAsync(CancellationToken cancellationToken = default)
+        => _catalog.GetPromptsAsync(cancellationToken);
+
+    public Task<object[]> GetPromptMessagesAsync(string name, CancellationToken cancellationToken = default)
+        => _catalog.GetPromptMessagesAsync(name, cancellationToken);
+
+    public Task<IReadOnlyList<Resource>> GetResourcesAsync(CancellationToken cancellationToken = default)
+        => _catalog.GetResourcesAsync(cancellationToken);
+
+    public Task<ResourceContent[]> ReadResourceAsync(string uri, CancellationToken cancellationToken = default)
+        => _catalog.ReadResourceAsync(uri, cancellationToken);
+
+    public Task<CompletionValues> CompletePromptAsync(
+        string promptName,
+        string argumentName,
+        string currentValue,
+        IReadOnlyDictionary<string, string>? contextArguments = null,
+        CancellationToken cancellationToken = default
+    ) => _completionService.CompletePromptAsync(promptName, argumentName, currentValue, contextArguments, cancellationToken);
+
+    public Task<CompletionValues> CompleteResourceAsync(
+        string resourceUri,
+        string argumentName,
+        string currentValue,
+        IReadOnlyDictionary<string, string>? contextArguments = null,
+        CancellationToken cancellationToken = default
+    ) => _completionService.CompleteResourceAsync(resourceUri, argumentName, currentValue, contextArguments, cancellationToken);
 
     private Task NotifyElicitationCancelledAsync(string requestId)
     {

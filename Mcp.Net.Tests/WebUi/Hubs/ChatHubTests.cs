@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
+using Mcp.Net.Core.Models.Completion;
+using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -104,6 +109,92 @@ public class ChatHubTests
         await hub.SubmitElicitationResponse("missing", new ElicitationResponseDto());
 
         adapterManager.Verify(m => m.MarkAdapterAsActive(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetPrompts_ShouldReturnSummaries_AndMarkSessionActive()
+    {
+        var prompt = new Prompt
+        {
+            Name = "code_review",
+            Title = "Code Review",
+            Description = "Review code changes",
+            Arguments = new[]
+            {
+                new PromptArgument { Name = "language", Description = "Language", Required = true },
+            },
+        };
+
+        var adapter = new Mock<ISignalRChatAdapter>();
+        adapter
+            .Setup(a => a.GetPromptsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Prompt> { prompt });
+
+        var adapterManager = new Mock<IChatAdapterManager>();
+        adapterManager
+            .Setup(m => m.GetOrCreateAdapterAsync("session-prompts", It.IsAny<Func<string, Task<ISignalRChatAdapter>>>() ))
+            .ReturnsAsync(adapter.Object);
+        adapterManager
+            .Setup(m => m.GetActiveSessions())
+            .Returns(Array.Empty<string>());
+
+        var hub = CreateHub(adapterManager.Object);
+        hub.Clients = CreateClients();
+
+        var results = await hub.GetPrompts("session-prompts");
+
+        results.Should().HaveCount(1);
+        results[0].Name.Should().Be("code_review");
+        results[0].Arguments.Should().HaveCount(1);
+        adapterManager.Verify(m => m.MarkAdapterAsActive("session-prompts"), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestCompletion_ShouldRouteToPromptCompletion()
+    {
+        var completion = new CompletionValues
+        {
+            Values = new[] { "python" },
+            Total = 1,
+            HasMore = false,
+        };
+
+        var adapter = new Mock<ISignalRChatAdapter>();
+        adapter
+            .Setup(a => a.CompletePromptAsync(
+                "code_review",
+                "language",
+                "py",
+                It.IsAny<IReadOnlyDictionary<string, string>>(),
+                It.IsAny<CancellationToken>()
+            ))
+            .ReturnsAsync(completion);
+
+        var adapterManager = new Mock<IChatAdapterManager>();
+        adapterManager
+            .Setup(m => m.GetOrCreateAdapterAsync("session-complete", It.IsAny<Func<string, Task<ISignalRChatAdapter>>>() ))
+            .ReturnsAsync(adapter.Object);
+        adapterManager
+            .Setup(m => m.GetActiveSessions())
+            .Returns(Array.Empty<string>());
+
+        var hub = CreateHub(adapterManager.Object);
+        hub.Clients = CreateClients();
+
+        var request = new CompletionRequestDto
+        {
+            Scope = "prompt",
+            Identifier = "code_review",
+            ArgumentName = "language",
+            CurrentValue = "py",
+        };
+
+        var result = await hub.RequestCompletion("session-complete", request);
+
+        result.Values.Should().ContainSingle().Which.Should().Be("python");
+        result.Total.Should().Be(1);
+        result.HasMore.Should().BeFalse();
+        adapterManager.Verify(m => m.MarkAdapterAsActive("session-complete"), Times.Once);
     }
 
     private static ChatHub CreateHub(IChatAdapterManager adapterManager)

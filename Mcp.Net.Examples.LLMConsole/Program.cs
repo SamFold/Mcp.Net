@@ -7,6 +7,8 @@ using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Elicitation;
 using Mcp.Net.Examples.LLMConsole.Elicitation;
 using Mcp.Net.LLM.Tools;
+using Mcp.Net.LLM.Completions;
+using Mcp.Net.LLM.Catalog;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -44,9 +46,24 @@ public class Program
 
         var mcpClient = await ConnectToMcpServer(elicitationCoordinator);
 
+        var completionLogger = loggerFactory.CreateLogger<CompletionService>();
+        var promptCatalogLogger = loggerFactory.CreateLogger<PromptResourceCatalog>();
+
+        var completionService = new CompletionService(mcpClient, completionLogger);
+        var promptCatalog = new PromptResourceCatalog(mcpClient, promptCatalogLogger);
+        await promptCatalog.InitializeAsync();
+
         var toolRegistry = await LoadMcpTools(mcpClient);
 
-        ConsoleBanner.DisplayStartupBanner(AvailableTools);
+        var availablePrompts = await promptCatalog.GetPromptsAsync();
+        var availableResources = await promptCatalog.GetResourcesAsync();
+
+        ConsoleBanner.DisplayStartupBanner(
+            AvailableTools,
+            null,
+            availablePrompts.Count,
+            availableResources.Count
+        );
 
         var services = new ServiceCollection();
 
@@ -69,7 +86,9 @@ public class Program
             Console.Clear();
             ConsoleBanner.DisplayStartupBanner(
                 AvailableTools,
-                toolRegistry.EnabledTools.Select(t => t.Name)
+                toolRegistry.EnabledTools.Select(t => t.Name),
+                availablePrompts.Count,
+                availableResources.Count
             );
         }
 
@@ -130,7 +149,13 @@ public class Program
         var chatUIHandler = new ChatUIHandler(chatUI, chatSession, chatUIHandlerLogger);
 
         var consoleAdapterLogger = loggerFactory.CreateLogger<ConsoleAdapter>();
-        var consoleAdapter = new ConsoleAdapter(chatSession, chatUI, consoleAdapterLogger);
+        var consoleAdapter = new ConsoleAdapter(
+            chatSession,
+            chatUI,
+            consoleAdapterLogger,
+            promptCatalog,
+            completionService
+        );
 
         await consoleAdapter.RunAsync();
     }

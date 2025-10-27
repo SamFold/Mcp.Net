@@ -1,6 +1,8 @@
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Core;
+using Mcp.Net.LLM.Catalog;
+using Mcp.Net.LLM.Completions;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Tools;
@@ -38,6 +40,8 @@ public class ChatFactory : IChatFactory
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
     private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
+    private readonly ConcurrentDictionary<string, IPromptResourceCatalog> _promptCatalogs = new();
+    private readonly ConcurrentDictionary<string, ICompletionService> _completionServices = new();
 
     public ChatFactory(
         ILogger<ChatFactory> logger,
@@ -86,6 +90,8 @@ public class ChatFactory : IChatFactory
         // Create dedicated MCP client for this session
         var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
 
+        var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
+
         // Create core chat session (no longer needs inputProvider)
         var chatSession = new ChatSession(
             sessionClient,
@@ -104,6 +110,8 @@ public class ChatFactory : IChatFactory
             _hubContext,
             adapterLogger,
             sessionId,
+            catalog,
+            completionService,
             coordinator
         );
 
@@ -129,6 +137,8 @@ public class ChatFactory : IChatFactory
         // Create dedicated MCP client for this session
         var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
 
+        var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
+
         // Create core chat session
         var chatSession = new ChatSession(
             sessionClient,
@@ -147,6 +157,8 @@ public class ChatFactory : IChatFactory
             _hubContext,
             adapterLogger,
             sessionId,
+            catalog,
+            completionService,
             coordinator
         );
 
@@ -338,6 +350,32 @@ public class ChatFactory : IChatFactory
         }
     }
 
+    private async Task<(IPromptResourceCatalog Catalog, ICompletionService CompletionService)> CreateSessionServicesAsync(
+        string sessionId,
+        IMcpClient mcpClient
+    )
+    {
+        if (_promptCatalogs.TryRemove(sessionId, out var existingCatalog))
+        {
+            existingCatalog.Dispose();
+        }
+        if (_completionServices.TryRemove(sessionId, out var existingCompletion))
+        {
+            existingCompletion.Clear();
+        }
+
+        var catalogLogger = _loggerFactory.CreateLogger<PromptResourceCatalog>();
+        var catalog = new PromptResourceCatalog(mcpClient, catalogLogger);
+        await catalog.InitializeAsync().ConfigureAwait(false);
+        _promptCatalogs[sessionId] = catalog;
+
+        var completionLogger = _loggerFactory.CreateLogger<CompletionService>();
+        var completionService = new CompletionService(mcpClient, completionLogger);
+        _completionServices[sessionId] = completionService;
+
+        return (catalog, completionService);
+    }
+
     /// <summary>
     /// Create session metadata for a new chat
     /// </summary>
@@ -425,6 +463,18 @@ public class ChatFactory : IChatFactory
                 "Released session resources for {SessionId} (elicitation coordinator disposed).",
                 sessionId
             );
+        }
+
+        if (_promptCatalogs.TryRemove(sessionId, out var catalog))
+        {
+            catalog.Dispose();
+            _logger.LogDebug("Disposed prompt catalog for {SessionId}", sessionId);
+        }
+
+        if (_completionServices.TryRemove(sessionId, out var completionService))
+        {
+            completionService.Clear();
+            _logger.LogDebug("Cleared completion cache for {SessionId}", sessionId);
         }
     }
 }

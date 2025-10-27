@@ -1,3 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Mcp.Net.Core.Models.Completion;
+using Mcp.Net.Core.Models.Content;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -149,6 +154,147 @@ public class ChatHub : Hub
                 "ReceiveError",
                 $"Error processing message: {ex.Message}"
             );
+        }
+    }
+
+    /// <summary>
+    /// Create a new chat session
+    /// </summary>
+    public async Task<IReadOnlyList<PromptSummaryDto>> GetPrompts(string sessionId)
+    {
+        try
+        {
+            var adapter = await GetOrCreateAdapterAsync(sessionId);
+            var prompts = await adapter.GetPromptsAsync();
+            _adapterManager.MarkAdapterAsActive(sessionId);
+            return prompts.Select(DtoMappers.ToPromptSummary).ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching prompts for session {SessionId}", sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<IReadOnlyList<ResourceSummaryDto>> GetResources(string sessionId)
+    {
+        try
+        {
+            var adapter = await GetOrCreateAdapterAsync(sessionId);
+            var resources = await adapter.GetResourcesAsync();
+            _adapterManager.MarkAdapterAsActive(sessionId);
+            return resources.Select(DtoMappers.ToResourceSummary).ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching resources for session {SessionId}", sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<object[]> GetPromptDefinition(string sessionId, string promptName)
+    {
+        if (string.IsNullOrWhiteSpace(promptName))
+        {
+            throw new ArgumentException("Prompt name is required", nameof(promptName));
+        }
+
+        try
+        {
+            var adapter = await GetOrCreateAdapterAsync(sessionId);
+            _adapterManager.MarkAdapterAsActive(sessionId);
+            return await adapter.GetPromptMessagesAsync(promptName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading prompt {Prompt} for session {SessionId}", promptName, sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<ResourceContent[]> ReadResource(string sessionId, string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            throw new ArgumentException("Resource URI is required", nameof(uri));
+        }
+
+        try
+        {
+            var adapter = await GetOrCreateAdapterAsync(sessionId);
+            _adapterManager.MarkAdapterAsActive(sessionId);
+            return await adapter.ReadResourceAsync(uri);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading resource {Uri} for session {SessionId}", uri, sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<CompletionResultDto> RequestCompletion(string sessionId, CompletionRequestDto request)
+    {
+        if (request == null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
+        if (string.IsNullOrWhiteSpace(request.Scope))
+        {
+            throw new ArgumentException("Scope is required", nameof(request.Scope));
+        }
+        if (string.IsNullOrWhiteSpace(request.Identifier))
+        {
+            throw new ArgumentException("Identifier is required", nameof(request.Identifier));
+        }
+        if (string.IsNullOrWhiteSpace(request.ArgumentName))
+        {
+            throw new ArgumentException("ArgumentName is required", nameof(request.ArgumentName));
+        }
+
+        try
+        {
+            var adapter = await GetOrCreateAdapterAsync(sessionId);
+            CompletionValues completion;
+
+            var currentValue = request.CurrentValue ?? string.Empty;
+            var context = request.Context == null
+                ? null
+                : new Dictionary<string, string>(request.Context, StringComparer.Ordinal);
+
+            switch (request.Scope.ToLowerInvariant())
+            {
+                case "prompt":
+                    completion = await adapter.CompletePromptAsync(
+                        request.Identifier,
+                        request.ArgumentName,
+                        currentValue,
+                        context
+                    );
+                    break;
+                case "resource":
+                    completion = await adapter.CompleteResourceAsync(
+                        request.Identifier,
+                        request.ArgumentName,
+                        currentValue,
+                        context
+                    );
+                    break;
+                default:
+                    throw new ArgumentException("Scope must be either 'prompt' or 'resource'", nameof(request.Scope));
+            }
+
+            _adapterManager.MarkAdapterAsActive(sessionId);
+            return DtoMappers.ToCompletionResult(completion);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error requesting completion for session {SessionId}", sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", ex.Message);
+            throw;
         }
     }
 
