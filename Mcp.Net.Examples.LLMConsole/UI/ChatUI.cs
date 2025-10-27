@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Mcp.Net.LLM.Models;
+
 namespace Mcp.Net.Examples.LLMConsole.UI;
 
 public class ChatUI
@@ -252,23 +255,11 @@ public class ChatUI
         Console.WriteLine();
     }
 
-    /// <summary>
-    /// Displays the results of a tool execution
-    /// </summary>
-    /// <param name="toolName">Name of the tool</param>
-    /// <param name="results">Results returned from the tool</param>
-    public void DisplayToolResults(string toolName, Dictionary<string, object> results)
+    public void DisplayToolResults(ToolInvocationResult result)
     {
-        if (results == null || results.Count == 0)
-        {
-            return;
-        }
-
-        // Display a results banner with fixed width
         string resultsHeader = "TOOL RESULTS";
         string horizontalLine = new string('─', 18);
 
-        // Draw header with fixed width
         ColorWrite("╭", ToolColor);
         int paddingLeft = Math.Max(0, (horizontalLine.Length - resultsHeader.Length) / 2);
         int paddingRight = Math.Max(0, horizontalLine.Length - resultsHeader.Length - paddingLeft);
@@ -280,298 +271,90 @@ public class ChatUI
         ColorWrite("│", ToolColor);
         ColorWrite(" ", ToolColor);
         ColorWrite("Tool: ", DefaultColor);
-        ColorWrite(toolName, ToolColor);
+        ColorWrite(result.ToolName, ToolColor);
         Console.WriteLine();
 
-        // Limit to 5 results to prevent flooding the console
-        int displayCount = 0;
-        int maxResultsToDisplay = 5;
-        int maxValueLength = 200; // Limit for individual result values
+        ColorWrite("│", ToolColor);
+        ColorWrite(" ", ToolColor);
+        ColorWrite("Status: ", DefaultColor);
+        ColorWrite(result.IsError ? "error" : "ok", result.IsError ? ErrorColor : AssistantColor);
+        Console.WriteLine();
 
-        foreach (var kvp in results)
+        foreach (var line in result.Text)
         {
-            if (displayCount >= maxResultsToDisplay)
+            if (string.IsNullOrWhiteSpace(line))
             {
-                ColorWrite("│", ToolColor);
-                ColorWrite(" ", ToolColor);
-                ColorWrite(
-                    $"... and {results.Count - maxResultsToDisplay} more result(s)",
-                    SystemColor
-                );
-                Console.WriteLine();
-                break;
+                continue;
             }
 
             ColorWrite("│", ToolColor);
             ColorWrite(" • ", ToolColor);
-            ColorWrite(kvp.Key + ": ", DefaultColor);
-
-            // Convert the value to a string representation
-            string valueStr;
-            try
-            {
-                // For dictionary/object values, use JSON serialization for better display
-                // Add explicit check for JsonElement which is what we're actually dealing with most often
-                if (kvp.Value is System.Text.Json.JsonElement || 
-                    kvp.Value is Dictionary<string, object> || 
-                    kvp.Value?.GetType().IsClass == true)
-                {
-                    // Serialize the value first to get its string representation
-                    valueStr = System.Text.Json.JsonSerializer.Serialize(
-                        kvp.Value,
-                        new System.Text.Json.JsonSerializerOptions
-                        {
-                            WriteIndented = false,
-                            Encoder = System
-                                .Text
-                                .Encodings
-                                .Web
-                                .JavaScriptEncoder
-                                .UnsafeRelaxedJsonEscaping,
-                        }
-                    );
-
-                    // Special handling for content field, especially for JsonElement
-                    if (kvp.Key == "content" && kvp.Value is System.Text.Json.JsonElement jsonElement)
-                    {
-                        try 
-                        {
-                            // Handle JsonElement content directly - this is the key case!
-                            valueStr = new System.Text.StringBuilder("[").AppendLine().ToString();
-                            
-                            // Process each element in the array
-                            foreach (var element in jsonElement.EnumerateArray())
-                            {
-                                // Check if it has a text property with JSON content
-                                if (element.TryGetProperty("text", out var textProperty))
-                                {
-                                    string? textContent = textProperty.GetString();
-                                    if (textContent != null)
-                                    {
-                                        // If it's a JSON string (like the ones we're seeing), beautify it
-                                        if (textContent.StartsWith("{") && textContent.Contains("\\u"))
-                                        {
-                                            // Unescape the JSON string
-                                            textContent = System.Text.RegularExpressions.Regex.Unescape(textContent);
-                                            
-                                            // Add type info and the beautified JSON
-                                            var typeProperty = element.TryGetProperty("type", out var typeVal) ? 
-                                                typeVal.GetString() : "unknown";
-                                                
-                                            valueStr += $"  Type: {typeProperty}\n  {textContent}\n";
-                                        }
-                                        else
-                                        {
-                                            // For non-JSON text, just show as is
-                                            valueStr += $"  {textContent}\n";
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    // For other elements, serialize normally
-                                    valueStr += "  " + element.ToString() + "\n";
-                                }
-                            }
-                            
-                            valueStr += "]";
-                        }
-                        catch
-                        {
-                            // If direct JsonElement handling fails, try regex extraction
-                            try
-                            {
-                                // Look for the pattern we know exists in serialized content field
-                                var contentMatch = System.Text.RegularExpressions.Regex.Match(
-                                    valueStr,
-                                    @"""text"":""(.+?)"""
-                                );
-
-                                if (contentMatch.Success && contentMatch.Groups.Count > 1)
-                                {
-                                    // Extract and unescape the JSON text directly
-                                    string jsonText = contentMatch.Groups[1].Value;
-                                    jsonText = System.Text.RegularExpressions.Regex.Unescape(jsonText);
-                                    valueStr = jsonText;
-                                }
-                            }
-                            catch
-                            {
-                                // Last resort - direct string replacement
-                                valueStr = valueStr
-                                    .Replace("\\\"", "\"")
-                                    .Replace("\\u0022", "\"") 
-                                    .Replace("\\n", "\n")
-                                    .Replace("\\r", "")
-                                    .Replace("\\t", "\t")
-                                    .Replace("\\\\", "\\");
-                            }
-                        }
-                    }
-                    // For string content (after serialization), handle with regex
-                    else if (kvp.Key == "content")
-                    {
-                        try
-                        {
-                            // Look for the pattern we know exists in content field
-                            var contentMatch = System.Text.RegularExpressions.Regex.Match(
-                                valueStr,
-                                @"""text"":""(.+?)"""
-                            );
-
-                            if (contentMatch.Success && contentMatch.Groups.Count > 1)
-                            {
-                                // Extract the actual JSON text value
-                                string jsonText = contentMatch.Groups[1].Value;
-                                
-                                // Unescape it directly
-                                jsonText = System.Text.RegularExpressions.Regex.Unescape(jsonText);
-                                valueStr = jsonText;
-                            }
-                        }
-                        catch
-                        {
-                            // If the direct extraction fails, try the string replacement approach as fallback
-                            string cleaned = valueStr;
-
-                            // These are verbatim strings to ensure we match literal backslashes
-                            cleaned = cleaned.Replace(@"\""", "\"") // \" → "
-                                      .Replace(@"\u0022", "\"")     // \u0022 → "
-                                      .Replace(@"\n", "\n")         // \n → newline
-                                      .Replace(@"\r", "")           // \r → nothing
-                                      .Replace(@"\t", "\t")         // \t → tab
-                                      .Replace(@"\\", @"\");        // \\ → \
-
-                            valueStr = cleaned;
-                        }
-                    }
-
-                    // If value is too long, truncate it
-                    if (valueStr.Length > maxValueLength)
-                    {
-                        valueStr = valueStr.Substring(0, maxValueLength - 3) + "...";
-                    }
-                }
-                else
-                {
-                    // Standard serialization for other objects
-                    valueStr = System.Text.Json.JsonSerializer.Serialize(
-                        kvp.Value,
-                        new System.Text.Json.JsonSerializerOptions
-                        {
-                            WriteIndented = true,
-                            Encoder = System
-                                .Text
-                                .Encodings
-                                .Web
-                                .JavaScriptEncoder
-                                .UnsafeRelaxedJsonEscaping,
-                        }
-                    );
-                }
-            }
-            catch
-            {
-                // Fallback if serialization fails
-                valueStr = kvp.Value?.ToString() ?? "null";
-            }
-
-            // Limit the length
-            if (valueStr.Length > maxValueLength)
-            {
-                valueStr = valueStr.Substring(0, maxValueLength - 3) + "...";
-            }
-
-            // Split the value by lines in case it contains newlines
-            string[] lines = valueStr.Split('\n');
-
-            // Get console width for proper line wrapping
-            int consoleWidth = Math.Max(80, Console.WindowWidth); // Default to 80 if console width is unavailable
-            int textWidth = consoleWidth - 6; // Account for left border, bullet point, key and spacing
-
-            // Write the first line
-            string firstLine = lines[0];
-            int firstLineWidth = Math.Max(10, textWidth - (kvp.Key.Length + 4)); // Account for ": " and padding
-
-            if (firstLine.Length <= firstLineWidth)
-            {
-                ColorWrite(firstLine, ToolColor);
-                Console.WriteLine();
-            }
-            else
-            {
-                // First line is too long, show what we can
-                ColorWrite(
-                    firstLine.Substring(0, Math.Min(firstLineWidth, firstLine.Length)),
-                    ToolColor
-                );
-                Console.WriteLine();
-
-                // Continue the first line if needed
-                if (firstLine.Length > firstLineWidth)
-                {
-                    int position = firstLineWidth;
-                    while (position < firstLine.Length)
-                    {
-                        ColorWrite("│", ToolColor);
-                        ColorWrite("   ", ToolColor); // Indent for continuation
-
-                        int remainingLength = firstLine.Length - position;
-                        int chunkSize = Math.Min(remainingLength, textWidth);
-
-                        ColorWrite(firstLine.Substring(position, chunkSize), ToolColor);
-                        Console.WriteLine();
-
-                        position += chunkSize;
-                    }
-                }
-            }
-
-            // Write additional lines if present
-            for (int i = 1; i < lines.Length; i++)
-            {
-                string line = lines[i];
-
-                // Skip empty lines
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-
-                // Start each line with the border and indentation
-                ColorWrite("│", ToolColor);
-                ColorWrite("   ", ToolColor); // Indent for continuation
-
-                // Handle line wrapping for each additional line
-                if (line.Length <= textWidth)
-                {
-                    ColorWrite(line, ToolColor);
-                    Console.WriteLine();
-                }
-                else
-                {
-                    // Line is too long, wrap it
-                    int position = 0;
-                    while (position < line.Length)
-                    {
-                        if (position > 0)
-                        {
-                            ColorWrite("│", ToolColor);
-                            ColorWrite("   ", ToolColor); // Indent for continuation
-                        }
-
-                        int remainingLength = line.Length - position;
-                        int chunkSize = Math.Min(remainingLength, textWidth);
-
-                        ColorWrite(line.Substring(position, chunkSize), ToolColor);
-                        Console.WriteLine();
-
-                        position += chunkSize;
-                    }
-                }
-            }
-
-            displayCount++;
+            ColorWrite(line, DefaultColor);
+            Console.WriteLine();
         }
 
+        if (result.Structured.HasValue)
+        {
+            ColorWrite("│", ToolColor);
+            ColorWrite(" • ", ToolColor);
+            ColorWrite("structured:", DefaultColor);
+            Console.WriteLine();
+
+            var structuredJson = JsonSerializer.Serialize(
+                result.Structured.Value,
+                new JsonSerializerOptions { WriteIndented = true }
+            );
+
+            foreach (var structuredLine in structuredJson.Split('\n'))
+            {
+                ColorWrite("│", ToolColor);
+                ColorWrite("   ", ToolColor);
+                ColorWrite(structuredLine, DefaultColor);
+                Console.WriteLine();
+            }
+        }
+
+        if (result.ResourceLinks.Count > 0)
+        {
+            ColorWrite("│", ToolColor);
+            ColorWrite(" • ", ToolColor);
+            ColorWrite("resources:", DefaultColor);
+            Console.WriteLine();
+
+            foreach (var link in result.ResourceLinks)
+            {
+                var label = link.Name ?? link.Uri;
+                ColorWrite("│", ToolColor);
+                ColorWrite("   ", ToolColor);
+                ColorWrite($"{label} ({link.Uri})", DefaultColor);
+                Console.WriteLine();
+            }
+        }
+
+        if (result.Metadata.HasValue)
+        {
+            ColorWrite("│", ToolColor);
+            ColorWrite(" • ", ToolColor);
+            ColorWrite("metadata:", DefaultColor);
+            Console.WriteLine();
+
+            var metadataJson = JsonSerializer.Serialize(
+                result.Metadata.Value,
+                new JsonSerializerOptions { WriteIndented = true }
+            );
+
+            foreach (var metaLine in metadataJson.Split('\n'))
+            {
+                ColorWrite("│", ToolColor);
+                ColorWrite("   ", ToolColor);
+                ColorWrite(metaLine, DefaultColor);
+                Console.WriteLine();
+            }
+        }
+
+        ColorWrite("╰", ToolColor);
+        ColorWrite(horizontalLine, ToolColor);
+        ColorWriteLine("╯", ToolColor);
         Console.WriteLine();
     }
 

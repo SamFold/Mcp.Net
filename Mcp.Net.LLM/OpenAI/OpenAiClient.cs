@@ -82,26 +82,28 @@ public class OpenAiChatClient : IChatClient
     {
         _history.Add(new AssistantChatMessage(completion));
 
+        var invocations = completion
+            .ToolCalls
+            .Select(tc =>
+            {
+                var arguments = ParseToolArguments(tc.FunctionArguments.ToString());
+                return new ToolInvocation(tc.Id, tc.FunctionName, arguments);
+            })
+            .ToList();
+
         var response = new LlmResponse
         {
             Content = "",
-            ToolCalls = completion
-                .ToolCalls.Select(tc => new LLM.Models.ToolCall
-                {
-                    Id = tc.Id,
-                    Name = tc.FunctionName,
-                    Arguments = ParseToolArguments(tc.FunctionArguments.ToString()),
-                })
-                .ToList(),
+            ToolCalls = invocations,
             Type = MessageType.Tool,
         };
 
         return [response];
     }
 
-    private Dictionary<string, object> ParseToolArguments(string argumentsJson)
+    private Dictionary<string, object?> ParseToolArguments(string argumentsJson)
     {
-        var result = new Dictionary<string, object>();
+        var result = new Dictionary<string, object?>();
         var doc = JsonDocument.Parse(argumentsJson);
 
         foreach (var property in doc.RootElement.EnumerateObject())
@@ -131,9 +133,9 @@ public class OpenAiChatClient : IChatClient
         {
             MessageType.System => new SystemChatMessage(message.Content),
             MessageType.User => new UserChatMessage(message.Content),
-            MessageType.Tool => new ToolChatMessage(
-                message.ToolCallId!,
-                JsonSerializer.Serialize(message.ToolResults)
+            MessageType.Tool when message.ToolResult != null => new ToolChatMessage(
+                message.ToolResult.ToolCallId,
+                message.ToolResult.ToWireJson()
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(message.Type)),
         };
@@ -179,12 +181,12 @@ public class OpenAiChatClient : IChatClient
         // Handle tool responses differently - just add to history without making API call yet
         if (message.Type == MessageType.Tool)
         {
-            if (!string.IsNullOrEmpty(message.ToolCallId))
+            if (message.ToolResult != null)
             {
                 _history.Add(
                     new ToolChatMessage(
-                        message.ToolCallId,
-                        JsonSerializer.Serialize(message.ToolResults)
+                        message.ToolResult.ToolCallId,
+                        message.ToolResult.ToWireJson()
                     )
                 );
             }
@@ -202,24 +204,24 @@ public class OpenAiChatClient : IChatClient
     }
 
     public async Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
-        IEnumerable<Models.ToolCall> toolResults
+        IEnumerable<ToolInvocationResult> toolResults
     )
     {
         foreach (var toolResult in toolResults)
         {
             _logger.LogDebug(
                 "Adding tool result for {ToolName} with ID {ToolId} to history.",
-                toolResult.Name,
-                toolResult.Id
+                toolResult.ToolName,
+                toolResult.ToolCallId
             );
 
             await SendMessageAsync(
                 new LlmMessage
                 {
                     Type = MessageType.Tool,
-                    ToolCallId = toolResult.Id,
-                    ToolName = toolResult.Name,
-                    ToolResults = toolResult.Results,
+                    ToolCallId = toolResult.ToolCallId,
+                    ToolName = toolResult.ToolName,
+                    ToolResult = toolResult,
                 }
             );
         }

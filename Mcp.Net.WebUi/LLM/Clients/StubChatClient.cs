@@ -55,7 +55,7 @@ public class StubChatClient : IChatClient
     }
 
     public Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
-        IEnumerable<Mcp.Net.LLM.Models.ToolCall> toolResults
+        IEnumerable<ToolInvocationResult> toolResults
     )
     {
         _logger.LogInformation(
@@ -91,16 +91,12 @@ public class StubChatClient : IChatClient
         return _systemPrompt;
     }
 
-    public void AddToolResultToHistory(
-        string toolCallId,
-        string toolName,
-        Dictionary<string, object> results
-    )
+    public void AddToolResultToHistory(ToolInvocationResult result)
     {
         _logger.LogInformation(
             "[STUB] Adding tool result to history: {ToolName}, {ToolCallId}",
-            toolName,
-            toolCallId
+            result.ToolName,
+            result.ToolCallId
         );
     }
 

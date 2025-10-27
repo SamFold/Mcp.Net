@@ -9,7 +9,7 @@ public interface IChatClient
 
     Task<IEnumerable<LlmResponse>> SendMessageAsync(LlmMessage message);
 
-    Task<IEnumerable<LlmResponse>> SendToolResultsAsync(IEnumerable<Models.ToolCall> toolResults);
+    Task<IEnumerable<LlmResponse>> SendToolResultsAsync(IEnumerable<ToolInvocationResult> toolResults);
 
     // Reset the conversation history
     void ResetConversation() =>
@@ -22,11 +22,8 @@ public interface IChatClient
     // Get the current system prompt
     string GetSystemPrompt();
 
-    void AddToolResultToHistory(
-        string toolCallId,
-        string toolName,
-        Dictionary<string, object> results
-    ) => throw new NotImplementedException("Not supported by this client type");
+    void AddToolResultToHistory(ToolInvocationResult result) =>
+        throw new NotImplementedException("Not supported by this client type");
 
     Task<List<LlmResponse>> GetLlmResponse() =>
         throw new NotImplementedException("Not supported by this client type");

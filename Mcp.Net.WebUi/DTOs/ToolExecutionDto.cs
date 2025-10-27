@@ -1,4 +1,5 @@
 using Mcp.Net.LLM.Events;
+using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.WebUi.DTOs;
 
@@ -35,12 +36,12 @@ public class ToolExecutionDto
     /// <summary>
     /// Tool call arguments (input parameters)
     /// </summary>
-    public Dictionary<string, object>? Arguments { get; set; }
+    public IReadOnlyDictionary<string, object?>? Arguments { get; set; }
 
     /// <summary>
     /// Tool call results (output)
     /// </summary>
-    public Dictionary<string, object>? Results { get; set; }
+    public ToolInvocationResult? Result { get; set; }
 
     /// <summary>
     /// Create a DTO from a tool execution event args
@@ -54,8 +55,8 @@ public class ToolExecutionDto
             Success = args.Success,
             ErrorMessage = args.ErrorMessage,
             Timestamp = DateTime.UtcNow,
-            Arguments = args.ToolCall?.Arguments,
-            Results = args.ToolCall?.Results,
+            Arguments = args.Invocation.Arguments,
+            Result = args.Result,
         };
     }
 }

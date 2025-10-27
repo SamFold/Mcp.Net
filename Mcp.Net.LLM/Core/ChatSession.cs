@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Interfaces;
@@ -237,7 +236,7 @@ public class ChatSession : IChatSessionEvents
 
     private async Task<IEnumerable<LlmResponse>> SendToolResult(
         Queue<LlmResponse> responseQueue,
-        List<Models.ToolCall> toolResults
+        List<ToolInvocationResult> toolResults
     )
     {
         _logger.LogDebug("Total of {Count} tool results to send", toolResults.Count);
@@ -300,169 +299,152 @@ public class ChatSession : IChatSessionEvents
     }
 
     /// <summary>
-    /// Given a list of ToolCalls to make, executes the ToolCalls with the MCP Server and returns a list of results
+    /// Given a list of tool invocations, executes them against the MCP server and returns the results.
     /// </summary>
-    private async Task<List<Models.ToolCall>> ExecuteToolCalls(List<LlmResponse> toolResponses)
+    private async Task<List<ToolInvocationResult>> ExecuteToolCalls(List<LlmResponse> toolResponses)
     {
         _logger.LogDebug("Starting ExecuteToolCalls batch");
 
-        var allToolResults = new List<Models.ToolCall>();
+        var accumulatedResults = new List<ToolInvocationResult>();
 
         foreach (var toolResponse in toolResponses)
         {
             var toolCalls = toolResponse.ToolCalls;
             _logger.LogDebug("Found {Count} tool calls to process in response", toolCalls.Count);
 
-            var toolCallResults = new List<Models.ToolCall>();
-
-            for (int i = 0; i < toolCalls.Count; i++)
+            foreach (var invocation in toolCalls)
             {
-                var toolCall = toolCalls[i];
                 _logger.LogDebug(
-                    "Processing tool call {Index} of {Total}: {ToolName}",
-                    i + 1,
-                    toolCalls.Count,
-                    toolCall.Name
+                    "Processing tool call {ToolName} ({ToolCallId})",
+                    invocation.Name,
+                    invocation.Id
                 );
 
-                toolCallResults.Add(await ExecuteToolCall(toolCall));
+                accumulatedResults.Add(await ExecuteToolCall(invocation));
             }
-
-            _logger.LogDebug("Completed batch with {Count} results", toolCallResults.Count);
-
-            allToolResults.AddRange(toolCallResults);
         }
 
-        return allToolResults;
+        return accumulatedResults;
     }
 
     /// <summary>
-    /// Given a ToolCall, execute the ToolCall (happens on the MCP Server), and return the ToolCall with its Results.
+    /// Executes the supplied tool invocation and returns a structured result payload.
     /// </summary>
-    private async Task<Models.ToolCall> ExecuteToolCall(Models.ToolCall toolCall)
+    private async Task<ToolInvocationResult> ExecuteToolCall(ToolInvocation toolInvocation)
     {
-        _logger.LogDebug("Starting ExecuteToolCall for {ToolName}", toolCall.Name);
+        _logger.LogDebug("Starting ExecuteToolCall for {ToolName}", toolInvocation.Name);
 
-        var tool = _toolRegistry.GetToolByName(toolCall.Name);
-        try
+        var tool = _toolRegistry.GetToolByName(toolInvocation.Name);
+        if (tool == null)
         {
-            if (tool == null)
-            {
-                // Only raise tool execution event for errors
-                _logger.LogDebug(
-                    "Raising ToolExecutionUpdated for {ToolName} (Failed - not found)",
-                    toolCall.Name
-                );
-                ToolExecutionUpdated?.Invoke(
-                    this,
-                    new ToolExecutionEventArgs(
-                        toolCall.Name,
-                        false,
-                        "Tool not found",
-                        toolCall,
-                        ToolExecutionState.Failed
-                    )
-                );
+            _logger.LogError("Tool {ToolName} not found", toolInvocation.Name);
 
-                _logger.LogError("Tool {ToolName} not found", toolCall.Name);
-                throw new NullReferenceException("Tool wasn't found");
-            }
-
-            _logger.LogDebug(
-                "Calling tool {ToolName} with arguments: {@Arguments}",
-                tool.Name,
-                toolCall.Arguments
+            var missingResult = CreateErrorResult(
+                toolInvocation,
+                "Tool not found in registry",
+                isError: true
             );
 
-            _logger.LogDebug("Raising ToolExecutionUpdated for {ToolName} (Starting)", tool.Name);
             ToolExecutionUpdated?.Invoke(
                 this,
                 new ToolExecutionEventArgs(
-                    toolCall.Name,
-                    true,
-                    toolCall: toolCall,
-                    executionState: ToolExecutionState.Starting
+                    toolInvocation,
+                    ToolExecutionState.Failed,
+                    success: false,
+                    errorMessage: "Tool not found in registry",
+                    result: missingResult
                 )
             );
 
-            try
-            {
-                var result = await _mcpClient.CallTool(tool.Name, toolCall.Arguments);
+            return missingResult;
+        }
 
-                var resultDict = JsonSerializer.Deserialize<Dictionary<string, object>>(
-                    JsonSerializer.Serialize(result)
-                );
+        _logger.LogDebug(
+            "Calling tool {ToolName} with arguments: {@Arguments}",
+            tool.Name,
+            toolInvocation.Arguments
+        );
 
-                switch (resultDict)
-                {
-                    case null:
-                        _logger.LogError("Tool {ToolName} returned null results", toolCall.Name);
-                        throw new NullReferenceException("Results were null");
-                    default:
-                        _logger.LogDebug("Tool {ToolName} execution successful", toolCall.Name);
-                        toolCall.Results = resultDict;
+        ToolExecutionUpdated?.Invoke(
+            this,
+            new ToolExecutionEventArgs(
+                toolInvocation,
+                ToolExecutionState.Starting,
+                success: true
+            )
+        );
 
-                        // Send a second notification with the completed results
-                        _logger.LogDebug(
-                            "Raising ToolExecutionUpdated for {ToolName} (Completed)",
-                            toolCall.Name
-                        );
-                        ToolExecutionUpdated?.Invoke(
-                            this,
-                            new ToolExecutionEventArgs(
-                                toolCall.Name,
-                                true,
-                                null,
-                                toolCall,
-                                ToolExecutionState.Completed
-                            )
-                        );
+        try
+        {
+            var mcpResult = await _mcpClient.CallTool(tool.Name, toolInvocation.Arguments);
+            var invocationResult = ToolInvocationResult.FromMcpResult(
+                toolInvocation.Id,
+                toolInvocation.Name,
+                mcpResult
+            );
 
-                        return toolCall;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Error executing tool {ToolName}: {ErrorMessage}",
-                    toolCall.Name,
-                    ex.Message
-                );
+            var eventSuccess = !invocationResult.IsError;
+            var errorMessage = invocationResult.IsError
+                ? string.Join(Environment.NewLine, invocationResult.Text)
+                : null;
 
-                // Only raise for error conditions
-                _logger.LogDebug(
-                    "Raising ToolExecutionUpdated for {ToolName} (Failed)",
-                    toolCall.Name
-                );
-                ToolExecutionUpdated?.Invoke(
-                    this,
-                    new ToolExecutionEventArgs(
-                        toolCall.Name,
-                        false,
-                        ex.Message,
-                        toolCall,
-                        ToolExecutionState.Failed
-                    )
-                );
+            ToolExecutionUpdated?.Invoke(
+                this,
+                new ToolExecutionEventArgs(
+                    toolInvocation,
+                    ToolExecutionState.Completed,
+                    success: eventSuccess,
+                    errorMessage: errorMessage,
+                    result: invocationResult
+                )
+            );
 
-                var errorResponse = $"Error executing tool {toolCall.Name}: {ex.Message}";
-                toolCall.Results = new Dictionary<string, object> { { "Error", errorResponse } };
-                throw;
-            }
+            return invocationResult;
         }
         catch (Exception ex)
         {
             _logger.LogError(
                 ex,
-                "Error in ExecuteToolCall for {ToolName}: {ErrorMessage}",
-                toolCall.Name,
+                "Error executing tool {ToolName}: {ErrorMessage}",
+                toolInvocation.Name,
                 ex.Message
             );
 
-            var errorResponse = $"Error executing tool {toolCall.Name}: {ex.Message}";
-            toolCall.Results = new Dictionary<string, object> { { "Error", errorResponse } };
-            return toolCall;
+            var errorResult = CreateErrorResult(toolInvocation, ex.Message, isError: true);
+
+            ToolExecutionUpdated?.Invoke(
+                this,
+                new ToolExecutionEventArgs(
+                    toolInvocation,
+                    ToolExecutionState.Failed,
+                    success: false,
+                    errorMessage: ex.Message,
+                    result: errorResult
+                )
+            );
+
+            return errorResult;
         }
+    }
+
+    private static ToolInvocationResult CreateErrorResult(
+        ToolInvocation invocation,
+        string message,
+        bool isError
+    )
+    {
+        var text = string.IsNullOrWhiteSpace(message)
+            ? Array.Empty<string>()
+            : new[] { message };
+
+        return new ToolInvocationResult(
+            invocation.Id,
+            invocation.Name,
+            isError,
+            text,
+            structured: null,
+            resourceLinks: Array.Empty<ToolResultResourceLink>(),
+            metadata: null
+        );
     }
 }

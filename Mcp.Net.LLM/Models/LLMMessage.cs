@@ -33,7 +33,7 @@ public class LlmMessage
     /// <summary>
     /// Results from tool execution (for Tool messages)
     /// </summary>
-    public Dictionary<string, object>? ToolResults { get; set; }
+    public ToolInvocationResult? ToolResult { get; set; }
 
     /// <summary>
     /// Creates a new user message
@@ -62,14 +62,14 @@ public class LlmMessage
     /// <summary>
     /// Creates a new tool result message
     /// </summary>
-    public static LlmMessage FromToolResult(ToolCallResult result)
+    public static LlmMessage FromToolResult(ToolInvocationResult result)
     {
         return new LlmMessage
         {
             Type = MessageType.Tool,
             ToolCallId = result.ToolCallId,
             ToolName = result.ToolName,
-            ToolResults = result.Results,
+            ToolResult = result,
         };
     }
 }

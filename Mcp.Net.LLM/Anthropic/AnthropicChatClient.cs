@@ -95,16 +95,9 @@ public class AnthropicChatClient : IChatClient
     /// <summary>
     /// Adds a tool result to the message history without triggering an API request
     /// </summary>
-    /// <param name="toolCallId">The ID of the tool call this result is for</param>
-    /// <param name="toolName">The name of the tool</param>
-    /// <param name="results">The results from the tool execution</param>
-    public void AddToolResultToHistory(
-        string toolCallId,
-        string toolName,
-        Dictionary<string, object> results
-    )
+    public void AddToolResultToHistory(ToolInvocationResult result)
     {
-        if (string.IsNullOrEmpty(toolCallId) || results == null)
+        if (result == null)
         {
             return;
         }
@@ -117,8 +110,8 @@ public class AnthropicChatClient : IChatClient
                 {
                     new ToolResultContent
                     {
-                        ToolUseId = toolCallId,
-                        Content = [new TextContent() { Text = JsonSerializer.Serialize(results) }],
+                        ToolUseId = result.ToolCallId,
+                        Content = [new TextContent { Text = result.ToWireJson() }],
                     },
                 },
             }
@@ -187,13 +180,13 @@ public class AnthropicChatClient : IChatClient
         }
     }
 
-    private List<Models.ToolCall> ExtractToolCalls(ToolUseContent toolUseContent)
+    private List<ToolInvocation> ExtractToolCalls(ToolUseContent toolUseContent)
     {
-        var toolCalls = new List<Models.ToolCall>();
+        var toolCalls = new List<ToolInvocation>();
 
         if (toolUseContent.Type == ContentType.tool_use)
         {
-            var toolArguments = new Dictionary<string, object>();
+            var toolArguments = new Dictionary<string, object?>();
 
             // Parse the tool input
             if (toolUseContent != null && toolUseContent.Input != null)
@@ -246,12 +239,7 @@ public class AnthropicChatClient : IChatClient
             if (toolUseContent?.Id != null && toolUseContent?.Name != null)
             {
                 toolCalls.Add(
-                    new Models.ToolCall
-                    {
-                        Id = toolUseContent.Id,
-                        Name = toolUseContent.Name,
-                        Arguments = toolArguments,
-                    }
+                    new ToolInvocation(toolUseContent.Id, toolUseContent.Name, toolArguments)
                 );
             }
         }
@@ -278,26 +266,9 @@ public class AnthropicChatClient : IChatClient
                 break;
 
             case MessageType.Tool:
-                if (message.ToolCallId != null && message.ToolResults != null)
+                if (message.ToolResult != null)
                 {
-                    // Convert tool results to JSON
-                    string resultJson = JsonSerializer.Serialize(message.ToolResults);
-
-                    // Add tool result to history
-                    _messages.Add(
-                        new Message
-                        {
-                            Role = RoleType.User,
-                            Content = new List<ContentBase>
-                            {
-                                new ToolResultContent
-                                {
-                                    ToolUseId = message.ToolCallId,
-                                    Content = [new TextContent() { Text = resultJson }],
-                                },
-                            },
-                        }
-                    );
+                    AddToolResultToHistory(message.ToolResult);
                 }
                 break;
 
@@ -324,18 +295,18 @@ public class AnthropicChatClient : IChatClient
     /// <param name="toolResults"></param>
     /// <returns></returns>
     public async Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
-        IEnumerable<Models.ToolCall> toolResults
+        IEnumerable<ToolInvocationResult> toolResults
     )
     {
         foreach (var toolResult in toolResults)
         {
             _logger.LogDebug(
                 "Adding tool result for {ToolName} with ID {ToolId} to history",
-                toolResult.Name,
-                toolResult.Id
+                toolResult.ToolName,
+                toolResult.ToolCallId
             );
 
-            AddToolResultToHistory(toolResult.Id, toolResult.Name, toolResult.Results);
+            AddToolResultToHistory(toolResult);
         }
 
         _logger.LogDebug("Making single API call after adding all tool results");
