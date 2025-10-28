@@ -67,10 +67,16 @@ Without these credentials, the tool will return an informative error message.
 First, run the SimpleServer in a terminal window:
 
 ```bash
+dotnet run --project Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio
+```
+
+This launches the server in stdio mode (recommended when pairing with the console sample). For the OAuth demo endpoint instead, run:
+
+```bash
 dotnet run --project Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj
 ```
 
-This will start a server on `http://localhost:5000/` with several demo tools ready to use.
+That variant hosts SSE on `http://localhost:5000/mcp` and requires OAuth (PKCE or client credentials).
 
 ### Running the LLM Client
 
@@ -81,7 +87,7 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 ```
 
 The client will:
-1. Connect to the SimpleServer at `http://localhost:5000/`
+1. Connect to the SimpleServer (SSE or stdio)
 2. Present a tool selection interface
 3. Start a chat session with your chosen LLM
 
@@ -93,6 +99,18 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 
 # Specify a different model
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --model=gpt-4
+
+# Connect to SSE with client-credentials auth (default)
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp
+
+# Connect to SSE with PKCE (dynamic registration)
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp --pkce
+
+# Connect to a stdio server process
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio"
+
+# Disable authentication (for unsecured servers)
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp --no-auth
 
 # Skip the tool selection screen and enable all tools
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --all-tools

@@ -12,7 +12,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.Shared;
-using Mcp.Net.Examples.SimpleClient.Authorization;
+using Mcp.Net.Examples.Shared.Authorization;
 using Mcp.Net.Examples.SimpleClient.Elicitation;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;

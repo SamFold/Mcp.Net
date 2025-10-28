@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using DemoOAuthDefaults = Mcp.Net.Examples.Shared.DemoOAuthDefaults;
-using Mcp.Net.Examples.SimpleClient.Authorization;
+using Mcp.Net.Examples.Shared.Authorization;
 
 namespace Mcp.Net.Tests.Client;
 

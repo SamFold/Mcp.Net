@@ -1,5 +1,9 @@
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
 using Mcp.Net.Client;
+using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Examples.LLMConsole.UI;
 using Mcp.Net.LLM.Core;
@@ -11,10 +15,13 @@ using Mcp.Net.LLM.Completions;
 using Mcp.Net.LLM.Catalog;
 using Mcp.Net.LLM.Interfaces;
 using LLM = Mcp.Net.LLM;
+using Mcp.Net.Examples.Shared;
+using Mcp.Net.Examples.Shared.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace Mcp.Net.Examples.LLMConsole;
 
@@ -23,6 +30,12 @@ public class Program
     private static Microsoft.Extensions.Logging.ILogger _logger = null!;
     private static Core.Models.Tools.Tool[] AvailableTools { get; set; } =
         Array.Empty<Core.Models.Tools.Tool>();
+    private static readonly List<IDisposable> AuthDisposables = new();
+
+    static Program()
+    {
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => DisposeAuthDisposables();
+    }
 
     public static async Task Main(string[] args)
     {
@@ -37,6 +50,20 @@ public class Program
         var loggerFactory = LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger, dispose: false));
         var chatUI = new ChatUI();
 
+        var options = ConsoleOptions.Parse(args);
+        options.ApplyDefaults();
+        try
+        {
+            options.Validate();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Invalid console options.");
+            Console.WriteLine($"Configuration error: {ex.Message}");
+            ConsoleBanner.DisplayHelp();
+            return;
+        }
+
         var elicitationCoordinator = new ElicitationCoordinator(
             loggerFactory.CreateLogger<ElicitationCoordinator>()
         );
@@ -46,7 +73,11 @@ public class Program
         );
         elicitationCoordinator.SetProvider(elicitationProvider);
 
-        var mcpClient = await ConnectToMcpServer(elicitationCoordinator);
+        var mcpClient = await ConnectToMcpServer(
+            elicitationCoordinator,
+            options,
+            loggerFactory
+        );
 
         var completionLogger = loggerFactory.CreateLogger<CompletionService>();
         var promptCatalogLogger = loggerFactory.CreateLogger<PromptResourceCatalog>();
@@ -125,7 +156,7 @@ public class Program
         // Build temporary service provider for tool selection
         var tempServiceProvider = services.BuildServiceProvider();
 
-        if (!args.Contains("--all-tools") && !args.Contains("--skip-tool-selection"))
+        if (!options.SkipToolSelection && !options.EnableAllTools)
         {
             var toolSelectionService =
                 tempServiceProvider.GetRequiredService<ToolSelectionService>();
@@ -317,14 +348,132 @@ public class Program
         };
     }
 
-    private static async Task<IMcpClient> ConnectToMcpServer(ElicitationCoordinator coordinator)
+    private static async Task<IMcpClient> ConnectToMcpServer(
+        ElicitationCoordinator coordinator,
+        ConsoleOptions options,
+        ILoggerFactory loggerFactory
+    )
     {
-        var mcpClient = await new McpClientBuilder()
-            .UseSseTransport("http://localhost:5000/")
-            .WithElicitationHandler(coordinator.HandleAsync)
-            .BuildAndInitializeAsync();
+        var clientLogger = loggerFactory.CreateLogger("LLMConsole.McpClient");
+        var builder = new McpClientBuilder()
+            .WithName("LLMConsole")
+            .WithVersion("1.0.0")
+            .WithTitle("LLM Console Sample")
+            .WithLogger(clientLogger)
+            .WithElicitationHandler(coordinator.HandleAsync);
 
-        _logger.LogInformation("Connected to MCP server");
+        HttpClient? pkceProviderHttpClient = null;
+        HttpClient? pkceInteractionHttpClient = null;
+
+        if (!string.IsNullOrWhiteSpace(options.ServerCommand))
+        {
+            builder.UseStdioTransport(options.ServerCommand);
+            _logger.LogInformation(
+                "Using stdio transport via command: {Command}",
+                options.ServerCommand
+            );
+        }
+        else if (!string.IsNullOrWhiteSpace(options.ServerUrl))
+        {
+            builder.UseSseTransport(options.ServerUrl);
+            _logger.LogInformation("Using SSE transport against {Url}", options.ServerUrl);
+
+            if (options.AuthMode != ConsoleAuthMode.None)
+            {
+                var serverUri = EnsureAbsoluteUri(options.ServerUrl);
+                var baseUri = new UriBuilder(serverUri)
+                {
+                    Path = string.Empty,
+                    Query = string.Empty,
+                    Fragment = string.Empty,
+                }.Uri;
+
+                switch (options.AuthMode)
+                {
+                    case ConsoleAuthMode.ClientCredentials:
+                        _logger.LogInformation("Using demo OAuth client credentials flow.");
+                        var clientCredentialsOptions = DemoOAuthDefaults.CreateClientOptions(
+                            baseUri
+                        );
+                        var credentialsHttpClient = new HttpClient();
+                        RegisterAuthDisposable(credentialsHttpClient);
+                        builder.WithClientCredentialsAuth(
+                            clientCredentialsOptions,
+                            credentialsHttpClient
+                        );
+                        break;
+
+                    case ConsoleAuthMode.AuthorizationCodePkce:
+                        _logger.LogInformation("Using demo OAuth authorization code flow (PKCE).");
+
+                        pkceProviderHttpClient = new HttpClient();
+                        pkceInteractionHttpClient = new HttpClient(
+                            new HttpClientHandler { AllowAutoRedirect = false }
+                        );
+                        RegisterAuthDisposable(pkceProviderHttpClient);
+                        RegisterAuthDisposable(pkceInteractionHttpClient);
+
+                        var pkceOptions = DemoOAuthDefaults.CreateClientOptions(baseUri);
+                        pkceOptions.RedirectUri = DemoOAuthDefaults.DefaultRedirectUri;
+
+                        var registration = await DemoDynamicClientRegistrar.RegisterAsync(
+                            baseUri,
+                            "LLM Console PKCE Sample",
+                            pkceOptions.RedirectUri,
+                            DemoOAuthDefaults.Scopes,
+                            pkceProviderHttpClient,
+                            CancellationToken.None
+                        );
+
+                        pkceOptions.ClientId = registration.ClientId;
+                        pkceOptions.ClientSecret = registration.ClientSecret;
+                        pkceOptions.RedirectUri = registration.RedirectUris.First();
+
+                        builder.WithAuthorizationCodeAuth(
+                            pkceOptions,
+                            CreatePkceInteractionHandler(pkceInteractionHttpClient),
+                            pkceProviderHttpClient
+                        );
+                        break;
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Authentication disabled; requests will be sent without bearer tokens."
+                );
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                "No transport configured. Specify --url or --command."
+            );
+        }
+
+        var mcpClient = await builder.BuildAndInitializeAsync();
+
+        var serverName = mcpClient.ServerInfo?.Name ?? "Unknown";
+        var serverVersion = mcpClient.ServerInfo?.Version ?? "n/a";
+        var protocol = mcpClient.NegotiatedProtocolVersion ?? "unknown";
+
+        _logger.LogInformation(
+            "Connected to MCP server {Server} v{Version} (protocol {Protocol})",
+            serverName,
+            serverVersion,
+            protocol
+        );
+
+        if (!string.IsNullOrWhiteSpace(mcpClient.Instructions))
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("Server instructions:");
+            Console.ResetColor();
+            Console.WriteLine(mcpClient.Instructions);
+            Console.WriteLine();
+        }
+
         return mcpClient;
     }
 
@@ -403,4 +552,117 @@ public class Program
             _ => LogEventLevel.Information,
         };
     }
+
+    private static Uri EnsureAbsoluteUri(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return uri;
+        }
+
+        if (Uri.TryCreate($"http://{url}", UriKind.Absolute, out uri))
+        {
+            return uri;
+        }
+
+        throw new InvalidOperationException(
+            $"The server URL '{url}' is not a valid absolute URI. Specify a value such as http://localhost:5000/mcp."
+        );
+    }
+
+    private static void RegisterAuthDisposable(IDisposable disposable)
+    {
+        if (disposable == null)
+        {
+            return;
+        }
+
+        lock (AuthDisposables)
+        {
+            AuthDisposables.Add(disposable);
+        }
+    }
+
+    private static void DisposeAuthDisposables()
+    {
+        lock (AuthDisposables)
+        {
+            foreach (var disposable in AuthDisposables)
+            {
+                try
+                {
+                    disposable.Dispose();
+                }
+                catch
+                {
+                    // Ignore cleanup failures
+                }
+            }
+
+            AuthDisposables.Clear();
+        }
+    }
+
+    private static Func<
+        AuthorizationCodeRequest,
+        CancellationToken,
+        Task<AuthorizationCodeResult>
+    > CreatePkceInteractionHandler(HttpClient httpClient)
+    {
+        return async (request, cancellationToken) =>
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, request.AuthorizationUri);
+            using var response = await httpClient.SendAsync(
+                message,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken
+            );
+
+            if (!IsRedirectStatus(response.StatusCode))
+            {
+                throw new InvalidOperationException(
+                    $"Authorization endpoint responded with status {response.StatusCode}."
+                );
+            }
+
+            var location = response.Headers.Location
+                ?? throw new InvalidOperationException(
+                    "Authorization server did not provide a redirect location."
+                );
+
+            if (!location.IsAbsoluteUri)
+            {
+                if (request.RedirectUri == null)
+                {
+                    throw new InvalidOperationException(
+                        "Redirect URI is relative and no base redirect URI is available."
+                    );
+                }
+
+                location = new Uri(request.RedirectUri, location);
+            }
+
+            var query = QueryHelpers.ParseQuery(location.Query);
+            if (!query.TryGetValue("code", out var codeValues))
+            {
+                throw new InvalidOperationException(
+                    "Authorization server did not return an authorization code."
+                );
+            }
+
+            var code = codeValues.ToString();
+            var returnedState = query.TryGetValue("state", out var stateValues)
+                ? stateValues.ToString()
+                : string.Empty;
+
+            return new AuthorizationCodeResult(code, returnedState);
+        };
+    }
+
+    private static bool IsRedirectStatus(HttpStatusCode statusCode) =>
+        statusCode == HttpStatusCode.MovedPermanently
+        || statusCode == HttpStatusCode.Found
+        || statusCode == HttpStatusCode.SeeOther
+        || statusCode == HttpStatusCode.TemporaryRedirect
+        || (int)statusCode == 308;
 }

@@ -1,20 +1,15 @@
-using System;
-using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 using Mcp.Net.Client.Authentication;
-using Mcp.Net.Examples.Shared;
 
-namespace Mcp.Net.Examples.SimpleClient.Authorization;
+namespace Mcp.Net.Examples.Shared.Authorization;
 
 /// <summary>
 /// Helper that exercises OAuth 2.0 dynamic client registration against the demo authorization server.
 /// </summary>
-internal static class DemoDynamicClientRegistrar
+public static class DemoDynamicClientRegistrar
 {
     private static readonly JsonSerializerOptions s_serializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -35,7 +30,6 @@ internal static class DemoDynamicClientRegistrar
         ArgumentNullException.ThrowIfNull(scopes);
         ArgumentNullException.ThrowIfNull(httpClient);
 
-        // Leverage the shared discovery service so registration respects resource metadata indirection.
         var options = DemoOAuthDefaults.CreateClientOptions(baseUri);
         options.AuthorizationServerMetadataAddress = DemoOAuthDefaults.BuildMetadataUri(baseUri);
 
@@ -43,7 +37,9 @@ internal static class DemoDynamicClientRegistrar
         var metadata = await discoveryService.GetMetadataAsync(options, cancellationToken);
         if (metadata.RegistrationEndpoint == null)
         {
-            throw new InvalidOperationException("Authorization server does not advertise a registration_endpoint.");
+            throw new InvalidOperationException(
+                "Authorization server does not advertise a registration_endpoint."
+            );
         }
 
         var requestPayload = new
@@ -112,7 +108,7 @@ internal static class DemoDynamicClientRegistrar
     }
 }
 
-internal sealed record DynamicClientRegistrationResult(
+public sealed record DynamicClientRegistrationResult(
     string ClientId,
     string? ClientSecret,
     IReadOnlyList<Uri> RedirectUris

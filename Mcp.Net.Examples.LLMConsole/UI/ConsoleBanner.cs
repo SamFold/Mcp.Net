@@ -272,6 +272,11 @@ public static class ConsoleBanner
         Console.WriteLine("\nUsage: dotnet run --project Mcp.Net.Examples.LLMConsole [options]\n");
         Console.WriteLine("Options:");
         Console.WriteLine("  -h, --help                Display this help message");
+        Console.WriteLine("  --url <url>               Connect to an MCP server via SSE (default http://localhost:5000/mcp)");
+        Console.WriteLine("  --command <cmd>           Launch a stdio server process and connect over stdio transport");
+        Console.WriteLine("  --auth-mode <mode>        Authentication mode for SSE: client (default), pkce, none");
+        Console.WriteLine("  --no-auth                 Shortcut for --auth-mode=none");
+        Console.WriteLine("  --pkce                    Shortcut for --auth-mode=pkce");
         Console.WriteLine(
             "  --provider <n>            Specify the LLM provider to use (anthropic or openai)"
         );
@@ -293,6 +298,9 @@ public static class ConsoleBanner
         Console.WriteLine("  --skip-tool-selection     Same as --all-tools");
         Console.WriteLine("\nEnvironment Variables:");
         Console.WriteLine(
+            "  MCP_PORT                  Default port used when --url is omitted (defaults to 5000)"
+        );
+        Console.WriteLine(
             "  ANTHROPIC_API_KEY         API key for Anthropic (required when using Anthropic)"
         );
         Console.WriteLine(
@@ -307,9 +315,13 @@ public static class ConsoleBanner
         );
         Console.WriteLine("                            If not set, defaults to warning");
         Console.WriteLine("\nExamples:");
+        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp");
+        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp --pkce");
+        Console.WriteLine(
+            "  dotnet run --project Mcp.Net.Examples.LLMConsole --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\""
+        );
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider anthropic");
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider openai --model gpt-4o");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider=anthropic --debug");
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --log-level=debug");
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --all-tools");
     }
