@@ -50,7 +50,9 @@ public class ChatFactoryTests
         var loggerFactory = LoggerFactory.Create(builder => { });
         var chatFactoryLogger = loggerFactory.CreateLogger<ChatFactory>();
         var hubContext = new Mock<IHubContext<ChatHub>>().Object;
-        var toolRegistry = new Mcp.Net.LLM.Tools.ToolRegistry(NullLogger.Instance);
+        var toolRegistry = new Mcp.Net.LLM.Tools.ToolRegistry(
+            NullLogger<Mcp.Net.LLM.Tools.ToolRegistry>.Instance
+        );
         var llmFactory = new LlmClientFactory(
             loggerFactory.CreateLogger<Mcp.Net.LLM.Anthropic.AnthropicChatClient>(),
             loggerFactory.CreateLogger<Mcp.Net.LLM.OpenAI.OpenAiChatClient>(),

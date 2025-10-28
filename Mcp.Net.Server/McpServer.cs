@@ -1156,7 +1156,8 @@ public class McpServer : IMcpServer
         string name,
         string? description,
         JsonElement inputSchema,
-        Func<JsonElement?, Task<ToolCallResult>> handler
+        Func<JsonElement?, Task<ToolCallResult>> handler,
+        IDictionary<string, object?>? annotations = null
     )
     {
         var tool = new Tool
@@ -1164,6 +1165,7 @@ public class McpServer : IMcpServer
             Name = name,
             Description = description,
             InputSchema = inputSchema,
+            Annotations = annotations != null ? CopyAnnotations(annotations) : null,
         };
 
         _tools[name] = tool;
@@ -1201,6 +1203,17 @@ public class McpServer : IMcpServer
             name,
             description ?? "No description"
         );
+    }
+
+    private static IDictionary<string, object?> CopyAnnotations(IDictionary<string, object?> source)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in source)
+        {
+            result[kvp.Key] = kvp.Value;
+        }
+
+        return result;
     }
 
     public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(JsonRpcRequestMessage request)

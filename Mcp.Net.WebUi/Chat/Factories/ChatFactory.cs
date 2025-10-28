@@ -8,6 +8,7 @@ using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Tools;
 using Mcp.Net.LLM.Elicitation;
 using System.Collections.Concurrent;
+using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Chat.Interfaces;
@@ -40,6 +41,8 @@ public class ChatFactory : IChatFactory
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
     private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
+    private readonly ConcurrentDictionary<string, IMcpClient> _sessionClients = new();
+    private readonly ConcurrentDictionary<string, Action<JsonRpcNotificationMessage>> _toolNotificationHandlers = new();
     private readonly ConcurrentDictionary<string, IPromptResourceCatalog> _promptCatalogs = new();
     private readonly ConcurrentDictionary<string, ICompletionService> _completionServices = new();
 
@@ -89,6 +92,7 @@ public class ChatFactory : IChatFactory
 
         // Create dedicated MCP client for this session
         var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
+        AttachToolListNotification(sessionId, sessionMcpClient);
 
         var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
 
@@ -110,6 +114,7 @@ public class ChatFactory : IChatFactory
             _hubContext,
             adapterLogger,
             sessionId,
+            _toolRegistry,
             catalog,
             completionService,
             coordinator
@@ -136,6 +141,7 @@ public class ChatFactory : IChatFactory
 
         // Create dedicated MCP client for this session
         var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
+        AttachToolListNotification(sessionId, sessionMcpClient);
 
         var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
 
@@ -157,6 +163,7 @@ public class ChatFactory : IChatFactory
             _hubContext,
             adapterLogger,
             sessionId,
+            _toolRegistry,
             catalog,
             completionService,
             coordinator
@@ -376,6 +383,37 @@ public class ChatFactory : IChatFactory
         return (catalog, completionService);
     }
 
+    private void AttachToolListNotification(string sessionId, IMcpClient client)
+    {
+        Action<JsonRpcNotificationMessage> handler = notification =>
+        {
+            if (notification.Method == "tools/list_changed")
+            {
+                _ = Task.Run(
+                    async () =>
+                    {
+                        try
+                        {
+                            await _toolRegistry.RefreshAsync(client);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(
+                                ex,
+                                "Failed to refresh tools after tools/list_changed for session {SessionId}",
+                                sessionId
+                            );
+                        }
+                    }
+                );
+            }
+        };
+
+        client.OnNotification += handler;
+        _toolNotificationHandlers[sessionId] = handler;
+        _sessionClients[sessionId] = client;
+    }
+
     /// <summary>
     /// Create session metadata for a new chat
     /// </summary>
@@ -475,6 +513,14 @@ public class ChatFactory : IChatFactory
         {
             completionService.Clear();
             _logger.LogDebug("Cleared completion cache for {SessionId}", sessionId);
+        }
+
+        if (
+            _toolNotificationHandlers.TryRemove(sessionId, out var notificationHandler)
+            && _sessionClients.TryRemove(sessionId, out var client)
+        )
+        {
+            client.OnNotification -= notificationHandler;
         }
     }
 }

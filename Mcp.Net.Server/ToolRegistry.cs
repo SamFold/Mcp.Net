@@ -142,7 +142,8 @@ public class ToolRegistry
             name: descriptor.Name,
             description: descriptor.Description,
             inputSchema: descriptor.InputSchema,
-            handler: handler
+            handler: handler,
+            annotations: descriptor.Annotations
         );
     }
 }

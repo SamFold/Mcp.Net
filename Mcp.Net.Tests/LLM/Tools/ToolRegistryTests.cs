@@ -1,66 +1,42 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Xunit;
 
 namespace Mcp.Net.Tests.LLM.Tools;
 
 /// <summary>
-/// Unit tests for the ToolRegistry class
+/// Unit tests for the <see cref="ToolRegistry"/> class.
 /// </summary>
 public class ToolRegistryTests
 {
     private readonly Mock<ILogger<ToolRegistry>> _mockLogger;
     private readonly ToolRegistry _registry;
 
-    // Test tools
-    private readonly List<Tool> _testTools = new()
-    {
-        new Tool
-        {
-            Name = "calculator_add",
-            Description = "Adds two numbers",
-            InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
-        },
-        new Tool
-        {
-            Name = "calculator_subtract",
-            Description = "Subtracts two numbers",
-            InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
-        },
-        new Tool
-        {
-            Name = "google_search",
-            Description = "Searches the web",
-            InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
-        },
-    };
-
     public ToolRegistryTests()
     {
         _mockLogger = new Mock<ILogger<ToolRegistry>>();
         _registry = new ToolRegistry(_mockLogger.Object);
-
-        // Register test tools
-        _registry.RegisterTools(_testTools);
+        _registry.RegisterTools(CreateTestTools());
     }
 
     [Fact]
     public void ValidateToolIds_ShouldReturnMissingTools()
     {
-        // Arrange
         var toolIds = new[]
         {
-            "calculator_add",
+            "finance_budget",
             "non_existent_tool",
             "another_missing_tool",
-            "google_search",
+            "travel_search",
         };
 
-        // Act
         var missingTools = _registry.ValidateToolIds(toolIds);
 
-        // Assert
         Assert.Equal(2, missingTools.Count);
         Assert.Contains("non_existent_tool", missingTools);
         Assert.Contains("another_missing_tool", missingTools);
@@ -69,68 +45,142 @@ public class ToolRegistryTests
     [Fact]
     public void ValidateToolIds_ShouldReturnEmptyListForValidTools()
     {
-        // Arrange
-        var toolIds = new[] { "calculator_add", "calculator_subtract", "google_search" };
+        var toolIds = new[] { "finance_budget", "travel_search", "general_helper" };
 
-        // Act
         var missingTools = _registry.ValidateToolIds(toolIds);
 
-        // Assert
         Assert.Empty(missingTools);
     }
 
     [Fact]
     public void GetToolsByPrefix_ShouldReturnCorrectTools()
     {
-        // Arrange
-        var prefix = "calculator_";
+        var tools = _registry.GetToolsByPrefix("finance_");
 
-        // Act
-        var tools = _registry.GetToolsByPrefix(prefix);
-
-        // Assert
-        Assert.Equal(2, tools.Count);
-        Assert.All(tools, t => Assert.StartsWith(prefix, t.Name));
+        Assert.Single(tools);
+        Assert.All(tools, t => Assert.StartsWith("finance_", t.Name));
     }
 
     [Fact]
     public void IsToolEnabled_ShouldReturnCorrectState()
     {
-        // Arrange - By default all tools are enabled upon registration
+        Assert.True(_registry.IsToolEnabled("finance_budget"));
 
-        // Act & Assert
-        Assert.True(_registry.IsToolEnabled("calculator_add"));
+        _registry.SetEnabledTools(new[] { "travel_search" });
 
-        // Arrange - Disable some tools
-        _registry.SetEnabledTools(new[] { "google_search" });
-
-        // Act & Assert
-        Assert.False(_registry.IsToolEnabled("calculator_add"));
-        Assert.True(_registry.IsToolEnabled("google_search"));
+        Assert.False(_registry.IsToolEnabled("finance_budget"));
+        Assert.True(_registry.IsToolEnabled("travel_search"));
     }
 
     [Fact]
     public async Task GetToolCategoriesAsync_ShouldReturnAllCategories()
     {
-        // Act
         var categories = await _registry.GetToolCategoriesAsync();
 
-        // Assert - Default categories should exist even if empty
-        Assert.Contains("math", categories);
-        Assert.Contains("search", categories);
-        Assert.Contains("utility", categories);
-        Assert.Contains("code", categories);
+        Assert.Contains("finance", categories);
+        Assert.Contains("travel", categories);
+        Assert.Contains("research", categories);
+        Assert.Contains("general", categories);
     }
 
     [Fact]
     public async Task GetToolsByCategoryAsync_ShouldReturnCorrectTools()
     {
-        // Act
-        var mathTools = await _registry.GetToolsByCategoryAsync("math");
+        var financeTools = await _registry.GetToolsByCategoryAsync("finance");
+        var generalTools = await _registry.GetToolsByCategoryAsync("general");
 
-        // Assert
-        Assert.Contains("calculator_add", mathTools);
-        Assert.Contains("calculator_subtract", mathTools);
-        Assert.DoesNotContain("google_search", mathTools);
+        Assert.Contains("finance_budget", financeTools);
+        Assert.DoesNotContain("travel_search", financeTools);
+        Assert.Contains("general_helper", generalTools);
+    }
+
+    [Fact]
+    public void ToolsUpdated_ShouldRaiseEvent_WhenRegistering()
+    {
+        bool wasRaised = false;
+
+        _registry.ToolsUpdated += (_, tools) =>
+        {
+            wasRaised = true;
+            Assert.Equal(3, tools.Count);
+        };
+
+        _registry.RegisterTools(CreateTestTools());
+
+        Assert.True(wasRaised);
+    }
+
+    [Fact]
+    public void GetCategoriesForTool_ShouldReturnExpectedValues()
+    {
+        var categories = _registry.GetCategoriesForTool("travel_search");
+
+        Assert.Contains("travel", categories);
+        Assert.Contains("research", categories);
+    }
+
+    [Fact]
+    public void RegisterTools_ShouldPreserveEnabledState()
+    {
+        _registry.SetEnabledTools(new[] { "finance_budget" });
+
+        _registry.RegisterTools(CreateTestTools());
+
+        Assert.True(_registry.IsToolEnabled("finance_budget"));
+        Assert.False(_registry.IsToolEnabled("travel_search"));
+    }
+
+    [Fact]
+    public void SetEnabledTools_ShouldFallbackToAllTools_WhenNamesDoNotMatch()
+    {
+        _registry.SetEnabledTools(new[] { "non_existent_tool" });
+
+        Assert.True(_registry.IsToolEnabled("finance_budget"));
+        Assert.True(_registry.IsToolEnabled("travel_search"));
+    }
+
+    [Fact]
+    public void GetCategoryDescriptors_ShouldContainAllRegisteredTools()
+    {
+        var descriptors = _registry.GetCategoryDescriptors();
+
+        var finance = descriptors.First(d => d.Key == "finance");
+        Assert.Contains("finance_budget", finance.ToolNames);
+
+        var general = descriptors.First(d => d.Key == "general");
+        Assert.Contains("general_helper", general.ToolNames);
+    }
+
+    private static IEnumerable<Tool> CreateTestTools()
+    {
+        return new[]
+        {
+            new Tool
+            {
+                Name = "finance_budget",
+                Description = "Budget planner",
+                InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+                Annotations = new Dictionary<string, object?>
+                {
+                    { "category", "finance" },
+                },
+            },
+            new Tool
+            {
+                Name = "travel_search",
+                Description = "Search flights",
+                InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+                Annotations = new Dictionary<string, object?>
+                {
+                    { "categories", new object[] { "travel", "research" } },
+                },
+            },
+            new Tool
+            {
+                Name = "general_helper",
+                Description = "Misc helper",
+                InputSchema = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+            },
+        };
     }
 }

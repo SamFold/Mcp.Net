@@ -9,6 +9,8 @@ using Mcp.Net.Examples.LLMConsole.Elicitation;
 using Mcp.Net.LLM.Tools;
 using Mcp.Net.LLM.Completions;
 using Mcp.Net.LLM.Catalog;
+using Mcp.Net.LLM.Interfaces;
+using LLM = Mcp.Net.LLM;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -53,7 +55,55 @@ public class Program
         var promptCatalog = new PromptResourceCatalog(mcpClient, promptCatalogLogger);
         await promptCatalog.InitializeAsync();
 
-        var toolRegistry = await LoadMcpTools(mcpClient);
+        var toolRegistryLogger = loggerFactory.CreateLogger<ToolRegistry>();
+        var toolRegistry = new ToolRegistry(toolRegistryLogger);
+
+        IChatClient? activeChatClient = null;
+        toolRegistry.ToolsUpdated += (_, tools) =>
+        {
+            AvailableTools = tools.ToArray();
+            if (activeChatClient != null)
+            {
+                try
+                {
+                    activeChatClient.RegisterTools(toolRegistry.EnabledTools);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to re-register tools with the active chat client."
+                    );
+                }
+            }
+
+            _logger.LogInformation("Tool inventory refreshed ({Count} tools)", tools.Count);
+        };
+
+        await toolRegistry.RefreshAsync(mcpClient);
+
+        mcpClient.OnNotification += notification =>
+        {
+            if (notification.Method == "tools/list_changed")
+            {
+                _ = Task.Run(
+                    async () =>
+                    {
+                        try
+                        {
+                            await toolRegistry.RefreshAsync(mcpClient);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(
+                                ex,
+                                "Failed to refresh tools after tools/list_changed notification."
+                            );
+                        }
+                    }
+                );
+            }
+        };
 
         var availablePrompts = await promptCatalog.GetPromptsAsync();
         var availableResources = await promptCatalog.GetResourcesAsync();
@@ -79,7 +129,7 @@ public class Program
         {
             var toolSelectionService =
                 tempServiceProvider.GetRequiredService<ToolSelectionService>();
-            var selectedTools = toolSelectionService.PromptForToolSelection(AvailableTools);
+            var selectedTools = toolSelectionService.PromptForToolSelection(toolRegistry);
 
             toolRegistry.SetEnabledTools(selectedTools.Select(t => t.Name));
 
@@ -142,6 +192,7 @@ public class Program
                 : new LLM.OpenAI.OpenAiChatClient(chatClientOptions, openAiLogger)
                     as LLM.Interfaces.IChatClient;
 
+        activeChatClient = chatClient;
         chatClient.RegisterTools(toolRegistry.EnabledTools);
 
         var chatSession = new ChatSession(chatClient, mcpClient, toolRegistry, chatSessionLogger);
@@ -275,20 +326,6 @@ public class Program
 
         _logger.LogInformation("Connected to MCP server");
         return mcpClient;
-    }
-
-    private static async Task<ToolRegistry> LoadMcpTools(IMcpClient mcpClient)
-    {
-        var tools = await mcpClient.ListTools();
-        _logger.LogInformation("Found {ToolCount} tools on the server", tools.Length);
-
-        var registry = new ToolRegistry();
-        registry.RegisterTools(tools);
-
-        // Store tool information in a static property for the banner to access
-        AvailableTools = tools;
-
-        return registry;
     }
 
     private static void ConfigureLogging(string[] args)

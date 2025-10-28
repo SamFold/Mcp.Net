@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.Transport;
@@ -25,11 +26,13 @@ public interface IMcpServer
     /// <param name="description">The description of the tool.</param>
     /// <param name="inputSchema">The JSON schema for the tool's input.</param>
     /// <param name="handler">The function that handles tool invocations.</param>
+    /// <param name="annotations">Optional annotations that describe additional tool metadata (for example categories).</param>
     void RegisterTool(
         string name,
         string? description,
         JsonElement inputSchema,
-        Func<JsonElement?, Task<ToolCallResult>> handler
+        Func<JsonElement?, Task<ToolCallResult>> handler,
+        IDictionary<string, object?>? annotations = null
     );
 
     /// <summary>

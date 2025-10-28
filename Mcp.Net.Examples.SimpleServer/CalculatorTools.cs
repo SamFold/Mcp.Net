@@ -8,10 +8,20 @@ namespace Mcp.Net.Examples.SimpleServer
     /// <summary>
     /// Provides basic calculator and geometry functions as MCP tools
     /// </summary>
-    [McpTool("calculator", "Calculator and geometry tools for solving mathematical problems")]
+    [McpTool(
+        "calculator",
+        "Calculator and geometry tools for solving mathematical problems",
+        Category = "math",
+        CategoryDisplayName = "Math & Geometry"
+    )]
     public class CalculatorTools
     {
-        [McpTool("calculator_add", "Add two numbers together")]
+        [McpTool(
+            "calculator_add",
+            "Add two numbers together",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Add(
             [McpParameter(required: true, description: "First number")] double a,
             [McpParameter(required: true, description: "Second number")] double b
@@ -20,7 +30,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return a + b;
         }
 
-        [McpTool("calculator_subtract", "Subtract one number from another")]
+        [McpTool(
+            "calculator_subtract",
+            "Subtract one number from another",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Subtract(
             [McpParameter(required: true, description: "Number to subtract from")] double a,
             [McpParameter(required: true, description: "Number to subtract")] double b
@@ -29,7 +44,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return a - b;
         }
 
-        [McpTool("calculator_multiply", "Multiply two numbers")]
+        [McpTool(
+            "calculator_multiply",
+            "Multiply two numbers",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Multiply(
             [McpParameter(required: true, description: "First number")] double a,
             [McpParameter(required: true, description: "Second number")] double b
@@ -38,7 +58,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return a * b;
         }
 
-        [McpTool("calculator_divide", "Divide one number by another")]
+        [McpTool(
+            "calculator_divide",
+            "Divide one number by another",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static CalculationResult Divide(
             [McpParameter(required: true, description: "Dividend (number to be divided)")] double a,
             [McpParameter(required: true, description: "Divisor (number to divide by)")] double b
@@ -62,7 +87,12 @@ namespace Mcp.Net.Examples.SimpleServer
             };
         }
 
-        [McpTool("calculator_power", "Raise a number to a power")]
+        [McpTool(
+            "calculator_power",
+            "Raise a number to a power",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Power(
             [McpParameter(required: true, description: "Base number")] double baseNumber,
             [McpParameter(required: true, description: "Exponent")] double exponent
@@ -71,7 +101,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return Math.Pow(baseNumber, exponent);
         }
 
-        [McpTool("calculator_sin", "Calculate the sine of an angle in degrees")]
+        [McpTool(
+            "calculator_sin",
+            "Calculate the sine of an angle in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Sin(
             [McpParameter(required: true, description: "Angle in degrees")] double angleDegrees
         )
@@ -80,7 +115,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return Math.Sin(angleRadians);
         }
 
-        [McpTool("calculator_cos", "Calculate the cosine of an angle in degrees")]
+        [McpTool(
+            "calculator_cos",
+            "Calculate the cosine of an angle in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Cos(
             [McpParameter(required: true, description: "Angle in degrees")] double angleDegrees
         )
@@ -89,7 +129,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return Math.Cos(angleRadians);
         }
 
-        [McpTool("calculator_tan", "Calculate the tangent of an angle in degrees")]
+        [McpTool(
+            "calculator_tan",
+            "Calculate the tangent of an angle in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static CalculationResult Tan(
             [McpParameter(required: true, description: "Angle in degrees")] double angleDegrees
         )
@@ -114,7 +159,12 @@ namespace Mcp.Net.Examples.SimpleServer
             };
         }
 
-        [McpTool("calculator_asin", "Calculate the arcsine (inverse sine) in degrees")]
+        [McpTool(
+            "calculator_asin",
+            "Calculate the arcsine (inverse sine) in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static CalculationResult Asin(
             [McpParameter(required: true, description: "Value between -1 and 1")] double value
         )
@@ -140,7 +190,12 @@ namespace Mcp.Net.Examples.SimpleServer
             };
         }
 
-        [McpTool("calculator_acos", "Calculate the arccosine (inverse cosine) in degrees")]
+        [McpTool(
+            "calculator_acos",
+            "Calculate the arccosine (inverse cosine) in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static CalculationResult Acos(
             [McpParameter(required: true, description: "Value between -1 and 1")] double value
         )
@@ -166,7 +221,12 @@ namespace Mcp.Net.Examples.SimpleServer
             };
         }
 
-        [McpTool("calculator_atan", "Calculate the arctangent (inverse tangent) in degrees")]
+        [McpTool(
+            "calculator_atan",
+            "Calculate the arctangent (inverse tangent) in degrees",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Atan(
             [McpParameter(required: true, description: "Value to find the arctangent of")]
                 double value
@@ -177,7 +237,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return angleDegrees;
         }
 
-        [McpTool("calculator_atan2", "Calculate the angle (in degrees) from the X-axis to a point")]
+        [McpTool(
+            "calculator_atan2",
+            "Calculate the angle (in degrees) from the X-axis to a point",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Atan2(
             [McpParameter(required: true, description: "Y coordinate")] double y,
             [McpParameter(required: true, description: "X coordinate")] double x
@@ -188,7 +253,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return angleDegrees;
         }
 
-        [McpTool("calculator_distance", "Calculate the distance between two points (2D)")]
+        [McpTool(
+            "calculator_distance",
+            "Calculate the distance between two points (2D)",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Distance(
             [McpParameter(required: true, description: "X coordinate of first point")] double x1,
             [McpParameter(required: true, description: "Y coordinate of first point")] double y1,
@@ -201,7 +271,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return Math.Sqrt(dx * dx + dy * dy);
         }
 
-        [McpTool("calculator_circle_area", "Calculate the area of a circle")]
+        [McpTool(
+            "calculator_circle_area",
+            "Calculate the area of a circle",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double CircleArea(
             [McpParameter(required: true, description: "Radius of the circle")] double radius
         )
@@ -209,7 +284,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return Math.PI * radius * radius;
         }
 
-        [McpTool("calculator_circle_circumference", "Calculate the circumference of a circle")]
+        [McpTool(
+            "calculator_circle_circumference",
+            "Calculate the circumference of a circle",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double CircleCircumference(
             [McpParameter(required: true, description: "Radius of the circle")] double radius
         )
@@ -217,7 +297,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return 2 * Math.PI * radius;
         }
 
-        [McpTool("calculator_triangle_area", "Calculate the area of a triangle")]
+        [McpTool(
+            "calculator_triangle_area",
+            "Calculate the area of a triangle",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double TriangleArea(
             [McpParameter(required: true, description: "Length of side a")] double a,
             [McpParameter(required: true, description: "Length of side b")] double b,
@@ -232,7 +317,9 @@ namespace Mcp.Net.Examples.SimpleServer
 
         [McpTool(
             "calculator_triangle_area_base_height",
-            "Calculate the area of a triangle using base and height"
+            "Calculate the area of a triangle using base and height",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
         )]
         public static double TriangleAreaBaseHeight(
             [McpParameter(required: true, description: "Length of the base")] double baseLength,
@@ -242,7 +329,12 @@ namespace Mcp.Net.Examples.SimpleServer
             return 0.5 * baseLength * height;
         }
 
-        [McpTool("calculator_pythagorean", "Calculate the hypotenuse of a right triangle")]
+        [McpTool(
+            "calculator_pythagorean",
+            "Calculate the hypotenuse of a right triangle",
+            Category = "math",
+            CategoryDisplayName = "Math & Geometry"
+        )]
         public static double Pythagorean(
             [McpParameter(required: true, description: "Length of side a")] double a,
             [McpParameter(required: true, description: "Length of side b")] double b

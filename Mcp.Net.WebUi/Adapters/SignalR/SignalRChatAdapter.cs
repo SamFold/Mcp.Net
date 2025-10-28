@@ -9,11 +9,13 @@ using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
+using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Elicitation;
 using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Tools;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.DTOs;
 using Mcp.Net.WebUi.Hubs;
@@ -31,6 +33,7 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly ILogger<SignalRChatAdapter> _logger;
     private readonly string _sessionId;
+    private readonly ToolRegistry _toolRegistry;
     private readonly IPromptResourceCatalog _catalog;
     private readonly ICompletionService _completionService;
     private readonly ElicitationCoordinator? _elicitationCoordinator;
@@ -45,6 +48,7 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         IHubContext<ChatHub> hubContext,
         ILogger<SignalRChatAdapter> logger,
         string sessionId,
+        ToolRegistry toolRegistry,
         IPromptResourceCatalog catalog,
         ICompletionService completionService,
         ElicitationCoordinator? elicitationCoordinator = null
@@ -54,12 +58,14 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _hubContext = hubContext;
         _logger = logger;
         _sessionId = sessionId;
+        _toolRegistry = toolRegistry;
         _catalog = catalog;
         _completionService = completionService;
         _elicitationCoordinator = elicitationCoordinator;
 
         _elicitationCoordinator?.SetProvider(this);
 
+        _toolRegistry.ToolsUpdated += OnToolsUpdated;
         _catalog.PromptsUpdated += OnPromptsUpdated;
         _catalog.ResourcesUpdated += OnResourcesUpdated;
 
@@ -297,6 +303,35 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         }
     }
 
+    private async void OnToolsUpdated(object? sender, IReadOnlyList<Tool> tools)
+    {
+        try
+        {
+            GetLlmClient()?.RegisterTools(_toolRegistry.EnabledTools);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to register updated tools for session {SessionId}",
+                _sessionId
+            );
+        }
+
+        try
+        {
+            var payload = tools
+                .Select(t => new { t.Name, t.Title, t.Description })
+                .ToArray();
+
+            await _hubContext.Clients.Group(_sessionId).SendAsync("ToolsUpdated", payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast tool update for session {SessionId}", _sessionId);
+        }
+    }
+
     /// <summary>
     /// Attempts to resolve an outstanding elicitation request using input supplied by the web client.
     /// Called from <see cref="ChatHub"/> when the browser posts an elicitation response.
@@ -369,6 +404,7 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _chatSession.AssistantMessageReceived -= OnAssistantMessageReceived;
         _chatSession.ToolExecutionUpdated -= OnToolExecutionUpdated;
         _chatSession.ThinkingStateChanged -= OnThinkingStateChanged;
+        _toolRegistry.ToolsUpdated -= OnToolsUpdated;
         _catalog.PromptsUpdated -= OnPromptsUpdated;
         _catalog.ResourcesUpdated -= OnResourcesUpdated;
 

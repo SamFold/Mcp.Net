@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.Attributes;
@@ -17,12 +18,14 @@ internal sealed class ToolDescriptor
     /// <param name="declaringType">Type that contains the method decorated with <see cref="McpToolAttribute"/>.</param>
     /// <param name="method">Method that will be invoked when the tool is executed.</param>
     /// <param name="inputSchema">JSON schema describing the expected tool arguments.</param>
+    /// <param name="annotations">Optional annotations supplied by the tool attribute.</param>
     public ToolDescriptor(
         string name,
         string description,
         Type declaringType,
         MethodInfo method,
-        JsonElement inputSchema
+        JsonElement inputSchema,
+        IDictionary<string, object?>? annotations
     )
     {
         Name = name;
@@ -30,6 +33,7 @@ internal sealed class ToolDescriptor
         DeclaringType = declaringType;
         Method = method;
         InputSchema = inputSchema;
+        Annotations = annotations;
     }
 
     /// <summary>
@@ -56,4 +60,9 @@ internal sealed class ToolDescriptor
     /// Gets the JSON schema describing tool inputs.
     /// </summary>
     public JsonElement InputSchema { get; }
+
+    /// <summary>
+    /// Gets the optional annotations associated with the tool.
+    /// </summary>
+    public IDictionary<string, object?>? Annotations { get; }
 }

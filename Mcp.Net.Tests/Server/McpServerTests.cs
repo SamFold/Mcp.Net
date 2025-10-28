@@ -1,8 +1,5 @@
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using FluentAssertions;
-using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
@@ -11,7 +8,6 @@ using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
-using Mcp.Net.Server;
 using Moq;
 
 namespace Mcp.Net.Tests.Server;
@@ -252,6 +248,49 @@ public class McpServerTests
         tool.GetProperty("name").GetString().Should().Be(toolName);
         tool.GetProperty("description").GetString().Should().Be(toolDescription);
         tool.GetProperty("inputSchema").Should().NotBeNull();
+        tool.TryGetProperty("annotations", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HandleToolsList_ShouldIncludeAnnotations_WhenProvided()
+    {
+        var annotations = new Dictionary<string, object?>
+        {
+            ["category"] = new Dictionary<string, object?>
+            {
+                ["id"] = "server",
+                ["displayName"] = "Server Tools",
+            },
+        };
+
+        _server.RegisterTool(
+            "annotated_tool",
+            "Annotated",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            _ => Task.FromResult(new ToolCallResult()),
+            annotations
+        );
+
+        var request = new JsonRpcRequestMessage("2.0", "list-tools", "tools/list", null);
+        var response = await _server.ProcessJsonRpcRequest(request);
+
+        response.Error.Should().BeNull();
+        response.Result.Should().NotBeNull();
+
+        var resultObj = JsonSerializer.SerializeToElement(response.Result);
+        var annotated = resultObj
+            .GetProperty("tools")
+            .EnumerateArray()
+            .First(t => t.GetProperty("name").GetString() == "annotated_tool");
+
+        annotated.GetProperty("annotations").GetProperty("category").GetProperty("id").GetString().Should().Be("server");
+        annotated
+            .GetProperty("annotations")
+            .GetProperty("category")
+            .GetProperty("displayName")
+            .GetString()
+            .Should()
+            .Be("Server Tools");
     }
 
     [Fact]

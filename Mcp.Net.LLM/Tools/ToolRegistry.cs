@@ -1,213 +1,412 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.LLM.Tools;
 
-public class ToolRegistry : IToolRegistry
+/// <summary>
+/// Tracks the available MCP tools, normalises server metadata, and provides lookup helpers for callers.
+/// </summary>
+public sealed class ToolRegistry : IToolRegistry
 {
-    private readonly Dictionary<string, Tool> _toolsByName = new();
-    private readonly Dictionary<string, List<Tool>> _toolsByPrefix = new();
-    private readonly Dictionary<string, List<string>> _toolCategories = new();
-    private readonly HashSet<string> _enabledToolNames = new();
-    private readonly ILogger? _logger;
+    private static readonly Action<ILogger<ToolRegistry>, int, int, Exception?> LogEnabledSummary =
+        LoggerMessage.Define<int, int>(
+            LogLevel.Information,
+            new EventId(0, nameof(ToolRegistry)),
+            "Enabled {Enabled} out of {Total} tools"
+        );
 
-    public IReadOnlyList<Tool> AllTools => _toolsByName.Values.ToList();
+    private readonly object _stateGate = new();
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly ILogger<ToolRegistry>? _logger;
 
-    public IReadOnlyList<Tool> EnabledTools =>
-        _toolsByName.Values.Where(t => _enabledToolNames.Contains(t.Name)).ToList();
+    private ToolRegistrySnapshot _snapshot = ToolRegistrySnapshot.Empty;
 
-    public ToolRegistry(ILogger? logger = null)
+    /// <summary>
+    /// Raised when the registry replaces its inventory (typically after a <c>tools/list_changed</c> notification).
+    /// </summary>
+    public event EventHandler<IReadOnlyList<Tool>>? ToolsUpdated;
+
+    public ToolRegistry(ILogger<ToolRegistry>? logger = null)
     {
         _logger = logger;
-
-        // Initialize common tool categories - derived from tool prefixes by default
-        InitializeDefaultCategories();
     }
 
-    private void InitializeDefaultCategories()
+    /// <inheritdoc/>
+    public IReadOnlyList<Tool> AllTools => Volatile.Read(ref _snapshot).AllTools;
+
+    /// <inheritdoc/>
+    public IReadOnlyList<Tool> EnabledTools => Volatile.Read(ref _snapshot).EnabledTools;
+
+    /// <summary>
+    /// Refreshes the registry by issuing <c>tools/list</c> using the supplied MCP client.
+    /// </summary>
+    /// <param name="mcpClient">Client used to query available tools.</param>
+    /// <param name="cancellationToken">Cancellation token for the refresh operation.</param>
+    public async Task RefreshAsync(
+        IMcpClient mcpClient,
+        CancellationToken cancellationToken = default
+    )
     {
-        // Standard categories for tools
-        _toolCategories["math"] = new List<string>
+        if (mcpClient == null)
         {
-            "calculator_add",
-            "calculator_subtract",
-            "calculator_multiply",
-            "calculator_divide",
-        };
+            throw new ArgumentNullException(nameof(mcpClient));
+        }
 
-        _toolCategories["search"] = new List<string> { "google_search", "web_scraper" };
-
-        _toolCategories["utility"] = new List<string> { "date_time", "weather", "unit_converter" };
-
-        _toolCategories["code"] = new List<string>
+        await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            "code_explainer",
-            "code_formatter",
-            "code_translator",
-        };
+            cancellationToken.ThrowIfCancellationRequested();
+            var tools = await mcpClient.ListTools().ConfigureAwait(false);
+            RegisterTools(tools);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
     }
 
+    /// <inheritdoc/>
     public void RegisterTools(IEnumerable<Tool> tools)
     {
-        foreach (var tool in tools)
+        if (tools == null)
         {
-            _toolsByName[tool.Name] = tool;
-            _enabledToolNames.Add(tool.Name); // By default, all tools are enabled
-
-            // Group by prefix (e.g., "calculator_", "wh40k_")
-            string prefix = GetToolPrefix(tool.Name);
-            if (!_toolsByPrefix.ContainsKey(prefix))
-            {
-                _toolsByPrefix[prefix] = new List<Tool>();
-            }
-
-            _toolsByPrefix[prefix].Add(tool);
-
-            // Auto-categorize based on prefix if not already in a category
-            AutoCategorizeToolByPrefix(tool.Name, prefix);
+            throw new ArgumentNullException(nameof(tools));
         }
 
-        // Output statistics for each tool group
-        foreach (var group in _toolsByPrefix)
+        var toolList = tools.ToList();
+        ToolRegistrySnapshot updatedSnapshot;
+
+        lock (_stateGate)
         {
-            string message = $"Found {group.Value.Count} {group.Key.TrimEnd('_')} tools";
-            if (_logger != null)
-                _logger.LogInformation(message);
-            else
-                Console.WriteLine(message);
+            var previous = _snapshot;
+            updatedSnapshot = ToolRegistrySnapshot.Create(toolList, previous.EnabledToolNames);
+            _snapshot = updatedSnapshot;
         }
+
+        LogEnabledCount(updatedSnapshot);
+        ToolsUpdated?.Invoke(this, updatedSnapshot.AllTools);
     }
 
-    private void AutoCategorizeToolByPrefix(string toolName, string prefix)
-    {
-        // Define mapping of prefixes to categories
-        var prefixToCategory = new Dictionary<string, string>
-        {
-            { "calculator_", "math" },
-            { "google_", "search" },
-            { "web_", "search" },
-            { "date_", "utility" },
-            { "weather_", "utility" },
-            { "unit_", "utility" },
-            { "code_", "code" },
-        };
-
-        // Lookup which category this prefix belongs to
-        if (prefixToCategory.TryGetValue(prefix, out var category))
-        {
-            // Create category if it doesn't exist
-            if (!_toolCategories.ContainsKey(category))
-            {
-                _toolCategories[category] = new List<string>();
-            }
-
-            // Add tool to category if not already there
-            if (!_toolCategories[category].Contains(toolName))
-            {
-                _toolCategories[category].Add(toolName);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Sets the list of enabled tools by name
-    /// </summary>
-    /// <param name="enabledToolNames">Names of tools that should be enabled</param>
+    /// <inheritdoc/>
     public void SetEnabledTools(IEnumerable<string> enabledToolNames)
     {
-        _enabledToolNames.Clear();
-        foreach (var name in enabledToolNames)
+        if (enabledToolNames == null)
         {
-            if (_toolsByName.ContainsKey(name))
-            {
-                _enabledToolNames.Add(name);
-            }
+            throw new ArgumentNullException(nameof(enabledToolNames));
         }
 
-        // Log the number of enabled tools
-        string message = $"Enabled {_enabledToolNames.Count} out of {_toolsByName.Count} tools";
-        if (_logger != null)
-            _logger.LogInformation(message);
-        else
-            Console.WriteLine(message);
+        lock (_stateGate)
+        {
+            var current = _snapshot;
+            var updated = current.WithEnabledToolNames(enabledToolNames);
+            _snapshot = updated;
+            LogEnabledCount(updated);
+        }
     }
 
+    /// <inheritdoc/>
     public Tool? GetToolByName(string name)
     {
-        if (!_enabledToolNames.Contains(name))
+        if (string.IsNullOrWhiteSpace(name))
         {
-            return null; // Tool is disabled
+            return null;
         }
 
-        return _toolsByName.TryGetValue(name, out var tool) ? tool : null;
+        var snapshot = Volatile.Read(ref _snapshot);
+        if (!snapshot.EnabledToolNames.Contains(name))
+        {
+            return null;
+        }
+
+        return snapshot.Descriptors.TryGetValue(name, out var descriptor) ? descriptor.Tool : null;
     }
 
+    /// <inheritdoc/>
     public IReadOnlyList<Tool> GetToolsByPrefix(string prefix)
     {
-        if (!_toolsByPrefix.TryGetValue(prefix, out var tools))
+        if (string.IsNullOrWhiteSpace(prefix))
         {
-            return new List<Tool>();
+            return Array.Empty<Tool>();
         }
 
-        return tools.Where(t => _enabledToolNames.Contains(t.Name)).ToList();
+        var snapshot = Volatile.Read(ref _snapshot);
+        return snapshot.EnabledToolsByPrefix.TryGetValue(prefix, out var tools)
+            ? tools
+            : Array.Empty<Tool>();
     }
 
-    public string GetToolPrefix(string name)
-    {
-        int underscorePos = name.IndexOf('_');
-        return underscorePos > 0 ? name.Substring(0, underscorePos + 1) : name;
-    }
+    /// <inheritdoc/>
+    public string GetToolPrefix(string name) => ToolNameClassifier.GetPrefix(name);
 
+    /// <inheritdoc/>
     public bool IsToolEnabled(string name)
     {
-        return _enabledToolNames.Contains(name);
-    }
-
-    /// <summary>
-    /// Gets all available tool categories
-    /// </summary>
-    /// <returns>A list of tool category names</returns>
-    public Task<IEnumerable<string>> GetToolCategoriesAsync()
-    {
-        return Task.FromResult<IEnumerable<string>>(_toolCategories.Keys.ToList());
-    }
-
-    /// <summary>
-    /// Gets all tool IDs within a specific category
-    /// </summary>
-    /// <param name="category">The tool category to get tools from</param>
-    /// <returns>A list of tool IDs in the specified category</returns>
-    public Task<IEnumerable<string>> GetToolsByCategoryAsync(string category)
-    {
-        if (_toolCategories.TryGetValue(category.ToLower(), out var tools))
+        if (string.IsNullOrWhiteSpace(name))
         {
-            // Return only enabled tools from the category
-            var enabledCategoryTools = tools.Where(t => _enabledToolNames.Contains(t)).ToList();
-            return Task.FromResult<IEnumerable<string>>(enabledCategoryTools);
+            return false;
         }
 
-        _logger?.LogWarning("Tool category {Category} not found", category);
-        return Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        return Volatile.Read(ref _snapshot).EnabledToolNames.Contains(name);
     }
 
-    /// <summary>
-    /// Validates that all specified tool IDs exist
-    /// </summary>
-    /// <param name="toolIds">The tool IDs to validate</param>
-    /// <returns>A list of tool IDs that are missing (not found in the registry)</returns>
+    /// <inheritdoc/>
+    public Task<IEnumerable<string>> GetToolCategoriesAsync()
+    {
+        var snapshot = Volatile.Read(ref _snapshot);
+        var categories = snapshot.CategoryCatalog.GetCategoryKeys();
+        return Task.FromResult<IEnumerable<string>>(categories);
+    }
+
+    /// <inheritdoc/>
+    public Task<IEnumerable<string>> GetToolsByCategoryAsync(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            return Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        }
+
+        var snapshot = Volatile.Read(ref _snapshot);
+
+        if (!snapshot.CategoryCatalog.TryGetToolNames(category, out var toolNames))
+        {
+            _logger?.LogWarning("Tool category {Category} not found", category);
+            return Task.FromResult<IEnumerable<string>>(Array.Empty<string>());
+        }
+
+        var enabled = toolNames
+            .Where(name => snapshot.EnabledToolNames.Contains(name))
+            .ToList();
+
+        return Task.FromResult<IEnumerable<string>>(enabled);
+    }
+
+    /// <inheritdoc/>
     public IReadOnlyList<string> ValidateToolIds(IEnumerable<string> toolIds)
     {
-        var availableToolNames = _toolsByName.Keys.ToHashSet();
-        var missingToolIds = toolIds.Where(id => !availableToolNames.Contains(id)).ToList();
+        if (toolIds == null)
+        {
+            throw new ArgumentNullException(nameof(toolIds));
+        }
 
-        if (missingToolIds.Count > 0)
+        var snapshot = Volatile.Read(ref _snapshot);
+        var missing = toolIds.Where(id => !snapshot.Descriptors.ContainsKey(id)).ToList();
+
+        if (missing.Count > 0)
         {
             _logger?.LogWarning(
                 "The following tool IDs were not found: {MissingTools}",
-                string.Join(", ", missingToolIds)
+                string.Join(", ", missing)
             );
         }
 
-        return missingToolIds;
+        return missing;
+    }
+
+    /// <summary>
+    /// Returns the ordered categories associated with a specific tool.
+    /// </summary>
+    public IReadOnlyList<string> GetCategoriesForTool(string toolName)
+    {
+        if (string.IsNullOrWhiteSpace(toolName))
+        {
+            return Array.Empty<string>();
+        }
+
+        var snapshot = Volatile.Read(ref _snapshot);
+        return snapshot.CategoryCatalog.GetCategoriesForTool(toolName);
+    }
+
+    /// <summary>
+    /// Returns ordered category descriptors including display names and membership.
+    /// </summary>
+    public IReadOnlyList<ToolCategoryDescriptor> GetCategoryDescriptors()
+    {
+        var snapshot = Volatile.Read(ref _snapshot);
+        return snapshot.CategoryCatalog.GetDescriptors();
+    }
+
+    private void LogEnabledCount(ToolRegistrySnapshot snapshot)
+    {
+        if (_logger is { } logger)
+        {
+            LogEnabledSummary(
+                logger,
+                snapshot.EnabledToolNames.Count,
+                snapshot.AllTools.Length,
+                null
+            );
+        }
+    }
+
+    private sealed record ToolDescriptor(Tool Tool, string Prefix, ImmutableArray<string> Categories);
+
+    private sealed record ToolRegistrySnapshot(
+        ImmutableDictionary<string, ToolDescriptor> Descriptors,
+        ImmutableDictionary<string, ImmutableArray<Tool>> ToolsByPrefix,
+        ImmutableDictionary<string, ImmutableArray<Tool>> EnabledToolsByPrefix,
+        ToolCategoryCatalog CategoryCatalog,
+        ImmutableArray<Tool> AllTools,
+        ImmutableHashSet<string> EnabledToolNames,
+        ImmutableArray<Tool> EnabledTools
+    )
+    {
+        public static ToolRegistrySnapshot Empty { get; } =
+            new(
+                ImmutableDictionary.Create<string, ToolDescriptor>(StringComparer.OrdinalIgnoreCase),
+                ImmutableDictionary.Create<string, ImmutableArray<Tool>>(StringComparer.OrdinalIgnoreCase),
+                ImmutableDictionary.Create<string, ImmutableArray<Tool>>(StringComparer.OrdinalIgnoreCase),
+                ToolCategoryCatalog.Build(
+                    Enumerable.Empty<(Tool Tool, IReadOnlyList<ToolCategoryMetadata> Categories)>()
+                ),
+                ImmutableArray<Tool>.Empty,
+                ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase),
+                ImmutableArray<Tool>.Empty
+            );
+
+        public static ToolRegistrySnapshot Create(
+            IReadOnlyList<Tool> tools,
+            ImmutableHashSet<string> previouslyEnabled
+        )
+        {
+            var descriptors = ImmutableDictionary.CreateBuilder<string, ToolDescriptor>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            var allToolsByPrefix = new Dictionary<string, List<Tool>>(StringComparer.OrdinalIgnoreCase);
+            var categorySource = new List<(Tool Tool, IReadOnlyList<ToolCategoryMetadata> Categories)>(tools.Count);
+
+            foreach (var tool in tools)
+            {
+                var prefix = ToolNameClassifier.GetPrefix(tool.Name);
+                var categories = ToolCategoryMetadataParser.Parse(tool);
+                descriptors[tool.Name] = new ToolDescriptor(
+                    tool,
+                    prefix,
+                    categories.Select(c => c.Key).ToImmutableArray()
+                );
+
+                if (!allToolsByPrefix.TryGetValue(prefix, out var list))
+                {
+                    list = new List<Tool>();
+                    allToolsByPrefix[prefix] = list;
+                }
+                list.Add(tool);
+
+                categorySource.Add((tool, categories));
+            }
+
+            var toolsByPrefixBuilder =
+                ImmutableDictionary.CreateBuilder<string, ImmutableArray<Tool>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (prefix, list) in allToolsByPrefix)
+            {
+                toolsByPrefixBuilder[prefix] = list
+                    .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToImmutableArray();
+            }
+
+            var categoryCatalog = ToolCategoryCatalog.Build(categorySource);
+            var baseSnapshot = new ToolRegistrySnapshot(
+                descriptors.ToImmutable(),
+                toolsByPrefixBuilder.ToImmutable(),
+                ImmutableDictionary.Create<string, ImmutableArray<Tool>>(StringComparer.OrdinalIgnoreCase),
+                categoryCatalog,
+                tools.ToImmutableArray(),
+                ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase),
+                ImmutableArray<Tool>.Empty
+            );
+
+            var enabledNames = DetermineEnabledToolNames(baseSnapshot.Descriptors, previouslyEnabled);
+            return baseSnapshot.WithEnabledToolNames(enabledNames);
+        }
+
+        public ToolRegistrySnapshot WithEnabledToolNames(IEnumerable<string> enabledToolNames)
+        {
+            var enabledSet = ImmutableHashSet.CreateBuilder<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in enabledToolNames)
+            {
+                if (Descriptors.ContainsKey(name))
+                {
+                    enabledSet.Add(name);
+                }
+            }
+
+            if (enabledSet.Count == 0 && Descriptors.Count > 0)
+            {
+                enabledSet.UnionWith(Descriptors.Keys);
+            }
+
+            return WithEnabledToolNames(enabledSet.ToImmutable());
+        }
+
+        public ToolRegistrySnapshot WithEnabledToolNames(ImmutableHashSet<string> enabledNames)
+        {
+            var enabledTools = AllTools
+                .Where(tool => enabledNames.Contains(tool.Name))
+                .ToImmutableArray();
+
+            var enabledByPrefixBuilder =
+                ImmutableDictionary.CreateBuilder<string, ImmutableArray<Tool>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (prefix, tools) in ToolsByPrefix)
+            {
+                var enabledForPrefix = tools
+                    .Where(tool => enabledNames.Contains(tool.Name))
+                    .ToImmutableArray();
+
+                if (enabledForPrefix.Length > 0)
+                {
+                    enabledByPrefixBuilder[prefix] = enabledForPrefix;
+                }
+            }
+
+            return new ToolRegistrySnapshot(
+                Descriptors,
+                ToolsByPrefix,
+                enabledByPrefixBuilder.ToImmutable(),
+                CategoryCatalog,
+                AllTools,
+                enabledNames,
+                enabledTools
+            );
+        }
+
+        private static ImmutableHashSet<string> DetermineEnabledToolNames(
+            ImmutableDictionary<string, ToolDescriptor> descriptors,
+            ImmutableHashSet<string> previouslyEnabled
+        )
+        {
+            if (descriptors.Count == 0)
+            {
+                return ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (previouslyEnabled == null || previouslyEnabled.Count == 0)
+            {
+                return descriptors.Keys.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var builder = ImmutableHashSet.CreateBuilder<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in previouslyEnabled)
+            {
+                if (descriptors.ContainsKey(name))
+                {
+                    builder.Add(name);
+                }
+            }
+
+            if (builder.Count == 0)
+            {
+                builder.UnionWith(descriptors.Keys);
+            }
+
+            return builder.ToImmutable();
+        }
     }
 }

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.Attributes;
@@ -144,6 +146,7 @@ internal sealed class ToolDiscoveryService
 
             ValidateMethodSignature(declaringType, method);
             var inputSchema = GenerateInputSchema(method);
+            var annotations = BuildAnnotations(toolAttribute);
 
             _logger.LogInformation(
                 "Discovered tool '{ToolName}' from method {TypeName}.{MethodName}",
@@ -157,7 +160,8 @@ internal sealed class ToolDiscoveryService
                 toolAttribute.Description ?? string.Empty,
                 declaringType,
                 method,
-                inputSchema
+                inputSchema,
+                annotations
             );
         }
         catch (Exception ex)
@@ -169,6 +173,161 @@ internal sealed class ToolDiscoveryService
                 method.Name
             );
             return null;
+        }
+    }
+
+    private static IDictionary<string, object?>? BuildAnnotations(
+        McpToolAttribute toolAttribute
+    )
+    {
+        if (toolAttribute == null)
+        {
+            return null;
+        }
+
+        var entries = new List<object?>();
+
+        if (!string.IsNullOrWhiteSpace(toolAttribute.Category))
+        {
+            var primaryOrder = double.IsNaN(toolAttribute.CategoryOrder)
+                ? (double?)null
+                : toolAttribute.CategoryOrder;
+            entries.Add(
+                BuildCategoryEntry(
+                    toolAttribute.Category,
+                    toolAttribute.CategoryDisplayName,
+                    primaryOrder
+                )
+            );
+        }
+
+        if (toolAttribute.Categories is { Length: > 0 })
+        {
+            foreach (var category in toolAttribute.Categories)
+            {
+                if (string.IsNullOrWhiteSpace(category))
+                {
+                    continue;
+                }
+
+                entries.Add(category.Trim());
+            }
+        }
+
+        var distinctEntries = entries
+            .Where(entry => entry is not null)
+            .Distinct(new CategoryEntryEqualityComparer())
+            .ToList();
+
+        if (distinctEntries.Count == 0)
+        {
+            return null;
+        }
+
+        var annotations = new Dictionary<string, object?>(
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        if (distinctEntries.Count == 1)
+        {
+            annotations["category"] = distinctEntries[0];
+        }
+        else
+        {
+            annotations["categories"] = distinctEntries;
+        }
+
+        return annotations;
+    }
+
+    private static object BuildCategoryEntry(
+        string categoryId,
+        string? displayName,
+        double? order
+    )
+    {
+        if (string.IsNullOrWhiteSpace(displayName) && !order.HasValue)
+        {
+            return categoryId.Trim();
+        }
+
+        var result = new Dictionary<string, object?>(
+            StringComparer.OrdinalIgnoreCase
+        )
+        {
+            ["id"] = categoryId.Trim(),
+            ["name"] = categoryId.Trim(),
+        };
+
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            result["displayName"] = displayName!.Trim();
+        }
+
+        if (order.HasValue)
+        {
+            result["order"] = order.Value;
+        }
+
+        return result;
+    }
+
+    private sealed class CategoryEntryEqualityComparer : IEqualityComparer<object?>
+    {
+        public new bool Equals(object? x, object? y)
+        {
+            if (ReferenceEquals(x, y))
+            {
+                return true;
+            }
+
+            if (x is null || y is null)
+            {
+                return false;
+            }
+
+            if (x is string xs && y is string ys)
+            {
+                return string.Equals(xs, ys, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (x is IDictionary<string, object?> xDict && y is IDictionary<string, object?> yDict)
+            {
+                if (
+                    xDict.TryGetValue("id", out var xId)
+                    && yDict.TryGetValue("id", out var yId)
+                    && xId is string xIdStr
+                    && yId is string yIdStr
+                )
+                {
+                    return string.Equals(xIdStr, yIdStr, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            return x.Equals(y);
+        }
+
+        public int GetHashCode(object? obj)
+        {
+            if (obj is null)
+            {
+                return 0;
+            }
+
+            if (obj is string str)
+            {
+                return StringComparer.OrdinalIgnoreCase.GetHashCode(str);
+            }
+
+            if (obj is IDictionary<string, object?> dict && dict.TryGetValue("id", out var id))
+            {
+                if (id is string idStr)
+                {
+                    return StringComparer.OrdinalIgnoreCase.GetHashCode(idStr);
+                }
+            }
+
+            return obj.GetHashCode();
         }
     }
 
