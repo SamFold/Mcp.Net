@@ -95,10 +95,28 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         cancellationToken.ThrowIfCancellationRequested();
 
         var requestId = Guid.NewGuid().ToString();
+        string messagePreview = context.Message.Length > 80
+            ? context.Message[..80] + "…"
+            : context.Message;
+        int schemaPropertyCount = context.RequestedSchema.Properties.Count;
+
+        _logger.LogInformation(
+            "Elicitation request {RequestId} started for session {SessionId}. Message: {MessagePreview} (Schema properties: {PropertyCount})",
+            requestId,
+            _sessionId,
+            messagePreview,
+            schemaPropertyCount
+        );
+
         var tcs = new TaskCompletionSource<ElicitationClientResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         if (!_pendingElicitations.TryAdd(requestId, tcs))
         {
+            _logger.LogError(
+                "Failed to track elicitation request {RequestId} for session {SessionId}; a duplicate identifier was generated.",
+                requestId,
+                _sessionId
+            );
             throw new InvalidOperationException("Unable to track elicitation request.");
         }
 
@@ -110,6 +128,11 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
                 if (_pendingElicitations.TryRemove(requestId, out var pending))
                 {
                     pending.TrySetCanceled(cancellationToken);
+                    _logger.LogWarning(
+                        "Elicitation request {RequestId} for session {SessionId} cancelled by upstream token.",
+                        requestId,
+                        _sessionId
+                    );
                     _ = NotifyElicitationCancelledAsync(requestId);
                 }
             });
@@ -124,10 +147,41 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         };
 
         await _hubContext.Clients.Group(_sessionId).SendAsync("ElicitationRequested", promptDto, cancellationToken);
+        _logger.LogDebug(
+            "Elicitation request {RequestId} broadcast to session {SessionId}. Awaiting user response.",
+            requestId,
+            _sessionId
+        );
 
         try
         {
-            return await tcs.Task.WaitAsync(cancellationToken);
+            var response = await tcs.Task.WaitAsync(cancellationToken);
+            _logger.LogInformation(
+                "Elicitation request {RequestId} for session {SessionId} completed with action {Action}.",
+                requestId,
+                _sessionId,
+                response.Action
+            );
+            return response;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Elicitation request {RequestId} for session {SessionId} timed out while waiting for user input.",
+                requestId,
+                _sessionId
+            );
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Elicitation request {RequestId} for session {SessionId} failed while awaiting user response.",
+                requestId,
+                _sessionId
+            );
+            throw;
         }
         finally
         {
@@ -356,12 +410,27 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
             case "accept":
                 var payload = response.Content ?? JsonSerializer.SerializeToElement(new Dictionary<string, object?>());
                 pending.TrySetResult(ElicitationClientResponse.Accept(payload));
+                _logger.LogInformation(
+                    "Elicitation response accept received for request {RequestId} in session {SessionId}.",
+                    response.RequestId,
+                    _sessionId
+                );
                 return Task.FromResult(true);
             case "decline":
                 pending.TrySetResult(ElicitationClientResponse.Decline());
+                _logger.LogInformation(
+                    "Elicitation response decline received for request {RequestId} in session {SessionId}.",
+                    response.RequestId,
+                    _sessionId
+                );
                 return Task.FromResult(true);
             case "cancel":
                 pending.TrySetResult(ElicitationClientResponse.Cancel());
+                _logger.LogInformation(
+                    "Elicitation response cancel received for request {RequestId} in session {SessionId}.",
+                    response.RequestId,
+                    _sessionId
+                );
                 return Task.FromResult(true);
             default:
                 _logger.LogWarning(
