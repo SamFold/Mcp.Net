@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Anthropic.SDK;
@@ -10,12 +13,16 @@ using Tool = Anthropic.SDK.Common.Tool;
 
 namespace Mcp.Net.LLM.Anthropic;
 
-public class AnthropicChatClient : IChatClient
+/// <summary>
+/// Adapter that bridges the MCP-friendly chat model to Anthropic's Claude API.
+/// Maintains message history, handles tool results, and normalises tool-use payloads.
+/// </summary>
+public sealed class AnthropicChatClient : IChatClient
 {
-    private readonly AnthropicClient _client;
     private readonly List<Message> _messages = new();
     private readonly List<SystemMessage> _systemMessages = new();
     private readonly List<Tool> _anthropicTools = new();
+    private readonly IAnthropicMessageClient _messagesClient;
     private readonly string _model;
     private readonly ILogger<AnthropicChatClient> _logger;
     private string _systemPrompt =
@@ -23,14 +30,23 @@ public class AnthropicChatClient : IChatClient
         + "and Warhammer 40k themed functions. Use these tools when appropriate.";
 
     public AnthropicChatClient(ChatClientOptions options, ILogger<AnthropicChatClient> logger)
+        : this(options, logger, new AnthropicMessageClient(options.ApiKey))
+    {
+    }
+
+    internal AnthropicChatClient(
+        ChatClientOptions options,
+        ILogger<AnthropicChatClient> logger,
+        IAnthropicMessageClient messagesClient
+    )
     {
         _logger = logger;
-        _client = new AnthropicClient(options.ApiKey);
+        _messagesClient = messagesClient ?? throw new ArgumentNullException(nameof(messagesClient));
 
         // Determine the model to use
         if (string.IsNullOrEmpty(options.Model) || !options.Model.StartsWith("claude"))
         {
-            _model = "claude-3-7-sonnet-latest"; // Default
+            _model = "claude-sonnet-4-5-20250929"; // Default
             _logger.LogWarning(
                 "Invalid or missing model name '{ModelName}', using default model: {DefaultModel}",
                 options.Model,
@@ -72,16 +88,20 @@ public class AnthropicChatClient : IChatClient
         _systemMessages.Add(new SystemMessage(_systemPrompt));
     }
 
+    /// <summary>
+    /// Registers the available MCP tools so the Anthropic API can surface them in tool-use responses.
+    /// </summary>
+    /// <param name="tools">Collection of MCP tool descriptors to expose to the model.</param>
     public void RegisterTools(IEnumerable<Mcp.Net.Core.Models.Tools.Tool> tools)
     {
         foreach (var tool in tools)
         {
-            var anthropicTool = ConvertToAnthropicTool(tool);
-            _anthropicTools.Add(anthropicTool);
+            _logger.LogDebug("Registering Anthropic tool {ToolName}", tool.Name);
+            _anthropicTools.Add(ConvertToAnthropicTool(tool));
         }
     }
 
-    private Tool ConvertToAnthropicTool(Mcp.Net.Core.Models.Tools.Tool mcpTool)
+    private static Tool ConvertToAnthropicTool(Mcp.Net.Core.Models.Tools.Tool mcpTool)
     {
         var toolName = mcpTool.Name;
         var toolDescription = mcpTool.Description;
@@ -93,9 +113,10 @@ public class AnthropicChatClient : IChatClient
     }
 
     /// <summary>
-    /// Adds a tool result to the message history without triggering an API request
+    /// Adds a tool result to the Anthropic message history without triggering an API request.
     /// </summary>
-    public void AddToolResultToHistory(ToolInvocationResult result)
+    /// <param name="result">The tool result returned from the MCP layer.</param>
+    public void AddToolResultToHistory(ToolInvocationResult? result)
     {
         if (result == null)
         {
@@ -119,13 +140,11 @@ public class AnthropicChatClient : IChatClient
     }
 
     /// <summary>
-    /// Gets a response from Claude based on the current message history
+    /// Generates a response from Claude using the accumulated message history.
     /// </summary>
-    /// <returns>List of LlmResponse objects</returns>
+    /// <returns>MCP-friendly response payloads containing either assistant text or tool calls.</returns>
     public async Task<IEnumerable<LlmResponse>> GetLlmResponse()
     {
-        var result = new List<LlmResponse>();
-
         try
         {
             var parameters = new MessageParameters
@@ -138,41 +157,16 @@ public class AnthropicChatClient : IChatClient
                 System = _systemMessages,
             };
 
-            var response = await _client.Messages.GetClaudeMessageAsync(parameters);
+            var content = await _messagesClient.GetResponseContentAsync(parameters);
+            var assistantMessage = content.ToList();
 
-            _messages.Add(new Message { Role = RoleType.Assistant, Content = response.Content });
+            _messages.Add(new Message { Role = RoleType.Assistant, Content = assistantMessage });
 
-            foreach (var content in response.Content)
-            {
-                if (content.GetType() == typeof(ToolUseContent))
-                {
-                    var toolUseContent = (ToolUseContent)content;
-                    var toolCalls = ExtractToolCalls(toolUseContent);
-                    var llmResponse = new LlmResponse
-                    {
-                        Content = "",
-                        ToolCalls = toolCalls,
-                        Type = MessageType.Tool,
-                    };
-                    result.Add(llmResponse);
-                }
-                else
-                {
-                    var textContent = (TextContent)content;
-                    var llmResponse = new LlmResponse
-                    {
-                        Content = textContent.Text,
-                        Type = MessageType.Assistant,
-                    };
-                    result.Add(llmResponse);
-                }
-            }
-
-            return result;
+            return FlattenResponseContent(assistantMessage);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error calling Claude API: {ex.Message}");
+            _logger.LogError(ex, "Error calling Claude API: {Message}", ex.Message);
             return new List<LlmResponse>
             {
                 new LlmResponse { Content = $"Error: {ex.Message}", Type = MessageType.System },
@@ -180,71 +174,85 @@ public class AnthropicChatClient : IChatClient
         }
     }
 
-    private List<ToolInvocation> ExtractToolCalls(ToolUseContent toolUseContent)
+    private IEnumerable<LlmResponse> FlattenResponseContent(IEnumerable<ContentBase> contentItems)
     {
-        var toolCalls = new List<ToolInvocation>();
-
-        if (toolUseContent.Type == ContentType.tool_use)
+        foreach (var content in contentItems)
         {
-            var toolArguments = new Dictionary<string, object?>();
-
-            // Parse the tool input
-            if (toolUseContent != null && toolUseContent.Input != null)
+            switch (content)
             {
-                // If Input is JsonNode, we need to handle it differently
-                if (toolUseContent.Input is JsonObject jsonObject)
-                {
-                    foreach (var property in jsonObject)
+                case ToolUseContent toolUse:
+                    yield return new LlmResponse
                     {
-                        string propertyName = property.Key;
-                        JsonNode? propertyValue = property.Value;
-
-                        object value;
-                        if (propertyValue == null)
-                        {
-                            value = string.Empty;
-                        }
-                        else if (propertyValue is JsonValue jsonValue)
-                        {
-                            // Handle different value types
-                            if (jsonValue.TryGetValue<double>(out var numberValue))
-                            {
-                                value = numberValue;
-                            }
-                            else if (jsonValue.TryGetValue<bool>(out var boolValue))
-                            {
-                                value = boolValue;
-                            }
-                            else
-                            {
-                                // Default to string
-                                value = jsonValue.ToString() ?? string.Empty;
-                            }
-                        }
-                        else if (propertyValue is JsonObject || propertyValue is JsonArray)
-                        {
-                            // Convert complex objects to string
-                            value = propertyValue.ToJsonString();
-                        }
-                        else
-                        {
-                            value = propertyValue.ToString() ?? string.Empty;
-                        }
-
-                        toolArguments[propertyName] = value;
-                    }
-                }
-            }
-
-            if (toolUseContent?.Id != null && toolUseContent?.Name != null)
-            {
-                toolCalls.Add(
-                    new ToolInvocation(toolUseContent.Id, toolUseContent.Name, toolArguments)
-                );
+                        Content = string.Empty,
+                        ToolCalls = ExtractToolCalls(toolUse).ToList(),
+                        Type = MessageType.Tool,
+                    };
+                    break;
+                case TextContent text:
+                    yield return new LlmResponse
+                    {
+                        Content = text.Text,
+                        Type = MessageType.Assistant,
+                    };
+                    break;
+                default:
+                    _logger.LogWarning(
+                        "Received unsupported content type {ContentType} from Anthropic response",
+                        content.GetType().Name
+                    );
+                    break;
             }
         }
+    }
 
-        return toolCalls;
+    private IEnumerable<ToolInvocation> ExtractToolCalls(ToolUseContent toolUseContent)
+    {
+        if (toolUseContent.Type != ContentType.tool_use)
+        {
+            yield break;
+        }
+
+        var arguments = ParseToolArguments(toolUseContent.Input);
+
+        if (toolUseContent.Id != null && toolUseContent.Name != null)
+        {
+            yield return new ToolInvocation(toolUseContent.Id, toolUseContent.Name, arguments);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(JsonNode? input)
+    {
+        if (input is not JsonObject jsonObject)
+        {
+            return new Dictionary<string, object?>();
+        }
+
+        var arguments = new Dictionary<string, object?>();
+        foreach (var property in jsonObject)
+        {
+            arguments[property.Key] = ConvertJsonValue(property.Value);
+        }
+
+        return arguments;
+    }
+
+    private static object? ConvertJsonValue(JsonNode? value)
+    {
+        switch (value)
+        {
+            case null:
+                return null;
+            case JsonValue jsonValue when jsonValue.TryGetValue<double>(out var number):
+                return number;
+            case JsonValue jsonValue when jsonValue.TryGetValue<bool>(out var boolean):
+                return boolean;
+            case JsonValue jsonValue:
+                return jsonValue.ToString();
+            case JsonObject or JsonArray:
+                return value.ToJsonString();
+            default:
+                return value.ToString();
+        }
     }
 
     private void AddMessageToHistory(LlmMessage message)
@@ -266,10 +274,7 @@ public class AnthropicChatClient : IChatClient
                 break;
 
             case MessageType.Tool:
-                if (message.ToolResult != null)
-                {
-                    AddToolResultToHistory(message.ToolResult);
-                }
+                AddToolResultToHistory(message.ToolResult);
                 break;
 
             case MessageType.System:
@@ -279,10 +284,8 @@ public class AnthropicChatClient : IChatClient
     }
 
     /// <summary>
-    /// Called when a user posts their message to LLM (In this case Claude)
+    /// Sends a user or tool message to Claude and returns the resulting responses.
     /// </summary>
-    /// <param name="message"></param>
-    /// <returns></returns>
     public async Task<IEnumerable<LlmResponse>> SendMessageAsync(LlmMessage message)
     {
         AddMessageToHistory(message);
@@ -290,10 +293,8 @@ public class AnthropicChatClient : IChatClient
     }
 
     /// <summary>
-    /// Adds Tool Results to the History and then Gets a new Response from the LLM
+    /// Appends tool execution results and requests the next assistant response batch.
     /// </summary>
-    /// <param name="toolResults"></param>
-    /// <returns></returns>
     public async Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
         IEnumerable<ToolInvocationResult> toolResults
     )
@@ -315,6 +316,9 @@ public class AnthropicChatClient : IChatClient
         return nextResponses;
     }
 
+    /// <summary>
+    /// Gets the currently configured system prompt.
+    /// </summary>
     public string GetSystemPrompt()
     {
         return _systemPrompt;

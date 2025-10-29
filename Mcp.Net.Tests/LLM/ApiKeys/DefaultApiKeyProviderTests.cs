@@ -1,4 +1,5 @@
 using Mcp.Net.LLM.ApiKeys;
+using Mcp.Net.LLM.Platform;
 using Mcp.Net.LLM.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -10,17 +11,19 @@ public class DefaultApiKeyProviderTests
 {
     private readonly Mock<IConfiguration> _mockConfiguration;
     private readonly Mock<ILogger<DefaultApiKeyProvider>> _mockLogger;
+    private readonly Mock<IEnvironmentVariableProvider> _mockEnvironment;
     private readonly DefaultApiKeyProvider _provider;
 
     public DefaultApiKeyProviderTests()
     {
         _mockConfiguration = new Mock<IConfiguration>();
         _mockLogger = new Mock<ILogger<DefaultApiKeyProvider>>();
-        _provider = new DefaultApiKeyProvider(_mockConfiguration.Object, _mockLogger.Object);
-
-        // Set up environment variables for testing
-        Environment.SetEnvironmentVariable("OPENAI_API_KEY", "test-openai-key-from-env");
-        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "test-anthropic-key-from-env");
+        _mockEnvironment = new Mock<IEnvironmentVariableProvider>();
+        _provider = new DefaultApiKeyProvider(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _mockEnvironment.Object
+        );
     }
 
     [Fact]
@@ -41,6 +44,9 @@ public class DefaultApiKeyProviderTests
     {
         // Arrange
         _mockConfiguration.Setup(c => c["OpenAI:ApiKey"]).Returns((string?)null);
+        _mockEnvironment
+            .Setup(e => e.GetEnvironmentVariable("OPENAI_API_KEY"))
+            .Returns("test-openai-key-from-env");
 
         // Act
         var result = await _provider.GetApiKeyAsync(LlmProvider.OpenAI);
@@ -54,7 +60,9 @@ public class DefaultApiKeyProviderTests
     {
         // Arrange
         _mockConfiguration.Setup(c => c["OpenAI:ApiKey"]).Returns((string?)null);
-        Environment.SetEnvironmentVariable("OPENAI_API_KEY", null);
+        _mockEnvironment
+            .Setup(e => e.GetEnvironmentVariable("OPENAI_API_KEY"))
+            .Returns((string?)null);
 
         // Act & Assert
         await Assert.ThrowsAsync<KeyNotFoundException>(
@@ -77,6 +85,12 @@ public class DefaultApiKeyProviderTests
     [Fact]
     public async Task GetApiKeyAsync_ForOpenAI_ReturnsOpenAIKey()
     {
+        // Arrange
+        _mockConfiguration.Setup(c => c["OpenAI:ApiKey"]).Returns((string?)null);
+        _mockEnvironment
+            .Setup(e => e.GetEnvironmentVariable("OPENAI_API_KEY"))
+            .Returns("test-openai-key-from-env");
+
         // Act
         var result = await _provider.GetApiKeyAsync(LlmProvider.OpenAI);
 
@@ -87,6 +101,12 @@ public class DefaultApiKeyProviderTests
     [Fact]
     public async Task GetApiKeyAsync_ForAnthropic_ReturnsAnthropicKey()
     {
+        // Arrange
+        _mockConfiguration.Setup(c => c["Anthropic:ApiKey"]).Returns((string?)null);
+        _mockEnvironment
+            .Setup(e => e.GetEnvironmentVariable("ANTHROPIC_API_KEY"))
+            .Returns("test-anthropic-key-from-env");
+
         // Act
         var result = await _provider.GetApiKeyAsync(LlmProvider.Anthropic);
 

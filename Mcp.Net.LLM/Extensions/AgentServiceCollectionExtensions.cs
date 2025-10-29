@@ -2,6 +2,7 @@ using Mcp.Net.LLM.Agents;
 using Mcp.Net.LLM.Agents.Stores;
 using Mcp.Net.LLM.ApiKeys;
 using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.LLM.Platform;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,7 @@ public static class AgentServiceCollectionExtensions
         services.AddSingleton<IAgentManager, AgentManager>();
 
         // Register API key providers
+        services.AddSingleton<IEnvironmentVariableProvider, EnvironmentVariableProvider>();
         services.AddSingleton<IApiKeyProvider, DefaultApiKeyProvider>();
 
         // Register tool registry

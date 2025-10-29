@@ -1,5 +1,6 @@
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Platform;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -12,6 +13,7 @@ public class DefaultApiKeyProvider : IApiKeyProvider
 {
     private readonly IConfiguration _configuration;
     private readonly ILogger<DefaultApiKeyProvider> _logger;
+    private readonly IEnvironmentVariableProvider _environment;
 
     // Configuration key prefixes for different providers
     private const string OpenAiKeyPrefix = "OpenAI:ApiKey";
@@ -28,11 +30,13 @@ public class DefaultApiKeyProvider : IApiKeyProvider
     /// <param name="logger">The logger</param>
     public DefaultApiKeyProvider(
         IConfiguration configuration,
-        ILogger<DefaultApiKeyProvider> logger
+        ILogger<DefaultApiKeyProvider> logger,
+        IEnvironmentVariableProvider environment
     )
     {
         _configuration = configuration;
         _logger = logger;
+        _environment = environment;
     }
 
     /// <inheritdoc/>
@@ -93,7 +97,7 @@ public class DefaultApiKeyProvider : IApiKeyProvider
             _ => throw new ArgumentOutOfRangeException(nameof(provider)),
         };
 
-        var key = Environment.GetEnvironmentVariable(envVar);
+        var key = _environment.GetEnvironmentVariable(envVar);
 
         if (!string.IsNullOrEmpty(key))
         {

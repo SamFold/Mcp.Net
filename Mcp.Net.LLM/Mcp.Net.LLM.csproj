@@ -6,9 +6,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Anthropic.SDK" Version="5.1.1" />
+    <PackageReference Include="Anthropic.SDK" Version="5.8.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.3" />
-    <PackageReference Include="OpenAI" Version="2.2.0-beta.4" />
+    <PackageReference Include="OpenAI" Version="2.5.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mcp.Net.Client\Mcp.Net.Client.csproj" />

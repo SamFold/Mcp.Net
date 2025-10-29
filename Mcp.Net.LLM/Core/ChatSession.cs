@@ -8,10 +8,15 @@ using Microsoft.Extensions.Logging;
 namespace Mcp.Net.LLM.Core;
 
 /// <summary>
-/// Represents an ongoing conversation session with an LLM
+/// Coordinates a conversation between an MCP server and an LLM.
+/// Responsible for raising UI events, forwarding user input to the provider,
+/// and executing tool calls returned by the LLM.
 /// </summary>
 public class ChatSession : IChatSessionEvents
 {
+    private const string ThinkingContextInitialResponse = "initial-response";
+    private const string ThinkingContextToolResponse = "tool-response";
+
     private readonly IChatClient _llmClient;
     private readonly IMcpClient _mcpClient;
     private readonly IToolRegistry _toolRegistry;
@@ -185,7 +190,7 @@ public class ChatSession : IChatSessionEvents
         UserMessageReceived?.Invoke(this, message);
 
         _logger.LogDebug("Getting initial response for user message");
-        var responseQueue = new Queue<LlmResponse>(await ProcessUserMessage(message));
+        var responseQueue = new Queue<LlmResponse>(await ProcessUserMessageAsync(message));
         _logger.LogDebug("Initial response queue has {Count} items", responseQueue.Count);
 
         while (responseQueue.Count > 0)
@@ -193,60 +198,31 @@ public class ChatSession : IChatSessionEvents
             var textResponses = new List<LlmResponse>();
             var toolResponses = new List<LlmResponse>();
 
-            // Process the current batch of responses
-            while (responseQueue.Count > 0)
-            {
-                var response = responseQueue.Dequeue();
-                if (response.Type == MessageType.Assistant)
-                {
-                    textResponses.Add(response);
-                }
-                else if (response.Type == MessageType.Tool)
-                {
-                    toolResponses.Add(response);
-                }
-            }
+            DrainResponseQueue(responseQueue, textResponses, toolResponses);
 
-            // Display any text responses
-            foreach (var textResponse in textResponses)
-            {
-                _logger.LogDebug(
-                    "Processing assistant message: {MessagePreview}...",
-                    textResponse.Content.Substring(0, Math.Min(30, textResponse.Content.Length))
-                );
-                await DisplayMessageResponse(textResponse);
-            }
+            ProcessAssistantResponses(textResponses);
 
-            // Execute any tool calls and process the results
             if (toolResponses.Count > 0)
             {
-                var toolResults = await ExecuteToolCalls(toolResponses);
-                var responses = await SendToolResult(responseQueue, toolResults);
+                var toolResults = await ExecuteToolCallsAsync(toolResponses);
+                var followUpResponses = await SubmitToolResultsAsync(toolResults);
 
-                foreach (var response in responses)
+                foreach (var response in followUpResponses)
                 {
                     responseQueue.Enqueue(response);
                 }
             }
 
-            // Update the last activity timestamp after each batch
             _lastActivityAt = DateTime.UtcNow;
         }
     }
 
-    private async Task<IEnumerable<LlmResponse>> SendToolResult(
-        Queue<LlmResponse> responseQueue,
-        List<ToolInvocationResult> toolResults
+    private async Task<IEnumerable<LlmResponse>> SubmitToolResultsAsync(
+        IReadOnlyList<ToolInvocationResult> toolResults
     )
     {
         _logger.LogDebug("Total of {Count} tool results to send", toolResults.Count);
-
-        // When processing tool results and waiting for LLM response, we show a single "Thinking..." indicator
-        _logger.LogDebug("Setting thinking state to true for LLM response generation");
-        ThinkingStateChanged?.Invoke(
-            this,
-            new ThinkingStateEventArgs(true, "thinking", _sessionId)
-        );
+        SetThinkingState(true, ThinkingContextToolResponse);
 
         try
         {
@@ -255,24 +231,15 @@ public class ChatSession : IChatSessionEvents
         }
         finally
         {
-            _logger.LogDebug("Setting thinking state to false after LLM response generation");
-            ThinkingStateChanged?.Invoke(
-                this,
-                new ThinkingStateEventArgs(false, "thinking", _sessionId)
-            );
+            SetThinkingState(false, ThinkingContextToolResponse);
         }
     }
 
-    private async Task<IEnumerable<LlmResponse>> ProcessUserMessage(string userInput)
+    private async Task<IEnumerable<LlmResponse>> ProcessUserMessageAsync(string userInput)
     {
         var userMessage = new LlmMessage { Type = MessageType.User, Content = userInput };
 
-        // When generating initial response to user message, show a "Thinking..." indicator
-        _logger.LogDebug("Setting thinking state to true for initial user message processing");
-        ThinkingStateChanged?.Invoke(
-            this,
-            new ThinkingStateEventArgs(true, "thinking", _sessionId)
-        );
+        SetThinkingState(true, ThinkingContextInitialResponse);
 
         try
         {
@@ -281,27 +248,56 @@ public class ChatSession : IChatSessionEvents
         }
         finally
         {
-            _logger.LogDebug("Setting thinking state to false after initial response generation");
-            ThinkingStateChanged?.Invoke(
-                this,
-                new ThinkingStateEventArgs(false, "thinking", _sessionId)
-            );
+            SetThinkingState(false, ThinkingContextInitialResponse);
         }
     }
 
-    /// <summary>
-    /// Given a Message response back from the LLM, notify subscribers about it
-    /// </summary>
-    private async Task DisplayMessageResponse(LlmResponse response)
+    private static void DrainResponseQueue(
+        Queue<LlmResponse> queue,
+        ICollection<LlmResponse> assistantResponses,
+        ICollection<LlmResponse> toolResponses
+    )
     {
-        AssistantMessageReceived?.Invoke(this, response.Content);
-        await Task.CompletedTask;
+        while (queue.Count > 0)
+        {
+            var response = queue.Dequeue();
+            switch (response.Type)
+            {
+                case MessageType.Assistant:
+                    assistantResponses.Add(response);
+                    break;
+                case MessageType.Tool:
+                    toolResponses.Add(response);
+                    break;
+            }
+        }
+    }
+
+    private void ProcessAssistantResponses(IEnumerable<LlmResponse> assistantResponses)
+    {
+        foreach (var response in assistantResponses)
+        {
+            var content = response.Content ?? string.Empty;
+            if (content.Length > 0)
+            {
+                var preview = content.Length > 30 ? content.Substring(0, 30) : content;
+                _logger.LogDebug("Processing assistant message: {Preview}...", preview);
+            }
+            else
+            {
+                _logger.LogDebug("Processing assistant message (empty content)");
+            }
+
+            AssistantMessageReceived?.Invoke(this, content);
+        }
     }
 
     /// <summary>
     /// Given a list of tool invocations, executes them against the MCP server and returns the results.
     /// </summary>
-    private async Task<List<ToolInvocationResult>> ExecuteToolCalls(List<LlmResponse> toolResponses)
+    private async Task<List<ToolInvocationResult>> ExecuteToolCallsAsync(
+        IEnumerable<LlmResponse> toolResponses
+    )
     {
         _logger.LogDebug("Starting ExecuteToolCalls batch");
 
@@ -425,6 +421,20 @@ public class ChatSession : IChatSessionEvents
 
             return errorResult;
         }
+    }
+
+    private void SetThinkingState(bool isThinking, string context)
+    {
+        _logger.LogDebug(
+            "Setting thinking state to {State} ({Context})",
+            isThinking,
+            context
+        );
+
+        ThinkingStateChanged?.Invoke(
+            this,
+            new ThinkingStateEventArgs(isThinking, context, _sessionId)
+        );
     }
 
     private static ToolInvocationResult CreateErrorResult(
