@@ -41,6 +41,8 @@ export LLM_MODEL=your-model-name
 dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj
 ```
 
+This launches the server with its demo OAuth 2.1 endpoints enabled. Leave it running while you start the Web UI.
+
 ### 3. Start the Web UI Server
 
 ```bash
@@ -48,6 +50,30 @@ dotnet run
 ```
 
 The server will start on http://localhost:5231 by default.
+
+> 💡 On first launch the Web UI automatically registers itself with the demo OAuth server and completes the PKCE flow. You’ll see log entries confirming the registration and token acquisition.
+
+## Configuration
+
+Authentication is controlled through the `McpServer` section in `appsettings.json` (or environment variables):
+
+```json
+"McpServer": {
+  "Url": "http://localhost:5000/",
+  "AuthMode": "Pkce",          // or "ClientCredentials" / "None"
+  "Pkce": {
+    "ClientName": "WebUI PKCE Client",
+    "UseDynamicRegistration": true
+  },
+  "ClientCredentials": {
+    "ClientId": "demo-client",
+    "ClientSecret": "demo-client-secret"
+  }
+}
+```
+
+- `AuthMode=Pkce` dynamically registers a public client and performs the authorization-code flow, matching the LLMConsole sample.
+- Switch to `ClientCredentials` if you prefer the seeded confidential client, or `None` to talk to an anonymous MCP server (e.g., when SimpleServer runs with `--no-auth`).
 
 ## API Endpoints
 

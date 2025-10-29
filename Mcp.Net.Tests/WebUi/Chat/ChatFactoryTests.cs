@@ -3,9 +3,11 @@ using System.Reflection;
 using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.Client.Elicitation;
+using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.LLM.Elicitation;
 using Mcp.Net.WebUi.Adapters.SignalR;
+using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
 using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.Hubs;
@@ -65,6 +67,10 @@ public class ChatFactoryTests
                 ["McpServer:Url"] = "http://localhost:5000/",
             })
             .Build();
+        var authConfigurator = new Mock<IMcpClientBuilderConfigurator>();
+        authConfigurator
+            .Setup(c => c.ConfigureAsync(It.IsAny<McpClientBuilder>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         return new ChatFactory(
             chatFactoryLogger,
@@ -73,7 +79,8 @@ public class ChatFactoryTests
             toolRegistry,
             llmFactory,
             defaultSettings,
-            configuration
+            configuration,
+            authConfigurator.Object
         );
     }
 

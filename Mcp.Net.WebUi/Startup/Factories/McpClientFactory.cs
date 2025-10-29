@@ -1,40 +1,33 @@
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
+using Mcp.Net.WebUi.Authentication;
 
 namespace Mcp.Net.WebUi.Startup.Factories;
 
 public static class McpClientFactory
 {
-    public static IMcpClient CreateClient(
+    public static async Task<IMcpClient> CreateClientAsync(
         IConfiguration configuration,
-        string[] args,
-        ILogger logger
+        ILogger logger,
+        IMcpClientBuilderConfigurator authConfigurator,
+        CancellationToken cancellationToken = default
     )
     {
-        var mcpServerUrl = configuration["McpServer:Url"] ?? "http://localhost:5000/";
-        var mcpServerApiKey = configuration["McpServer:ApiKey"];
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(authConfigurator);
 
-        var noAuth =
-            args.Contains("--no-auth") || configuration.GetValue<bool>("McpServer:NoAuth", false);
+        var mcpServerUrl = configuration["McpServer:Url"] ?? "http://localhost:5000/";
 
         try
         {
+            logger.LogInformation("Connecting to MCP server at {Url}", mcpServerUrl);
+
             var clientBuilder = new McpClientBuilder().UseSseTransport(mcpServerUrl);
+            await authConfigurator.ConfigureAsync(clientBuilder, cancellationToken)
+                .ConfigureAwait(false);
 
-            if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
-            {
-                logger.LogWarning(
-                    "API key authentication is no longer supported; connecting to {Url} without credentials.",
-                    mcpServerUrl
-                );
-            }
-
-            logger.LogInformation(
-                "Connecting to MCP server at {Url} without authentication",
-                mcpServerUrl
-            );
-
-            return clientBuilder.BuildAndInitializeAsync().GetAwaiter().GetResult();
+            return await clientBuilder.BuildAndInitializeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {

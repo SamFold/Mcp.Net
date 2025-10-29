@@ -15,6 +15,7 @@ using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.Hubs;
 using Mcp.Net.WebUi.LLM.Factories;
 using Microsoft.AspNetCore.SignalR;
+using Mcp.Net.WebUi.Authentication;
 
 namespace Mcp.Net.WebUi.Chat.Factories;
 
@@ -40,6 +41,7 @@ public class ChatFactory : IChatFactory
     private readonly LlmClientFactory _clientFactory;
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
+    private readonly IMcpClientBuilderConfigurator _authConfigurator;
     private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
     private readonly ConcurrentDictionary<string, IMcpClient> _sessionClients = new();
     private readonly ConcurrentDictionary<string, Action<JsonRpcNotificationMessage>> _toolNotificationHandlers = new();
@@ -53,7 +55,8 @@ public class ChatFactory : IChatFactory
         ToolRegistry toolRegistry,
         LlmClientFactory clientFactory,
         DefaultLlmSettings defaultSettings,
-        IConfiguration configuration
+        IConfiguration configuration,
+        IMcpClientBuilderConfigurator authConfigurator
     )
     {
         _logger = logger;
@@ -63,6 +66,7 @@ public class ChatFactory : IChatFactory
         _clientFactory = clientFactory;
         _defaultSettings = defaultSettings;
         _configuration = configuration;
+        _authConfigurator = authConfigurator;
     }
 
     /// <summary>
@@ -310,38 +314,46 @@ public class ChatFactory : IChatFactory
     private async Task<IMcpClient> CreateMcpClientForSessionAsync(string sessionId)
     {
         var mcpServerUrl = _configuration["McpServer:Url"] ?? "http://localhost:5000/";
-        var mcpServerApiKey = _configuration["McpServer:ApiKey"];
-
-        // Check for no-auth configuration
-        var noAuth = _configuration.GetValue<bool>("McpServer:NoAuth", false);
 
         try
         {
+            bool createdCoordinator = false;
             var coordinator = _elicitationCoordinators.GetOrAdd(
                 sessionId,
-                sid => new ElicitationCoordinator(
-                    _loggerFactory.CreateLogger<ElicitationCoordinator>()
-                )
+                sid =>
+                {
+                    createdCoordinator = true;
+                    _logger.LogDebug(
+                        "Creating new elicitation coordinator for session {SessionId}.",
+                        sid
+                    );
+                    return new ElicitationCoordinator(
+                        _loggerFactory.CreateLogger<ElicitationCoordinator>()
+                    );
+                }
+            );
+
+            if (!createdCoordinator)
+            {
+                _logger.LogDebug(
+                    "Reusing existing elicitation coordinator for session {SessionId}.",
+                    sessionId
+                );
+            }
+
+            _logger.LogDebug(
+                "Creating MCP client for session {SessionId} targeting {Url}",
+                sessionId,
+                mcpServerUrl
             );
 
             var clientBuilder = new McpClientBuilder()
                 .UseSseTransport(mcpServerUrl)
                 .WithElicitationHandler(coordinator.HandleAsync);
 
-            if (!noAuth && !string.IsNullOrEmpty(mcpServerApiKey))
-            {
-                _logger.LogWarning(
-                    "API key authentication is no longer supported; creating MCP client for session {SessionId} without credentials.",
-                    sessionId
-                );
-            }
+            await _authConfigurator.ConfigureAsync(clientBuilder).ConfigureAwait(false);
 
-            _logger.LogDebug(
-                "Creating MCP client for session {SessionId} without authentication",
-                sessionId
-            );
-
-            var mcpClient = await clientBuilder.BuildAndInitializeAsync();
+            var mcpClient = await clientBuilder.BuildAndInitializeAsync().ConfigureAwait(false);
 
             _logger.LogInformation(
                 "Created dedicated MCP client for session {SessionId}",

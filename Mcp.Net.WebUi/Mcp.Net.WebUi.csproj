@@ -4,6 +4,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mcp.Net.LLM\Mcp.Net.LLM.csproj" />
+    <ProjectReference Include="..\Mcp.Net.Examples.Shared\Mcp.Net.Examples.Shared.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

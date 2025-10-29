@@ -1,3 +1,4 @@
+using System.Net.Http;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Agents;
 using Mcp.Net.LLM.Anthropic;
@@ -6,6 +7,7 @@ using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Mcp.Net.LLM.Tools;
+using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
 using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.Chat.Repositories;
@@ -75,6 +77,15 @@ public class WebUiStartup
         ConfigureLlmServices(builder);
         ConfigureApplicationServices(builder);
         ConfigureAgentServices(builder);
+
+        builder.Services.AddSingleton<IMcpClientBuilderConfigurator>(sp =>
+            new McpAuthenticationService(
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<McpAuthenticationService>>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                args
+            )
+        );
     }
 
     private void ConfigureBasicServices(WebApplicationBuilder builder)
@@ -82,6 +93,14 @@ public class WebUiStartup
         builder.Services.AddControllers();
         builder.Services.AddSignalR();
         builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddHttpClient();
+        builder.Services.AddHttpClient("McpOAuthTokens");
+        builder.Services.AddHttpClient("McpOAuthRegistration");
+        builder.Services.AddHttpClient("McpOAuthInteraction")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false
+            });
     }
 
     private void ConfigureCors(WebApplicationBuilder builder)
@@ -167,11 +186,14 @@ public class WebUiStartup
         {
             _logger!.LogInformation("Loading tools from MCP server...");
 
+            var authConfigurator = app.Services.GetRequiredService<IMcpClientBuilderConfigurator>();
+
             // Create a temporary MCP client just for tool discovery
-            var tempMcpClient = McpClientFactory.CreateClient(
+            var tempMcpClient = await McpClientFactory.CreateClientAsync(
                 configuration,
-                Array.Empty<string>(), // No command line args for startup
-                _logger!
+                _logger!,
+                authConfigurator,
+                app.Lifetime.ApplicationStopping
             );
 
             var tools = await tempMcpClient.ListTools();
