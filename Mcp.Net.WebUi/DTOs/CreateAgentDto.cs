@@ -35,7 +35,7 @@ public class CreateAgentDto
     public string Provider { get; set; } = string.Empty;
 
     /// <summary>
-    /// The specific model name to use (e.g., "gpt-4o", "claude-3-sonnet")
+    /// The specific model name to use (e.g., "gpt-5", "claude-sonnet-4-5-20250929")
     /// </summary>
     [Required]
     public string ModelName { get; set; } = string.Empty;

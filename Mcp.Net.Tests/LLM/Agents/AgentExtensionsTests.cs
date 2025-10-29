@@ -22,7 +22,7 @@ public class AgentExtensionsTests
         {
             Name = "Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test system prompt",
             ToolIds = new List<string>(),
             Parameters = new Dictionary<string, object>(),
@@ -173,7 +173,7 @@ public class AgentExtensionsTests
         {
             Name = "Original Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test system prompt",
             ToolIds = new List<string> { "tool1", "tool2" },
             Parameters = new Dictionary<string, object>

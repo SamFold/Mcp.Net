@@ -24,7 +24,7 @@ public class AgentManagerTests
         Name = "Test Agent",
         Description = "Test agent description",
         Provider = LlmProvider.OpenAI,
-        ModelName = "gpt-4o",
+        ModelName = "gpt-5",
         SystemPrompt = "You are a helpful assistant",
         Category = AgentCategory.General,
         ToolIds = new List<string> { "tool1", "tool2" },
@@ -192,7 +192,7 @@ public class AgentManagerTests
         var agent = new AgentDefinition
         {
             // Missing name
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             Provider = LlmProvider.OpenAI,
         };
 
@@ -238,7 +238,7 @@ public class AgentManagerTests
         var agent = new AgentDefinition
         {
             Name = "New Agent",
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             Provider = LlmProvider.OpenAI,
         };
 
@@ -269,7 +269,7 @@ public class AgentManagerTests
         var agent = new AgentDefinition
         {
             Name = "Rejected Agent",
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             Provider = LlmProvider.OpenAI,
         };
 
@@ -293,7 +293,7 @@ public class AgentManagerTests
         {
             Id = _testAgent.Id,
             Name = "Updated Agent",
-            ModelName = "gpt-4o-mini",
+            ModelName = "gpt-5-mini",
             Provider = LlmProvider.OpenAI,
         };
 
@@ -317,7 +317,7 @@ public class AgentManagerTests
         {
             Id = "non-existent-id",
             Name = "Non-existent Agent",
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             Provider = LlmProvider.OpenAI,
         };
 

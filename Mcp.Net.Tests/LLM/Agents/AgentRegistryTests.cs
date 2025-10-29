@@ -36,7 +36,7 @@ public class AgentRegistryTests
         {
             Name = "Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
 
         // Act & Assert
@@ -53,7 +53,7 @@ public class AgentRegistryTests
         {
             Name = "Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
         var userId = "test-user-123";
 
@@ -84,7 +84,7 @@ public class AgentRegistryTests
             Id = "agent-123",
             Name = "Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
 
         // Act & Assert
@@ -102,7 +102,7 @@ public class AgentRegistryTests
             Id = "non-existent-agent",
             Name = "Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
         var userId = "test-user-456";
 
@@ -126,7 +126,7 @@ public class AgentRegistryTests
             Id = "agent-789",
             Name = "Original Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             CreatedBy = "original-creator",
             CreatedAt = DateTime.UtcNow.AddDays(-7), // Created a week ago
         };
@@ -142,7 +142,7 @@ public class AgentRegistryTests
             Id = "agent-789",
             Name = "Updated Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o-mini",
+            ModelName = "gpt-5-mini",
         };
 
         var modifierUserId = "test-modifier-789";
@@ -176,7 +176,7 @@ public class AgentRegistryTests
             Id = "agent-event-test",
             Name = "Event Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
 
         // Setup the agent store to have the original agent
@@ -190,7 +190,7 @@ public class AgentRegistryTests
             Id = "agent-event-test",
             Name = "Updated Event Test Agent",
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
         };
         var userId = "test-event-user";
 

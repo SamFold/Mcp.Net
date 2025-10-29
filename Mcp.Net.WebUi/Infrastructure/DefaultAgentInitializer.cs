@@ -51,26 +51,13 @@ public static class DefaultAgentInitializer
 
                 // OpenAI models
                 await defaultAgentManager.EnsureModelDefaultAgentAsync(
-                    "gpt-4o",
-                    LlmProvider.OpenAI
-                );
-                await defaultAgentManager.EnsureModelDefaultAgentAsync("gpt-4", LlmProvider.OpenAI);
-                await defaultAgentManager.EnsureModelDefaultAgentAsync(
-                    "gpt-3.5-turbo",
+                    "gpt-5",
                     LlmProvider.OpenAI
                 );
 
                 // Anthropic models
                 await defaultAgentManager.EnsureModelDefaultAgentAsync(
-                    "claude-3-opus-20240229",
-                    LlmProvider.Anthropic
-                );
-                await defaultAgentManager.EnsureModelDefaultAgentAsync(
-                    "claude-3-sonnet-20240229",
-                    LlmProvider.Anthropic
-                );
-                await defaultAgentManager.EnsureModelDefaultAgentAsync(
-                    "claude-3-haiku-20240307",
+                    "claude-sonnet-4-5-20250929",
                     LlmProvider.Anthropic
                 );
 

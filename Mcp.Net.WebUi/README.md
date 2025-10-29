@@ -31,7 +31,7 @@ export OPENAI_API_KEY=your-api-key
 # Optional - set provider (defaults to Anthropic)
 export LLM_PROVIDER=anthropic # or openai
 
-# Optional - set model (defaults to claude-3-5-sonnet-20240620 for Anthropic, gpt-4o for OpenAI)
+# Optional - set model (defaults to claude-sonnet-4-5-20250929 for Anthropic, gpt-5 for OpenAI)
 export LLM_MODEL=your-model-name
 ```
 

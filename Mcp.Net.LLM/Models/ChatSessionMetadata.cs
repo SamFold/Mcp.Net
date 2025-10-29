@@ -23,7 +23,7 @@ public class ChatSessionMetadata
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
-    /// Model used for this chat (e.g., "claude-3-5-sonnet-20240620")
+    /// Model used for this chat (e.g., "claude-sonnet-4-5-20250929")
     /// </summary>
     public string Model { get; set; } = string.Empty;
 

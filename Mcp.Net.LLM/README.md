@@ -4,7 +4,7 @@ Core library that provides abstractions and implementations for integrating Larg
 
 ## Features
 
-- Support for OpenAI (GPT-4o) and Anthropic (Claude) models
+- Support for OpenAI (GPT-5) and Anthropic (Claude Sonnet 4.5) models
 - Common interface for different LLM providers
 - Tool integration with Mcp.Net framework
 - Event-based architecture for UI integration
@@ -31,10 +31,10 @@ This library is used as a dependency by:
 The library supports the following LLM providers:
 
 - **Anthropic**: Claude models with tool use capability
-  - Default: claude-3-7-sonnet-latest
+  - Default: claude-sonnet-4-5-20250929
   
 - **OpenAI**: GPT models with function calling capability
-  - Default: gpt-4o
+  - Default: gpt-5
 
 ## Architecture
 

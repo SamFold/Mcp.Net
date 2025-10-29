@@ -24,7 +24,7 @@ namespace Mcp.Net.WebUi.Chat.Factories;
 public class DefaultLlmSettings
 {
     public LlmProvider Provider { get; set; } = LlmProvider.Anthropic;
-    public string ModelName { get; set; } = "claude-3-7-sonnet-20250219";
+    public string ModelName { get; set; } = "claude-sonnet-4-5-20250929";
     public string DefaultSystemPrompt { get; set; } = "You are a helpful assistant.";
 }
 

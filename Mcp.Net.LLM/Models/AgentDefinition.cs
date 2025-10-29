@@ -25,7 +25,7 @@ public class AgentDefinition
     public LlmProvider Provider { get; set; }
 
     /// <summary>
-    /// The specific model name to use (e.g., "gpt-4o", "claude-3-sonnet")
+    /// The specific model name to use (e.g., "gpt-5", "claude-sonnet-4-5-20250929")
     /// </summary>
     public string ModelName { get; set; } = string.Empty;
 

@@ -24,7 +24,7 @@ public class TitleGenerationService : ITitleGenerationService
             configuration["OpenAI:ApiKey"]
             ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
             ?? "";
-        _model = configuration["TitleGeneration:Model"] ?? "gpt-4o-mini";
+        _model = configuration["TitleGeneration:Model"] ?? "gpt-5";
     }
 
     /// <inheritdoc/>

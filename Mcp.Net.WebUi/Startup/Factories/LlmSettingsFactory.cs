@@ -22,7 +22,7 @@ public static class LlmSettingsFactory
         var modelName =
             configuration["LlmModel"]
             ?? Environment.GetEnvironmentVariable("LLM_MODEL")
-            ?? (provider == LlmProvider.OpenAI ? "gpt-4o" : "claude-3-7-sonnet-latest");
+            ?? (provider == LlmProvider.OpenAI ? "gpt-5" : "claude-sonnet-4-5-20250929");
 
         logger.LogInformation(
             "Default LLM settings - provider: {Provider}, model: {Model}",

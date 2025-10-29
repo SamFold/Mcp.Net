@@ -267,10 +267,10 @@ public class DefaultAgentManager : IDisposable
                 return existingAgent;
             }
 
-            // Use OpenAI GPT-4 as the default global model
+            // Use OpenAI GPT-5 as the default global model
             var agent = await _agentFactory.CreateAgentAsync(
                 LlmProvider.OpenAI,
-                "gpt-4o",
+                "gpt-5",
                 "System" // createdByUserId
             );
 
@@ -309,9 +309,9 @@ public class DefaultAgentManager : IDisposable
     {
         return provider switch
         {
-            LlmProvider.OpenAI => "gpt-4o",
-            LlmProvider.Anthropic => "claude-3-sonnet-20240229",
-            _ => "gpt-4o", // Default to GPT-4 for unknown providers
+            LlmProvider.OpenAI => "gpt-5",
+            LlmProvider.Anthropic => "claude-sonnet-4-5-20250929",
+            _ => "gpt-5", // Default to GPT-5 for unknown providers
         };
     }
 

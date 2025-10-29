@@ -89,7 +89,7 @@ public class AgentFactoryTests
     {
         // Arrange
         var provider = LlmProvider.OpenAI;
-        var modelName = "gpt-4o";
+        var modelName = "gpt-5";
         var userId = "test-user-123";
 
         // Act
@@ -131,7 +131,7 @@ public class AgentFactoryTests
     {
         // Arrange
         var provider = LlmProvider.OpenAI;
-        var modelName = "gpt-4o";
+        var modelName = "gpt-5";
         var systemPrompt = "You are a math assistant.";
         var toolIds = new[] { "calculator_add", "calculator_subtract" };
         var userId = "test-user-789";
@@ -151,7 +151,7 @@ public class AgentFactoryTests
     {
         // Arrange
         var provider = LlmProvider.OpenAI;
-        var modelName = "gpt-4o";
+        var modelName = "gpt-5";
         var systemPrompt = "You are a math assistant.";
         var toolIds = new[] { "calculator_add", "calculator_subtract" };
         var category = AgentCategory.Math;
@@ -181,7 +181,7 @@ public class AgentFactoryTests
         var agent = new AgentDefinition
         {
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test prompt",
             ToolIds = new List<string> { "calculator_add" },
             Parameters = new Dictionary<string, object> { { "temperature", 0.5f } },
@@ -261,7 +261,7 @@ public class AgentFactoryTests
     {
         // Arrange
         var provider = LlmProvider.OpenAI;
-        var modelName = "gpt-4o";
+        var modelName = "gpt-5";
         var systemPrompt = "Test prompt";
         var categories = new[] { "math", "search" };
         var userId = "test-user-202";
@@ -288,7 +288,7 @@ public class AgentFactoryTests
     {
         // Arrange
         var provider = LlmProvider.OpenAI;
-        var modelName = "gpt-4o";
+        var modelName = "gpt-5";
         var systemPrompt = "Test prompt";
         var categories = new[] { "math", "search" };
         var agentCategory = AgentCategory.Specialist;
@@ -320,7 +320,7 @@ public class AgentFactoryTests
         var agent = new AgentDefinition
         {
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test prompt",
         };
 
@@ -341,7 +341,7 @@ public class AgentFactoryTests
         var agent = new AgentDefinition
         {
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test prompt",
             ToolIds = new List<string>
             {
@@ -390,7 +390,7 @@ public class AgentFactoryTests
         var agent = new AgentDefinition
         {
             Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-4o",
+            ModelName = "gpt-5",
             SystemPrompt = "Test prompt",
         };
 

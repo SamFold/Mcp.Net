@@ -45,7 +45,7 @@ public class OneOffLlmService : IOneOffLlmService
     public async Task<string> GetCompletionAsync(
         string systemPrompt,
         string userPrompt,
-        string model = "gpt-4o-mini",
+        string model = "gpt-5",
         LlmProvider? provider = null
     )
     {
