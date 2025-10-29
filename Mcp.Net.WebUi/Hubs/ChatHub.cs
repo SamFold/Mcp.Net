@@ -109,38 +109,7 @@ public class ChatHub : Hub
             bool isFirstMessage = await _chatRepository.IsFirstMessageAsync(sessionId);
             if (isFirstMessage)
             {
-                try
-                {
-                    // Generate title from the first message
-                    var generatedTitle = await _titleGenerationService.GenerateTitleAsync(message);
-
-                    // Update the session metadata
-                    var metadata = await _chatRepository.GetChatMetadataAsync(sessionId);
-                    if (metadata != null)
-                    {
-                        metadata.Title = generatedTitle;
-                        await _chatRepository.UpdateChatMetadataAsync(metadata);
-
-                        // Notify clients of the title change
-                        if (adapter != null)
-                            await adapter.NotifyMetadataUpdated(metadata);
-
-                        _logger.LogInformation(
-                            "Generated title '{Title}' for session {SessionId}",
-                            generatedTitle,
-                            sessionId
-                        );
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "Error generating title for session {SessionId}",
-                        sessionId
-                    );
-                    // Continue with default title if generation fails
-                }
+                _ = GenerateSessionTitleAsync(sessionId, message, adapter);
             }
 
             // Process the message
@@ -450,6 +419,45 @@ public class ChatHub : Hub
     {
         _logger.LogInformation("Client {ConnectionId} disconnected", Context.ConnectionId);
         return base.OnDisconnectedAsync(exception);
+    }
+
+    private async Task GenerateSessionTitleAsync(
+        string sessionId,
+        string firstMessage,
+        ISignalRChatAdapter? adapter
+    )
+    {
+        try
+        {
+            var generatedTitle = await _titleGenerationService.GenerateTitleAsync(firstMessage);
+            var metadata = await _chatRepository.GetChatMetadataAsync(sessionId);
+            if (metadata == null)
+            {
+                return;
+            }
+
+            metadata.Title = generatedTitle;
+            await _chatRepository.UpdateChatMetadataAsync(metadata);
+
+            if (adapter != null)
+            {
+                await adapter.NotifyMetadataUpdated(metadata);
+            }
+
+            _logger.LogInformation(
+                "Generated title '{Title}' for session {SessionId}",
+                generatedTitle,
+                sessionId
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to generate chat title for session {SessionId}",
+                sessionId
+            );
+        }
     }
 
     /// <summary>
