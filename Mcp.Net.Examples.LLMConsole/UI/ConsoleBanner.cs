@@ -95,7 +95,7 @@ public static class ConsoleBanner
         DrawCenteredLine("RUNTIME CONFIGURATION", AccentColor2);
 
         // Get data for display
-        var provider = Program.DetermineProvider(Environment.GetCommandLineArgs());
+        var provider = Program.PeekProvider(Environment.GetCommandLineArgs());
         var model = Program.GetModelName(Environment.GetCommandLineArgs(), provider);
         var logLevel = Program.DetermineLogLevel(Environment.GetCommandLineArgs());
 
@@ -321,7 +321,7 @@ public static class ConsoleBanner
             "  dotnet run --project Mcp.Net.Examples.LLMConsole --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\""
         );
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider anthropic");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider openai --model gpt-4o");
+        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider openai --model gpt-5");
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --log-level=debug");
         Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --all-tools");
     }

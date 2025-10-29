@@ -5,7 +5,8 @@ A console-based example application demonstrating how to integrate Mcp.Net with 
 ## Features
 
 - Interactive console-based chat UI
-- Support for OpenAI (GPT-4o) and Anthropic (Claude) models
+- Support for OpenAI (GPT-5) and Anthropic (Claude Sonnet 4.5) models
+- Interactive provider selection when no provider is specified via CLI/env
 - Dynamic tool discovery and registration
 - Tool selection interface
 - Real-time tool execution visualization
@@ -86,9 +87,9 @@ In a new terminal window, run the LLM chat application:
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj
 ```
 
-The client will:
+When no provider is supplied via CLI or environment variables, the client will prompt you to choose (OpenAI or Anthropic) before starting the session. The client will then:
 1. Connect to the SimpleServer (SSE or stdio)
-2. Present a tool selection interface
+2. Present a tool selection interface (unless skipped)
 3. Start a chat session with your chosen LLM
 
 ### Command Line Options
@@ -98,7 +99,7 @@ The client will:
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --provider=openai
 
 # Specify a different model
-dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --model=gpt-4
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --model=gpt-5
 
 # Connect to SSE with client-credentials auth (default)
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp

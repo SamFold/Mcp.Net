@@ -152,6 +152,7 @@ public class Program
         services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
         services.AddSingleton(chatUI);
         services.AddSingleton<ToolSelectionService>();
+        services.AddSingleton<ProviderSelectionService>();
 
         // Build temporary service provider for tool selection
         var tempServiceProvider = services.BuildServiceProvider();
@@ -173,10 +174,13 @@ public class Program
             );
         }
 
+        var providerSelectionService = tempServiceProvider.GetRequiredService<ProviderSelectionService>();
+        var provider = ResolveProvider(args, providerSelectionService);
+        Console.WriteLine($"Selected LLM provider: {GetProviderDisplayName(provider)}");
+
         Console.WriteLine("Press any key to start chat session...");
         Console.ReadKey(true);
 
-        var provider = DetermineProvider(args);
         _logger.LogInformation("Using LLM provider: {Provider}", provider);
 
         string? apiKey = GetApiKey(provider);
@@ -242,47 +246,114 @@ public class Program
         await consoleAdapter.RunAsync();
     }
 
-    public static LlmProvider DetermineProvider(string[] args)
+    private static LlmProvider ResolveProvider(
+        string[] args,
+        ProviderSelectionService providerSelectionService
+    )
     {
+        if (TryResolveProviderFromArgsOrEnvironment(args, out var provider, out var source))
+        {
+            if (!string.IsNullOrEmpty(source))
+            {
+                _logger.LogDebug(
+                    "Resolved LLM provider from {Source}: {Provider}",
+                    source,
+                    provider
+                );
+            }
+
+            return provider;
+        }
+
+        return providerSelectionService.PromptForProviderSelection();
+    }
+
+    internal static bool TryResolveProviderFromArgsOrEnvironment(
+        string[] args,
+        out LlmProvider provider,
+        out string? source
+    )
+    {
+        provider = LlmProvider.Anthropic;
+        source = null;
+
         for (int i = 0; i < args.Length; i++)
         {
-            string providerName = "";
+            string providerName = string.Empty;
 
             if (args[i].StartsWith("--provider="))
             {
-                providerName = args[i].Split('=')[1].ToLower();
+                providerName = args[i].Split('=')[1].ToLowerInvariant();
             }
             else if (args[i] == "--provider" && i + 1 < args.Length)
             {
-                providerName = args[i + 1].ToLower();
+                providerName = args[i + 1].ToLowerInvariant();
             }
 
             if (!string.IsNullOrEmpty(providerName))
             {
                 if (providerName == "openai")
-                    return LlmProvider.OpenAI;
-                else if (providerName == "anthropic")
-                    return LlmProvider.Anthropic;
+                {
+                    provider = LlmProvider.OpenAI;
+                    source = "command-line";
+                    return true;
+                }
+
+                if (providerName == "anthropic")
+                {
+                    provider = LlmProvider.Anthropic;
+                    source = "command-line";
+                    return true;
+                }
 
                 Console.WriteLine(
                     $"Unrecognized provider '{providerName}'. Using default provider (Anthropic)."
                 );
-                break;
+                provider = LlmProvider.Anthropic;
+                source = "command-line (fallback)";
+                return true;
             }
         }
 
-        var providerEnv = Environment.GetEnvironmentVariable("LLM_PROVIDER")?.ToLower();
+        var providerEnv = Environment.GetEnvironmentVariable("LLM_PROVIDER")?.ToLowerInvariant();
         if (!string.IsNullOrEmpty(providerEnv))
         {
             if (providerEnv == "openai")
-                return LlmProvider.OpenAI;
-            else if (providerEnv == "anthropic")
-                return LlmProvider.Anthropic;
+            {
+                provider = LlmProvider.OpenAI;
+                source = "environment";
+                return true;
+            }
+
+            if (providerEnv == "anthropic")
+            {
+                provider = LlmProvider.Anthropic;
+                source = "environment";
+                return true;
+            }
+
+            Console.WriteLine(
+                $"Unrecognized LLM_PROVIDER '{providerEnv}'. Using default provider (Anthropic)."
+            );
+            provider = LlmProvider.Anthropic;
+            source = "environment (fallback)";
+            return true;
         }
 
-        // Default to Anthropic
-        return LlmProvider.Anthropic;
+        return false;
     }
+
+    internal static LlmProvider PeekProvider(string[] args) =>
+        TryResolveProviderFromArgsOrEnvironment(args, out var provider, out _)
+            ? provider
+            : LlmProvider.Anthropic;
+
+    private static string GetProviderDisplayName(LlmProvider provider) => provider switch
+    {
+        LlmProvider.OpenAI => "OpenAI (GPT-5)",
+        LlmProvider.Anthropic => "Anthropic (Claude Sonnet 4.5)",
+        _ => provider.ToString(),
+    };
 
     private static string? GetApiKey(LlmProvider provider)
     {
@@ -337,14 +408,15 @@ public class Program
     }
 
     /// <summary>
-    /// Defaults to Sonnet 3.5 for Anthropic of 4o for OpenAI
+    /// Defaults to Claude Sonnet 4.5 for Anthropic and GPT-5 for OpenAI
     /// </summary>
     private static string GetDefaultModel(LlmProvider provider)
     {
         return provider switch
         {
-            LlmProvider.Anthropic => "claude-3-7-sonnet-latest",
-            _ => "gpt-4o",
+            LlmProvider.OpenAI => "gpt-5",
+            LlmProvider.Anthropic => "claude-sonnet-4-5-20250929",
+            _ => "gpt-5",
         };
     }
 
