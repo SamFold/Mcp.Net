@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -63,6 +64,20 @@ class Program
             ?? (Environment.GetEnvironmentVariable("PORT") != null ? "0.0.0.0" : "localhost");
 
         builder.Services.AddHealthChecks();
+        builder.Services.AddHttpClient("OpenAIModels", client =>
+        {
+            client.BaseAddress = new Uri("https://api.openai.com/v1/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
+        builder.Services.AddHttpClient("AnthropicModels", client =>
+        {
+            client.BaseAddress = new Uri("https://api.anthropic.com/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
         var advertisedHost = hostname == "0.0.0.0" ? "localhost" : hostname;
         var baseUri = DemoOAuthDefaults.BuildBaseUri(advertisedHost, port);
         DemoOAuthConfiguration? demoOAuth = null;

@@ -134,6 +134,12 @@ The SimpleServer includes the following example tools:
 - `wh40k.battle_simulation`: Simulate a battle (asynchronous tool)
 - `wh40k.inquisitor_profile`: Demonstrates `IElicitationService` by requesting additional user input (homeworld, weapon, years of service) and honoring accept/decline/cancel responses from the client.
 
+### Model Catalog Tools
+
+- `model_catalog.list_models`: Calls the OpenAI and/or Anthropic model APIs and returns the latest model identifiers, summaries, and simple metadata. The tool accepts optional parameters for provider filtering (`openai`, `anthropic`, or both), substring matching (e.g., `"sonnet"`), maximum results per provider, and whether to include metadata.  
+  - Set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` before launching the server so the tool can authenticate with the respective provider APIs.
+  - Useful for keeping the LLM console or other clients aware of the newest model variants (for example `gpt-5`, `o3-pro`, or `claude-sonnet-4-5-20250929`).
+
 ### Seeded Resources & Prompts
 
 - Resources:
@@ -170,6 +176,8 @@ Try it with the SimpleClient example—after initialization the client will requ
 - `SERVER_NAME` or `MCP_SERVER_NAME`: Set the server name
 - `LOG_LEVEL` or `MCP_LOG_LEVEL`: Set the log level (default: Debug)
 - `MCP_DEBUG_TOOLS`: Enable tool registration debugging (default: true)
+- `OPENAI_API_KEY`: API key used by `model_catalog.list_models` when querying OpenAI (optional, but required to see OpenAI models).
+- `ANTHROPIC_API_KEY`: API key used by `model_catalog.list_models` when querying Anthropic (optional, but required to see Anthropic models).
 
 ## Creating Your Own Tools
 
