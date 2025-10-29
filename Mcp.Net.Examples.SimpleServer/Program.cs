@@ -10,6 +10,7 @@ using Mcp.Net.Server;
 using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.Options;
 using Mcp.Net.Server.ServerBuilder;
+using Mcp.Net.Examples.SimpleServer.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -78,6 +79,7 @@ class Program
                 new MediaTypeWithQualityHeaderValue("application/json")
             );
         });
+        builder.Services.AddSingleton<CSharpCodeExecutionService>();
         var advertisedHost = hostname == "0.0.0.0" ? "localhost" : hostname;
         var baseUri = DemoOAuthDefaults.BuildBaseUri(advertisedHost, port);
         DemoOAuthConfiguration? demoOAuth = null;
@@ -371,6 +373,8 @@ class Program
         {
             logging.SetMinimumLevel(logLevel);
         });
+
+        services.AddSingleton<CSharpCodeExecutionService>();
 
         // Register a logger factory
         var loggingOptions = new LoggingOptions

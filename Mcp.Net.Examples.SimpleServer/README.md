@@ -140,6 +140,10 @@ The SimpleServer includes the following example tools:
   - Set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` before launching the server so the tool can authenticate with the respective provider APIs.
   - Useful for keeping the LLM console or other clients aware of the newest model variants (for example `gpt-5`, `o3-pro`, or `claude-sonnet-4-5-20250929`).
 
+### C# Code Runner Tools
+
+- `csharp_runner.execute`: Executes short C# snippets through Roslyn scripting so agents can prototype code or act as a C# tutor. By default the tool treats the snippet as the body of a `Main` method (`mode=self-contained`), but you can supply `mode=raw` to run the script exactly as provided. The optional `timeoutMs` argument defaults to 5000ms (use `-1` for no timeout) and output longer than 32 KB is truncated with a warning. Because this runs arbitrary code inside the server process, avoid supplying untrusted snippets in multi-tenant deployments.
+
 ### Seeded Resources & Prompts
 
 - Resources:
@@ -167,6 +171,8 @@ Try it with the SimpleClient example—after initialization the client will requ
 - **Program.cs**: Main entry point that sets up and starts the server
 - **CalculatorTools.cs**: Simple calculator tools example
 - **Warhammer40kTools.cs**: Themed tools demonstrating different MCP capabilities
+- **CodeExecutionTools.cs**: Roslyn-backed MCP tool that exposes the C# snippet runner
+- **Services/CSharpCodeExecutionService.cs**: Shared service that normalizes snippets, wraps them when needed, and executes them with timeout safeguards
 - **SampleContentCatalog.cs**: Seeds demo resources and prompts for integration testing
 
 ## Environment Variables

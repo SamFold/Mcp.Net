@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Examples.SimpleServer.Services;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Extensions;
@@ -214,6 +215,7 @@ internal static class StrictStdioServer
             logging.SetMinimumLevel(LogLevel.Error); // Set very high threshold
         });
 
+        services.AddSingleton<CSharpCodeExecutionService>();
         services.AddSingleton(server);
         services.AddSingleton<IElicitationService>(sp =>
         {
