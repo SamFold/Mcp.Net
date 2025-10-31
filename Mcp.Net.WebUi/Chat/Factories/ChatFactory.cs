@@ -318,9 +318,7 @@ public class ChatFactory : IChatFactory
         try
         {
             bool createdCoordinator = false;
-            var coordinator = _elicitationCoordinators.GetOrAdd(
-                sessionId,
-                sid =>
+            var coordinator = _elicitationCoordinators.GetOrAdd(sessionId, sid =>
                 {
                     createdCoordinator = true;
                     _logger.LogDebug(

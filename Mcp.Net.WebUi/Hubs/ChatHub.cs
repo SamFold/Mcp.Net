@@ -83,10 +83,10 @@ public class ChatHub : Hub
             // Log the current system prompt to debug the issue
             if (adapter?.GetLlmClient() is var client && client != null)
             {
-                _logger.LogDebug(
-                    "Current system prompt when sending message: {SystemPrompt}",
-                    client.GetSystemPrompt()
-                );
+            _logger.LogDebug(
+                "Current system prompt when sending message: {SystemPrompt}",
+                client.GetSystemPrompt()
+            );
             }
 
             // Mark the adapter as active
@@ -337,6 +337,14 @@ public class ChatHub : Hub
                 );
                 return;
             }
+
+            _logger.LogInformation(
+                "Elicitation response {RequestId} ({Action}) received from connection {ConnectionId} for session {SessionId}",
+                response.RequestId,
+                response.Action,
+                Context.ConnectionId,
+                sessionId
+            );
 
             var handled = await adapter.TryResolveElicitationAsync(response);
             if (!handled)
