@@ -49,7 +49,7 @@ public class McpServer : IMcpServer
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _completionLock = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
-    private IServerTransport? _transport;
+    private readonly AsyncLocal<TransportScope?> _activeTransportScope = new();
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
@@ -377,8 +377,6 @@ public class McpServer : IMcpServer
         );
 
         // Capture the transport instance for inbound events.
-        _transport = transport;
-
         transport.OnRequest += request =>
         {
             HandleRequestWithTransport(transport, request);
@@ -392,6 +390,35 @@ public class McpServer : IMcpServer
         _logger.LogInformation("MCP server connecting to transport");
 
         await transport.StartAsync();
+    }
+
+    private TransportScope EnterTransportScope(IServerTransport transport)
+    {
+        var scope = new TransportScope(
+            transport,
+            _activeTransportScope.Value,
+            restored => _activeTransportScope.Value = restored
+        );
+        _activeTransportScope.Value = scope;
+        return scope;
+    }
+
+    private TransportScope GetActiveTransportContext()
+    {
+        var scope = _activeTransportScope.Value;
+        if (scope == null)
+        {
+            throw new InvalidOperationException(
+                "No active transport context is available for server-initiated requests. Ensure SendClientRequestAsync is invoked while processing a client request or create a scope via PushTransportScope."
+            );
+        }
+
+        return scope;
+    }
+
+    internal IDisposable PushTransportScope(IServerTransport transport)
+    {
+        return EnterTransportScope(transport);
     }
 
     private async void HandleRequestWithTransport(
@@ -409,6 +436,7 @@ public class McpServer : IMcpServer
             );
             try
             {
+                using var scope = EnterTransportScope(transport);
                 await ProcessRequestAsync(transport, request).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -521,11 +549,6 @@ public class McpServer : IMcpServer
             throw new ArgumentException("Method name must be provided.", nameof(method));
         }
 
-        if (_transport == null)
-        {
-            throw new InvalidOperationException("No active transport connection is available.");
-        }
-
         var requestId = Guid.NewGuid().ToString("N");
         var requestMessage = new JsonRpcRequestMessage("2.0", requestId, method, parameters);
 
@@ -540,15 +563,31 @@ public class McpServer : IMcpServer
             );
         }
 
+        TransportScope context;
+        try
+        {
+            context = GetActiveTransportContext();
+        }
+        catch (Exception ex)
+        {
+            if (_pendingClientRequests.TryRemove(requestId, out var pending))
+            {
+                pending.TrySetException(ex);
+            }
+
+            throw;
+        }
+
         _logger.LogDebug(
-            "Sending client request {RequestId} for method {Method}",
+            "Sending client request {RequestId} for method {Method} via transport {SessionId}",
             requestId,
-            method
+            method,
+            context.SessionId
         );
 
         try
         {
-            await _transport.SendRequestAsync(requestMessage).ConfigureAwait(false);
+            await context.Transport.SendRequestAsync(requestMessage).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

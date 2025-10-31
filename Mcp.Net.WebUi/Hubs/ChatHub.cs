@@ -342,7 +342,7 @@ public class ChatHub : Hub
                 "Elicitation response {RequestId} ({Action}) received from connection {ConnectionId} for session {SessionId}",
                 response.RequestId,
                 response.Action,
-                Context.ConnectionId,
+                Context?.ConnectionId ?? "(unknown)",
                 sessionId
             );
 

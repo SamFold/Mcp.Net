@@ -1,3 +1,4 @@
+using System;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
@@ -10,6 +11,7 @@ namespace Mcp.Net.Tests.TestUtils;
 public class MockTransport : IServerTransport
 {
     private readonly List<JsonRpcResponseMessage> _sentMessages = new();
+    private readonly string _id;
 
     public event Action<JsonRpcRequestMessage>? OnRequest;
     public event Action<JsonRpcNotificationMessage>? OnNotification;
@@ -22,6 +24,11 @@ public class MockTransport : IServerTransport
     public List<JsonRpcNotificationMessage> SentNotifications { get; } = new();
     public bool IsStarted { get; private set; }
     public bool IsClosed { get; private set; }
+
+    public MockTransport(string? id = null)
+    {
+        _id = id ?? Guid.NewGuid().ToString("N");
+    }
 
     public Task StartAsync()
     {
@@ -91,8 +98,5 @@ public class MockTransport : IServerTransport
         GC.SuppressFinalize(this);
     }
 
-    public string Id()
-    {
-        throw new NotImplementedException();
-    }
+    public string Id() => _id;
 }
