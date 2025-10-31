@@ -61,6 +61,8 @@ public class SseTransportHost
         _authHandler = authHandler;
         _allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        _server.UseConnectionManager(_connectionManager);
+
         if (allowedOrigins != null)
         {
             foreach (var origin in allowedOrigins)

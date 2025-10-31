@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.JsonRpc;
@@ -16,15 +14,12 @@ using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Logging;
 using Mcp.Net.Server.Completions;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using System.Threading;
-using System.Threading.Tasks;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
 public class McpServer : IMcpServer
 {
     public const string LatestProtocolVersion = "2025-06-18";
+    private const string SingleSessionKey = "_single_session";
 
     private static readonly IReadOnlyList<string> s_supportedProtocolVersions = new[]
     {
@@ -49,8 +44,34 @@ public class McpServer : IMcpServer
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _completionLock = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
-    private readonly AsyncLocal<TransportScope?> _activeTransportScope = new();
+    private readonly ConcurrentDictionary<string, IServerTransport> _knownTransports = new();
+    private readonly AsyncLocal<string?> _activeSessionId = new();
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
+    private IConnectionManager? _connectionManager;
+    private sealed class SessionContext : IDisposable
+    {
+        private readonly McpServer _server;
+        private readonly string? _previous;
+        private bool _disposed;
+
+        public SessionContext(McpServer server, string sessionId)
+        {
+            _server = server;
+            _previous = server._activeSessionId.Value;
+            server._activeSessionId.Value = sessionId;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _server._activeSessionId.Value = _previous;
+            _disposed = true;
+        }
+    }
 
     private readonly ServerInfo _serverInfo;
     private readonly ServerCapabilities _capabilities;
@@ -387,38 +408,47 @@ public class McpServer : IMcpServer
         transport.OnError += HandleTransportError;
         transport.OnClose += HandleTransportClose;
 
+        var transportId = GetSessionKey(transport);
+        if (!string.IsNullOrWhiteSpace(transportId))
+        {
+            _knownTransports[transportId] = transport;
+            transport.OnClose += () =>
+            {
+                _knownTransports.TryRemove(transportId, out _);
+            };
+        }
+
         _logger.LogInformation("MCP server connecting to transport");
 
         await transport.StartAsync();
     }
 
-    private TransportScope EnterTransportScope(IServerTransport transport)
-    {
-        var scope = new TransportScope(
-            transport,
-            _activeTransportScope.Value,
-            restored => _activeTransportScope.Value = restored
-        );
-        _activeTransportScope.Value = scope;
-        return scope;
-    }
+    private SessionContext EnterSessionScope(string sessionId) => new(this, sessionId);
 
-    private TransportScope GetActiveTransportContext()
+    private string GetActiveSessionId()
     {
-        var scope = _activeTransportScope.Value;
-        if (scope == null)
+        var sessionId = _activeSessionId.Value;
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
             throw new InvalidOperationException(
-                "No active transport context is available for server-initiated requests. Ensure SendClientRequestAsync is invoked while processing a client request or create a scope via PushTransportScope."
+                "No active session context is available for server-initiated requests. Provide a session identifier explicitly or ensure the call runs within a request scope."
             );
         }
 
-        return scope;
+        return sessionId;
     }
 
-    internal IDisposable PushTransportScope(IServerTransport transport)
+    internal IDisposable PushSessionContext(string sessionId) => EnterSessionScope(sessionId);
+
+    internal void UseConnectionManager(IConnectionManager connectionManager)
     {
-        return EnterTransportScope(transport);
+        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
+    }
+
+    private static string GetSessionKey(IServerTransport transport)
+    {
+        var id = transport.Id();
+        return string.IsNullOrWhiteSpace(id) ? SingleSessionKey : id;
     }
 
     private async void HandleRequestWithTransport(
@@ -436,7 +466,7 @@ public class McpServer : IMcpServer
             );
             try
             {
-                using var scope = EnterTransportScope(transport);
+                using var scope = EnterSessionScope(GetSessionKey(transport));
                 await ProcessRequestAsync(transport, request).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -538,16 +568,58 @@ public class McpServer : IMcpServer
         }
     }
 
-    internal async Task<JsonRpcResponseMessage> SendClientRequestAsync(
+    private async Task<IServerTransport> ResolveTransportAsync(string sessionId)
+    {
+        if (_connectionManager != null)
+        {
+            var resolved = await _connectionManager
+                .GetTransportAsync(sessionId)
+                .ConfigureAwait(false);
+
+            if (resolved is IServerTransport serverTransport)
+            {
+                return serverTransport;
+            }
+        }
+
+        if (_knownTransports.TryGetValue(sessionId, out var transport))
+        {
+            return transport;
+        }
+
+        throw new InvalidOperationException(
+            $"No active transport found for session '{sessionId}'."
+        );
+    }
+
+    internal Task<JsonRpcResponseMessage> SendClientRequestAsync(
         string method,
         object? parameters,
         CancellationToken cancellationToken = default
     )
     {
+        var sessionId = GetActiveSessionId();
+        return SendClientRequestAsync(sessionId, method, parameters, cancellationToken);
+    }
+
+    internal async Task<JsonRpcResponseMessage> SendClientRequestAsync(
+        string sessionId,
+        string method,
+        object? parameters,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
+        }
+
         if (string.IsNullOrWhiteSpace(method))
         {
             throw new ArgumentException("Method name must be provided.", nameof(method));
         }
+
+        var transport = await ResolveTransportAsync(sessionId).ConfigureAwait(false);
 
         var requestId = Guid.NewGuid().ToString("N");
         var requestMessage = new JsonRpcRequestMessage("2.0", requestId, method, parameters);
@@ -563,31 +635,16 @@ public class McpServer : IMcpServer
             );
         }
 
-        TransportScope context;
-        try
-        {
-            context = GetActiveTransportContext();
-        }
-        catch (Exception ex)
-        {
-            if (_pendingClientRequests.TryRemove(requestId, out var pending))
-            {
-                pending.TrySetException(ex);
-            }
-
-            throw;
-        }
-
         _logger.LogDebug(
-            "Sending client request {RequestId} for method {Method} via transport {SessionId}",
+            "Sending client request {RequestId} for method {Method} via session {SessionId}",
             requestId,
             method,
-            context.SessionId
+            sessionId
         );
 
         try
         {
-            await context.Transport.SendRequestAsync(requestMessage).ConfigureAwait(false);
+            await transport.SendRequestAsync(requestMessage).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -619,7 +676,9 @@ public class McpServer : IMcpServer
                 }
                 else
                 {
-                    pending.TrySetCanceled(cancellationToken.IsCancellationRequested ? cancellationToken : linkedCts.Token);
+                    pending.TrySetCanceled(
+                        cancellationToken.IsCancellationRequested ? cancellationToken : linkedCts.Token
+                    );
                 }
             }
         });

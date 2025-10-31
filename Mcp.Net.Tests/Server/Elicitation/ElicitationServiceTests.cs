@@ -47,7 +47,7 @@ public class ElicitationServiceTests
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushTransportScope(transport);
+        using var scope = server.PushSessionContext(transport.Id());
 
         var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
         var prompt = CreatePrompt();
@@ -80,7 +80,7 @@ public class ElicitationServiceTests
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushTransportScope(transport);
+        using var scope = server.PushSessionContext(transport.Id());
 
         var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
         var prompt = CreatePrompt();
@@ -103,7 +103,7 @@ public class ElicitationServiceTests
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushTransportScope(transport);
+        using var scope = server.PushSessionContext(transport.Id());
 
         var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
         var prompt = CreatePrompt();
@@ -134,7 +134,7 @@ public class ElicitationServiceTests
         server.ClientRequestTimeout = TimeSpan.FromMilliseconds(50);
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushTransportScope(transport);
+        using var scope = server.PushSessionContext(transport.Id());
 
         var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
         var prompt = CreatePrompt();
