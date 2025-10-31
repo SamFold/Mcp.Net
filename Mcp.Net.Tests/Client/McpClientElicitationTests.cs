@@ -275,5 +275,10 @@ public class McpClientElicitationTests
         {
             OnClose?.Invoke();
         }
+
+        public string Id()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

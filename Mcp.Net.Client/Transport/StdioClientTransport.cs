@@ -31,8 +31,9 @@ public class StdioClientTransport : ClientMessageTransportBase
     /// Initializes a new instance of the <see cref="StdioClientTransport"/> class using default stdin/stdout.
     /// </summary>
     /// <param name="logger">Optional logger.</param>
-    public StdioClientTransport(ILogger? logger = null)
-        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
+    /// <param name="id"></param>
+    public StdioClientTransport(string id, ILogger? logger = null)
+        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance, id)
     {
         _inputStream = Console.OpenStandardInput();
         _outputStream = Console.OpenStandardOutput();
@@ -44,8 +45,9 @@ public class StdioClientTransport : ClientMessageTransportBase
     /// <param name="input">Input stream.</param>
     /// <param name="output">Output stream.</param>
     /// <param name="logger">Optional logger.</param>
-    public StdioClientTransport(Stream input, Stream output, ILogger? logger = null)
-        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
+    /// <param name="id"></param>
+    public StdioClientTransport(Stream input, Stream output, string id, ILogger? logger = null)
+        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance, id)
     {
         _inputStream = input ?? throw new ArgumentNullException(nameof(input));
         _outputStream = output ?? throw new ArgumentNullException(nameof(output));
@@ -55,9 +57,10 @@ public class StdioClientTransport : ClientMessageTransportBase
     /// Initializes a new instance of the <see cref="StdioClientTransport"/> class with a server command.
     /// </summary>
     /// <param name="serverCommand">The command to launch the server.</param>
+    /// <param name="id"></param>
     /// <param name="logger">Optional logger.</param>
-    public StdioClientTransport(string serverCommand, ILogger? logger = null)
-        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
+    public StdioClientTransport(string serverCommand, string id, ILogger? logger = null)
+        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance, id)
     {
         Logger.LogInformation("Launching server: {ServerCommand}", serverCommand);
 

@@ -26,7 +26,7 @@ public static class SseTransportExtensions
         services.Configure(configureOptions);
 
         // Add connection manager
-        services.AddSingleton<SseConnectionManager>(sp =>
+        services.AddSingleton<SseTransportHost>(sp =>
         {
             var server = sp.GetRequiredService<McpServer>();
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
@@ -40,7 +40,7 @@ public static class SseTransportExtensions
             // Get auth handler from service provider
             var authHandler = sp.GetService<IAuthHandler>();
 
-            return new SseConnectionManager(
+            return new SseTransportHost(
                 server,
                 loggerFactory,
                 connectionTimeout,

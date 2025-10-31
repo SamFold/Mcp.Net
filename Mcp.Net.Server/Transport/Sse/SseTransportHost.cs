@@ -15,7 +15,7 @@ namespace Mcp.Net.Server.Transport.Sse;
 /// <summary>
 /// Manages SSE connections for server-client communication
 /// </summary>
-public class SseConnectionManager
+public class SseTransportHost
 {
     /// <summary>
     /// Shared serializer options that allow case-insensitive property matching.
@@ -26,7 +26,7 @@ public class SseConnectionManager
     };
 
     private readonly ConcurrentDictionary<string, SseTransport> _connections = new();
-    private readonly ILogger<SseConnectionManager> _logger;
+    private readonly ILogger<SseTransportHost> _logger;
     private readonly TimeSpan _connectionTimeout;
     private readonly ILoggerFactory _loggerFactory;
     private readonly McpServer _server;
@@ -34,7 +34,7 @@ public class SseConnectionManager
     private readonly HashSet<string> _allowedOrigins;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="SseConnectionManager"/> class.
+    /// Initializes a new instance of the <see cref="SseTransportHost"/> class.
     /// </summary>
     /// <param name="server">The MCP server instance that will execute JSON-RPC requests.</param>
     /// <param name="loggerFactory">Factory used to create scoped loggers for transports.</param>
@@ -42,7 +42,7 @@ public class SseConnectionManager
     /// <param name="authHandler">Optional authentication handler applied to HTTP requests.</param>
     /// <param name="allowedOrigins">Optional set of allowed origins that may access the HTTP endpoint.</param>
     /// <param name="canonicalOrigin">Canonical origin derived from the server's MCP endpoint.</param>
-    public SseConnectionManager(
+    public SseTransportHost(
         McpServer server,
         ILoggerFactory loggerFactory,
         TimeSpan? connectionTimeout = null,
@@ -53,7 +53,7 @@ public class SseConnectionManager
     {
         _server = server ?? throw new ArgumentNullException(nameof(server));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
-        _logger = loggerFactory.CreateLogger<SseConnectionManager>();
+        _logger = loggerFactory.CreateLogger<SseTransportHost>();
         _connectionTimeout = connectionTimeout ?? TimeSpan.FromMinutes(30);
         _authHandler = authHandler;
         _allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

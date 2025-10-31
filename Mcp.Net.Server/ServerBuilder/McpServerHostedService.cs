@@ -7,7 +7,7 @@ using Mcp.Net.Server.Transport.Sse;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseConnectionManager;
+using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseTransportHost;
 
 namespace Mcp.Net.Server.ServerBuilder;
 

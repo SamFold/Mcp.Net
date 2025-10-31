@@ -18,8 +18,9 @@ namespace Mcp.Net.Core.Transport
         /// </summary>
         /// <param name="messageParser">Parser for JSON-RPC messages</param>
         /// <param name="logger">Logger for transport operations</param>
-        protected MessageTransportBase(IMessageParser messageParser, ILogger logger)
-            : base(messageParser, logger) { }
+        /// <param name="id"></param>
+        protected MessageTransportBase(IMessageParser messageParser, ILogger logger, string id)
+            : base(messageParser, logger, id) { }
 
         /// <summary>
         /// Writes raw data to the transport.

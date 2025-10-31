@@ -17,6 +17,8 @@ namespace Mcp.Net.Core.Transport
         protected readonly JsonSerializerOptions SerializerOptions;
         protected bool IsStarted = false;
         protected bool IsClosed = false;
+        private readonly string _id;
+
 
         /// <inheritdoc />
         public event Action<Exception>? OnError;
@@ -29,11 +31,12 @@ namespace Mcp.Net.Core.Transport
         /// </summary>
         /// <param name="messageParser">Parser for JSON-RPC messages</param>
         /// <param name="logger">Logger for transport operations</param>
-        protected TransportBase(IMessageParser messageParser, ILogger logger)
+        /// <param name="id"></param>
+        protected TransportBase(IMessageParser messageParser, ILogger logger, string id)
         {
             MessageParser = messageParser ?? throw new ArgumentNullException(nameof(messageParser));
             Logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
+            _id = id;
             // Standard serializer options for JSON-RPC messages
             SerializerOptions = new JsonSerializerOptions
             {
@@ -114,6 +117,11 @@ namespace Mcp.Net.Core.Transport
 
             CancellationTokenSource.Dispose();
             GC.SuppressFinalize(this);
+        }
+
+        public string Id()
+        {
+            return _id;
         }
     }
 }

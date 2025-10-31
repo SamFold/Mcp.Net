@@ -49,7 +49,7 @@ public class SseTransport : ServerTransportBase
         ILogger<SseTransport> logger,
         IMessageParser? parser = null
     )
-        : base(parser ?? new JsonRpcMessageParser(), logger)
+        : base(parser ?? new JsonRpcMessageParser(), logger, writer.Id)
     {
         ResponseWriter = writer ?? throw new ArgumentNullException(nameof(writer));
         _uptime = Stopwatch.StartNew();

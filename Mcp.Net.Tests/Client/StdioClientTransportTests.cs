@@ -23,7 +23,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance);
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance);
         await transport.StartAsync();
 
         var requestTask = transport.SendRequestAsync("tools/list", new { });
@@ -74,7 +74,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance)
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance)
         {
             RequestTimeout = TimeSpan.FromMilliseconds(50),
         };
@@ -96,7 +96,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance)
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance)
         {
             RequestTimeout = Timeout.InfiniteTimeSpan,
         };
@@ -120,7 +120,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance);
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance);
         await transport.StartAsync();
 
         var notificationTcs = new TaskCompletionSource<JsonRpcNotificationMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -150,7 +150,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance);
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance);
         await transport.StartAsync();
 
         var errorTcs = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -177,7 +177,7 @@ public class StdioClientTransportTests
         await using var inputStream = serverToClient.Reader.AsStream();
         await using var outputStream = clientToServer.Writer.AsStream();
 
-        var transport = new StdioClientTransport(inputStream, outputStream, NullLogger.Instance);
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance);
         await transport.StartAsync();
 
         var method = typeof(StdioClientTransport)

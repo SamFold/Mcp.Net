@@ -21,6 +21,7 @@ namespace Mcp.Net.Client.Transport;
 /// </summary>
 public class SseClientTransport : ClientTransportBase
 {
+    private static int _count = 0;
     private const string DefaultEndpointPath = "/mcp";
     private readonly HttpClient _requestHttpClient;
     private readonly HttpClient _streamHttpClient;
@@ -128,7 +129,7 @@ public class SseClientTransport : ClientTransportBase
         bool ownsRequestClient,
         bool ownsStreamClient
     )
-        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance)
+        : base(new JsonRpcMessageParser(), logger ?? NullLogger.Instance, (Interlocked.Increment(ref _count) - 1).ToString())
     {
         _requestHttpClient = httpClient;
         _streamHttpClient = streamHttpClient;

@@ -11,7 +11,7 @@ namespace Mcp.Net.Server.Transport.Sse;
 public class SseConnectionMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly SseConnectionManager _connectionManager;
+    private readonly SseTransportHost _connectionManager;
     private readonly ILogger<SseConnectionMiddleware> _logger;
 
     /// <summary>
@@ -22,7 +22,7 @@ public class SseConnectionMiddleware
     /// <param name="logger">Logger for SSE connection events</param>
     public SseConnectionMiddleware(
         RequestDelegate next,
-        SseConnectionManager connectionManager,
+        SseTransportHost connectionManager,
         ILogger<SseConnectionMiddleware> logger)
     {
         _next = next;

@@ -27,7 +27,9 @@ public class StdioMcpClient : McpClient
     )
         : base(clientName, clientVersion, logger, clientTitle)
     {
-        _transport = new StdioClientTransport(logger);
+        var id = new Guid().ToString();
+
+        _transport = new StdioClientTransport(id, logger);
         InitializeTransport();
     }
 
@@ -50,7 +52,8 @@ public class StdioMcpClient : McpClient
     )
         : base(clientName, clientVersion, logger, clientTitle)
     {
-        _transport = new StdioClientTransport(inputStream, outputStream, logger);
+        var id = new Guid().ToString();
+        _transport = new StdioClientTransport(inputStream, outputStream, id, logger);
         InitializeTransport();
     }
 

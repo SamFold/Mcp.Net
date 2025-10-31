@@ -9,7 +9,7 @@ using Mcp.Net.Server.Transport.Sse;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseConnectionManager;
+using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseTransportHost;
 
 namespace Mcp.Net.Server.ServerBuilder;
 

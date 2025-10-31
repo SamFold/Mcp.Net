@@ -10,6 +10,7 @@ namespace Mcp.Net.Core.Transport;
 /// </summary>
 public abstract class ServerTransportBase : TransportBase, IServerTransport
 {
+
     /// <inheritdoc />
     public event Action<JsonRpcRequestMessage>? OnRequest;
 
@@ -24,8 +25,9 @@ public abstract class ServerTransportBase : TransportBase, IServerTransport
     /// </summary>
     /// <param name="messageParser">Parser for JSON-RPC messages</param>
     /// <param name="logger">Logger for transport operations</param>
-    protected ServerTransportBase(IMessageParser messageParser, ILogger logger)
-        : base(messageParser, logger) { }
+    /// <param name="id"></param>
+    protected ServerTransportBase(IMessageParser messageParser, ILogger logger, string id)
+        : base(messageParser, logger, id) { }
 
     /// <inheritdoc />
     public abstract Task SendAsync(JsonRpcResponseMessage message);

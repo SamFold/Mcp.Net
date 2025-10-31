@@ -48,8 +48,8 @@ public class McpServer : IMcpServer
     private readonly Dictionary<string, CompletionHandler> _completionHandlers =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _completionLock = new();
-    private IServerTransport? _transport;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
+    private IServerTransport? _transport;
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
@@ -369,11 +369,21 @@ public class McpServer : IMcpServer
 
     public async Task ConnectAsync(IServerTransport transport)
     {
-        _transport = transport;
         _negotiatedProtocolVersion = null;
 
-        // Set up event handlers
-        transport.OnRequest += HandleRequest;
+        _logger.LogInformation(
+            "Rigging up event handlers for Transport Id = {TransportId}",
+            transport.Id()
+        );
+
+        // Capture the transport instance for inbound events.
+        _transport = transport;
+
+        transport.OnRequest += request =>
+        {
+            HandleRequestWithTransport(transport, request);
+        };
+
         transport.OnNotification += HandleNotification;
         transport.OnResponse += HandleClientResponse;
         transport.OnError += HandleTransportError;
@@ -381,22 +391,25 @@ public class McpServer : IMcpServer
 
         _logger.LogInformation("MCP server connecting to transport");
 
-        // Start the transport
         await transport.StartAsync();
     }
 
-    private async void HandleRequest(JsonRpcRequestMessage request)
+    private async void HandleRequestWithTransport(
+        IServerTransport transport,
+        JsonRpcRequestMessage request
+    )
     {
         using (_logger.BeginRequestScope(request.Id, request.Method))
         {
             _logger.LogDebug(
-                "Received request: ID={RequestId}, Method={Method}",
+                "Received request: ID={RequestId}, Method={Method} on Transport={TransportId}",
                 request.Id,
-                request.Method
+                request.Method,
+                transport.Id()
             );
             try
             {
-                await ProcessRequestAsync(request).ConfigureAwait(false);
+                await ProcessRequestAsync(transport, request).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -466,7 +479,10 @@ public class McpServer : IMcpServer
         }
     }
 
-    private async Task ProcessRequestAsync(JsonRpcRequestMessage request)
+    private async Task ProcessRequestAsync(
+        IServerTransport transport,
+        JsonRpcRequestMessage request
+    )
     {
         // Use timing scope to automatically log execution time
         using (_logger.BeginRequestScope(request.Id, request.Method))
@@ -479,23 +495,18 @@ public class McpServer : IMcpServer
             _logger.LogDebug("Processing request with ID {RequestId}", request.Id);
             var response = await ProcessJsonRpcRequest(request);
 
-            // Send the response via the transport
-            if (_transport != null)
-            {
-                var hasError = response.Error != null;
-                var logLevel = hasError ? LogLevel.Warning : LogLevel.Debug;
+            var hasError = response.Error != null;
+            var logLevel = hasError ? LogLevel.Warning : LogLevel.Debug;
 
-                _logger.Log(
-                    logLevel,
-                    "Sending response: ID={RequestId}, HasResult={HasResult}, HasError={HasError}",
-                    response.Id,
-                    response.Result != null,
-                    hasError
-                );
-
-                // Pass the response directly to the transport
-                await _transport.SendAsync(response);
-            }
+            _logger.Log(
+                logLevel,
+                "Sending response: ID={RequestId}, HasResult={HasResult}, HasError={HasError}",
+                response.Id,
+                response.Result != null,
+                hasError
+            );
+            _logger.LogInformation($"Running ProcessRequest on Transport ID: {transport.Id()}");
+            await transport.SendAsync(response);
         }
     }
 

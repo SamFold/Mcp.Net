@@ -18,7 +18,7 @@ public interface ISseTransportFactory
 /// </summary>
 public class SseTransportFactory : ISseTransportFactory
 {
-    private readonly SseConnectionManager _connectionManager;
+    private readonly SseTransportHost _connectionManager;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <summary>
@@ -26,7 +26,7 @@ public class SseTransportFactory : ISseTransportFactory
     /// </summary>
     /// <param name="connectionManager">Connection manager for SSE transports</param>
     /// <param name="loggerFactory">Logger factory</param>
-    public SseTransportFactory(SseConnectionManager connectionManager, ILoggerFactory loggerFactory)
+    public SseTransportFactory(SseTransportHost connectionManager, ILoggerFactory loggerFactory)
     {
         _connectionManager = connectionManager;
         _loggerFactory = loggerFactory;

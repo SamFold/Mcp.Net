@@ -30,4 +30,6 @@ public interface ITransport : IDisposable
     /// </summary>
     /// <returns>A task representing the asynchronous close operation</returns>
     Task CloseAsync();
+
+    string Id();
 }

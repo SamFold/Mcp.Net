@@ -231,5 +231,10 @@ public class McpClientInitializationTests
         {
             OnClose?.Invoke();
         }
+
+        public string Id()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

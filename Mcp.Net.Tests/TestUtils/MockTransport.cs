@@ -90,4 +90,9 @@ public class MockTransport : IServerTransport
         _sentMessages.Clear();
         GC.SuppressFinalize(this);
     }
+
+    public string Id()
+    {
+        throw new NotImplementedException();
+    }
 }

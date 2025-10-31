@@ -10,6 +10,7 @@ public class StdioServerBuilder : IMcpServerBuilder, ITransportBuilder
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<StdioServerBuilder> _logger;
+    private static int _count = 0;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioServerBuilder"/> class.
@@ -55,6 +56,7 @@ public class StdioServerBuilder : IMcpServerBuilder, ITransportBuilder
         _logger.LogDebug("Building stdio transport");
         
         var transport = new StdioTransport(
+            (Interlocked.Increment(ref _count) - 1).ToString(),
             Console.OpenStandardInput(),
             Console.OpenStandardOutput(),
             _loggerFactory.CreateLogger<StdioTransport>()

@@ -244,5 +244,10 @@ public class McpClientCompletionTests
         {
             OnClose?.Invoke();
         }
+
+        public string Id()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

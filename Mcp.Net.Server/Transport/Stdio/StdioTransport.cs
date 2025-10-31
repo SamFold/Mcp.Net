@@ -22,8 +22,8 @@ public class StdioTransport : ServerMessageTransportBase
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioTransport"/> class
     /// </summary>
-    public StdioTransport(Stream? input = null, Stream? output = null)
-        : base(new JsonRpcMessageParser(), NullLogger<StdioTransport>.Instance)
+    public StdioTransport(string id, Stream? input = null, Stream? output = null)
+        : base(new JsonRpcMessageParser(), NullLogger<StdioTransport>.Instance, id)
     {
         var inputStream = input ?? Console.OpenStandardInput();
         var outputStream = output ?? Console.OpenStandardOutput();
@@ -35,8 +35,8 @@ public class StdioTransport : ServerMessageTransportBase
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioTransport"/> class with a logger
     /// </summary>
-    public StdioTransport(Stream input, Stream output, ILogger<StdioTransport> logger)
-        : base(new JsonRpcMessageParser(), logger)
+    public StdioTransport(string id, Stream input, Stream output, ILogger<StdioTransport> logger)
+        : base(new JsonRpcMessageParser(), logger, id)
     {
         _reader = PipeReader.Create(input);
         _writer = PipeWriter.Create(output);
@@ -46,12 +46,13 @@ public class StdioTransport : ServerMessageTransportBase
     /// Initializes a new instance of the <see cref="StdioTransport"/> class with full dependency injection
     /// </summary>
     public StdioTransport(
+        string id, 
         Stream input,
         Stream output,
         IMessageParser parser,
         ILogger<StdioTransport> logger
     )
-        : base(parser, logger)
+        : base(parser, logger, id)
     {
         _reader = PipeReader.Create(input);
         _writer = PipeWriter.Create(output);

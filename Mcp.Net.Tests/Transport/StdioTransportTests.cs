@@ -19,6 +19,7 @@ public class StdioTransportTests
         await using var outputStream = outputPipe.Writer.AsStream();
 
         var transport = new StdioTransport(
+            "",
             inputStream,
             outputStream,
             NullLogger<StdioTransport>.Instance
@@ -61,6 +62,7 @@ public class StdioTransportTests
         await using var outputStream = outputPipe.Writer.AsStream();
 
         var transport = new StdioTransport(
+            "",
             inputStream,
             outputStream,
             NullLogger<StdioTransport>.Instance
@@ -117,6 +119,7 @@ public class StdioTransportTests
         await using var outputStream = outputPipe.Writer.AsStream();
 
         var transport = new StdioTransport(
+            "",
             inputStream,
             outputStream,
             NullLogger<StdioTransport>.Instance

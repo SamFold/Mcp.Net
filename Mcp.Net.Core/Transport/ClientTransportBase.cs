@@ -31,8 +31,9 @@ public abstract class ClientTransportBase : TransportBase, IClientTransport
     /// </summary>
     /// <param name="messageParser">Parser for JSON-RPC messages</param>
     /// <param name="logger">Logger for transport operations</param>
-    protected ClientTransportBase(IMessageParser messageParser, ILogger logger)
-        : base(messageParser, logger) { }
+    /// <param name="id"></param>
+    protected ClientTransportBase(IMessageParser messageParser, ILogger logger, string id)
+        : base(messageParser, logger, id) { }
 
     /// <summary>
     /// Processes a JSON-RPC response message

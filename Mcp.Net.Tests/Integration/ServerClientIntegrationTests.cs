@@ -468,7 +468,7 @@ public class ServerClientIntegrationTests
         var elicitationContexts = new List<ElicitationRequestContext>();
 
         using var client = new TestStdioMcpClient(
-            new StdioClientTransport(stdioServer.ClientInput, stdioServer.ClientOutput, NullLogger<StdioClientTransport>.Instance),
+            new StdioClientTransport(stdioServer.ClientInput, stdioServer.ClientOutput, "", NullLogger<StdioClientTransport>.Instance),
             NullLoggerFactory.Instance.CreateLogger("StdioIntegrationClient")
         );
 

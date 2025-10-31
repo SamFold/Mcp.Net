@@ -196,7 +196,7 @@ public class SseConnectionManagerTests
     }
 
     private static (
-        SseConnectionManager Manager,
+        SseTransportHost Manager,
         SseTransport Transport,
         TestResponseWriter Writer
     ) CreateManagerWithTransport(
@@ -212,7 +212,7 @@ public class SseConnectionManagerTests
             new LoggerFactory()
         );
         var loggerFactory = LoggerFactory.Create(builder => { });
-        var connectionManager = new SseConnectionManager(
+        var connectionManager = new SseTransportHost(
             server,
             loggerFactory,
             TimeSpan.FromMinutes(30),
@@ -251,7 +251,7 @@ public class SseConnectionManagerTests
     }
 
     private static async Task SendInitializeAsync(
-        SseConnectionManager connectionManager,
+        SseTransportHost connectionManager,
         SseTransport transport,
         bool includeProtocolHeader
     )

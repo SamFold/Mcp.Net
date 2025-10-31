@@ -7,7 +7,7 @@ using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Server.Transport.Stdio;
-using SseTransportConnectionManager = Mcp.Net.Server.Transport.Sse.SseConnectionManager;
+using SseTransportConnectionManager = Mcp.Net.Server.Transport.Sse.SseTransportHost;
 using Mcp.Net.Server.Extensions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -274,6 +274,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         var clientInput = serverToClient.Reader.AsStream(leaveOpen: true);
 
         var stdioTransport = new StdioTransport(
+            "",
             serverInput,
             serverOutput,
             loggerFactory.CreateLogger<StdioTransport>()

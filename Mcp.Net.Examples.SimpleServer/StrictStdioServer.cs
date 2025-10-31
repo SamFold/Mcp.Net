@@ -280,6 +280,7 @@ internal static class StrictStdioServer
         // Create our own custom StdioTransport to ensure we use the original stdin/stdout
         LogToFile("Creating custom StdioTransport with explicit streams");
         var transport = new Mcp.Net.Server.Transport.Stdio.StdioTransport(
+            "0",
             originalStdin,  // Use the captured stdin 
             originalStdout, // Use the captured stdout
             loggerFactory.CreateLogger<Mcp.Net.Server.Transport.Stdio.StdioTransport>()
