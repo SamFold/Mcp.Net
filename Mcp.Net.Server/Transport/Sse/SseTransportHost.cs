@@ -1,12 +1,14 @@
-using System.Collections.Concurrent;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server.Authentication;
+using Mcp.Net.Server.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -25,11 +27,10 @@ public class SseTransportHost
         PropertyNameCaseInsensitive = true,
     };
 
-    private readonly ConcurrentDictionary<string, SseTransport> _connections = new();
     private readonly ILogger<SseTransportHost> _logger;
-    private readonly TimeSpan _connectionTimeout;
     private readonly ILoggerFactory _loggerFactory;
     private readonly McpServer _server;
+    private readonly IConnectionManager _connectionManager;
     private readonly IAuthHandler? _authHandler;
     private readonly HashSet<string> _allowedOrigins;
 
@@ -38,14 +39,14 @@ public class SseTransportHost
     /// </summary>
     /// <param name="server">The MCP server instance that will execute JSON-RPC requests.</param>
     /// <param name="loggerFactory">Factory used to create scoped loggers for transports.</param>
-    /// <param name="connectionTimeout">Optional idle timeout window for transports.</param>
+    /// <param name="connectionManager">Shared connection registry used for session lookups.</param>
     /// <param name="authHandler">Optional authentication handler applied to HTTP requests.</param>
     /// <param name="allowedOrigins">Optional set of allowed origins that may access the HTTP endpoint.</param>
     /// <param name="canonicalOrigin">Canonical origin derived from the server's MCP endpoint.</param>
     public SseTransportHost(
         McpServer server,
         ILoggerFactory loggerFactory,
-        TimeSpan? connectionTimeout = null,
+        IConnectionManager connectionManager,
         IAuthHandler? authHandler = null,
         IEnumerable<string>? allowedOrigins = null,
         string? canonicalOrigin = null
@@ -53,8 +54,10 @@ public class SseTransportHost
     {
         _server = server ?? throw new ArgumentNullException(nameof(server));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        _connectionManager =
+            connectionManager
+            ?? throw new ArgumentNullException(nameof(connectionManager));
         _logger = loggerFactory.CreateLogger<SseTransportHost>();
-        _connectionTimeout = connectionTimeout ?? TimeSpan.FromMinutes(30);
         _authHandler = authHandler;
         _allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -77,69 +80,16 @@ public class SseTransportHost
         }
     }
 
-    /// <summary>
-    /// Retrieves a transport by its session identifier.
-    /// </summary>
-    /// <param name="sessionId">The session identifier associated with the SSE connection.</param>
-    /// <returns>The registered transport, or <c>null</c> when no transport exists for the session.</returns>
-    public SseTransport? GetTransport(string sessionId)
+    public async Task RegisterTransportAsync(SseTransport transport)
     {
-        if (_connections.TryGetValue(sessionId, out var transport))
-        {
-            return transport;
-        }
+        await _connectionManager
+            .RegisterTransportAsync(transport.SessionId, transport)
+            .ConfigureAwait(false);
 
-        _logger.LogWarning("Transport not found for session ID: {SessionId}", sessionId);
-        return null;
-    }
-
-    /// <summary>
-    /// Returns a snapshot of the currently connected transports.
-    /// </summary>
-    public IReadOnlyCollection<SseTransport> GetAllTransports()
-    {
-        return _connections.Values.ToArray();
-    }
-
-    /// <summary>
-    /// Gets the count of active transports currently registered with the manager.
-    /// </summary>
-    public int GetConnectionCount()
-    {
-        return _connections.Count;
-    }
-
-    /// <summary>
-    /// Registers an SSE transport and wires up lifecycle callbacks so it can be tracked and removed automatically.
-    /// </summary>
-    /// <param name="transport">The transport to register.</param>
-    public void RegisterTransport(SseTransport transport)
-    {
-        _connections[transport.SessionId] = transport;
         _logger.LogInformation(
             "Registered transport with session ID: {SessionId}",
             transport.SessionId
         );
-
-        // Remove the transport when it closes
-        transport.OnClose += () =>
-        {
-            _logger.LogInformation(
-                "Transport closed, removing from connection manager: {SessionId}",
-                transport.SessionId
-            );
-            RemoveTransport(transport.SessionId);
-        };
-    }
-
-    /// <summary>
-    /// Removes a transport from the manager.
-    /// </summary>
-    /// <param name="sessionId">The session identifier of the transport to remove.</param>
-    /// <returns><c>true</c> when the transport was removed; otherwise <c>false</c>.</returns>
-    public bool RemoveTransport(string sessionId)
-    {
-        return _connections.TryRemove(sessionId, out _);
     }
 
     /// <summary>
@@ -156,34 +106,7 @@ public class SseTransportHost
     public async Task CloseAllConnectionsAsync()
     {
         _logger.LogInformation("Closing all SSE connections...");
-
-        // Create a copy of the connections to avoid enumeration issues
-        var transportsCopy = _connections.Values.ToArray();
-
-        // Close each transport
-        var closeTasks = transportsCopy
-            .Select(async transport =>
-            {
-                try
-                {
-                    await transport.CloseAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "Error closing transport: {SessionId}",
-                        transport.SessionId
-                    );
-                }
-            })
-            .ToArray();
-
-        // Wait for all connections to close with a timeout
-        await Task.WhenAll(closeTasks).WaitAsync(TimeSpan.FromSeconds(10));
-
-        // Clear the connections dictionary
-        _connections.Clear();
+        await _connectionManager.CloseAllConnectionsAsync().ConfigureAwait(false);
     }
 
     /// <summary>
@@ -246,7 +169,7 @@ public class SseTransportHost
             }
         }
 
-        RegisterTransport(transport);
+        await RegisterTransportAsync(transport).ConfigureAwait(false);
 
         var sessionId = transport.SessionId;
         logger.LogInformation("Registered SSE transport with session ID {SessionId}", sessionId);
@@ -538,10 +461,13 @@ public class SseTransportHost
         ILogger logger
     )
     {
-        var transport = GetTransport(sessionId);
-        if (transport != null)
+        var transport = await _connectionManager
+            .GetTransportAsync(sessionId)
+            .ConfigureAwait(false);
+
+        if (transport is SseTransport sseTransport)
         {
-            return transport;
+            return sseTransport;
         }
 
         logger.LogWarning("Session not found for ID {SessionId}", sessionId);

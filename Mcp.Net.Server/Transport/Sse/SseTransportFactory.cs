@@ -48,7 +48,7 @@ public class SseTransportFactory : ISseTransportFactory
         );
 
         // Register with connection manager
-        _connectionManager.RegisterTransport(transport);
+        _connectionManager.RegisterTransportAsync(transport).GetAwaiter().GetResult();
 
         return transport;
     }

@@ -9,6 +9,7 @@ using Mcp.Net.Server.Transport.Sse;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.DependencyInjection;
 using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseTransportHost;
 
 namespace Mcp.Net.Server.ServerBuilder;
@@ -315,16 +316,18 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
             provider => new InMemoryConnectionManager(_loggerFactory, TimeSpan.FromMinutes(30))
         );
 
-        builder.Services.AddSingleton<SseConnectionManagerType>(
-            provider => new SseConnectionManagerType(
+        builder.Services.AddSingleton<SseConnectionManagerType>(provider =>
+        {
+            var connectionManager = provider.GetRequiredService<IConnectionManager>();
+            return new SseConnectionManagerType(
                 server,
                 _loggerFactory,
-                TimeSpan.FromMinutes(30),
+                connectionManager,
                 _options.Authentication?.AuthHandler,
                 _options.AllowedOrigins,
                 _options.CanonicalOrigin
-            )
-        );
+            );
+        });
 
         // Register authentication if configured
         if (_options.Authentication?.AuthHandler != null)

@@ -2,11 +2,13 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Server;
+using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Transport.Sse;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -21,7 +23,7 @@ public class SseConnectionManagerTests
     public async Task HandleMessageAsync_Should_Use_Header_Session_Id()
     {
         // Arrange
-        var (connectionManager, transport, writer) = CreateManagerWithTransport();
+        var (connectionManager, transport, writer) = await CreateManagerWithTransport();
 
         // Verify session header exposed on SSE response
         writer
@@ -62,7 +64,7 @@ public class SseConnectionManagerTests
     [Fact]
     public async Task HandleMessageAsync_Should_Set_Protocol_Header_After_Initialize()
     {
-        var (connectionManager, transport, writer) = CreateManagerWithTransport();
+        var (connectionManager, transport, writer) = await CreateManagerWithTransport();
 
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
@@ -90,7 +92,7 @@ public class SseConnectionManagerTests
     [Fact]
     public async Task HandleMessageAsync_Should_Return_400_When_Protocol_Header_Missing()
     {
-        var (connectionManager, transport, _) = CreateManagerWithTransport();
+        var (connectionManager, transport, _) = await CreateManagerWithTransport();
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
         var requestContext = CreatePostContext(
@@ -114,7 +116,7 @@ public class SseConnectionManagerTests
     [Fact]
     public async Task HandleMessageAsync_Should_Return_400_When_Protocol_Header_Mismatched()
     {
-        var (connectionManager, transport, _) = CreateManagerWithTransport();
+        var (connectionManager, transport, _) = await CreateManagerWithTransport();
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
         var requestContext = CreatePostContext(
@@ -140,7 +142,7 @@ public class SseConnectionManagerTests
     [Fact]
     public async Task HandleMessageAsync_Should_Accept_Notification()
     {
-        var (connectionManager, transport, writer) = CreateManagerWithTransport();
+        var (connectionManager, transport, writer) = await CreateManagerWithTransport();
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
         var notificationContext = new DefaultHttpContext();
@@ -178,7 +180,7 @@ public class SseConnectionManagerTests
     [Fact]
     public async Task HandleMessageAsync_Should_Reject_Invalid_Origin()
     {
-        var (connectionManager, transport, _) = CreateManagerWithTransport();
+        var (connectionManager, transport, _) = await CreateManagerWithTransport();
         await SendInitializeAsync(connectionManager, transport, includeProtocolHeader: false);
 
         var request = new JsonRpcRequestMessage("2.0", "list-5", "tools/list", null);
@@ -195,11 +197,11 @@ public class SseConnectionManagerTests
         responseBody.Should().Contain("invalid_origin");
     }
 
-    private static (
+    private static async Task<(
         SseTransportHost Manager,
         SseTransport Transport,
         TestResponseWriter Writer
-    ) CreateManagerWithTransport(
+    )> CreateManagerWithTransport(
         string[]? allowedOrigins = null,
         string? canonicalOrigin = DefaultOrigin
     )
@@ -212,10 +214,14 @@ public class SseConnectionManagerTests
             new LoggerFactory()
         );
         var loggerFactory = LoggerFactory.Create(builder => { });
+        var transportRegistry = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
         var connectionManager = new SseTransportHost(
             server,
             loggerFactory,
-            TimeSpan.FromMinutes(30),
+            transportRegistry,
             authHandler: null,
             allowedOrigins,
             canonicalOrigin
@@ -224,8 +230,8 @@ public class SseConnectionManagerTests
         var writer = new TestResponseWriter();
         var transport = new SseTransport(writer, loggerFactory.CreateLogger<SseTransport>());
 
-        connectionManager.RegisterTransport(transport);
-        server.ConnectAsync(transport).GetAwaiter().GetResult();
+        await connectionManager.RegisterTransportAsync(transport);
+        await server.ConnectAsync(transport);
 
         return (connectionManager, transport, writer);
     }

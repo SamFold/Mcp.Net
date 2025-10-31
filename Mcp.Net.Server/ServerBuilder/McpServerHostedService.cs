@@ -144,8 +144,7 @@ public class McpServerHostedService : IHostedService, IDisposable
                 // Check connection count if connection manager is available
                 if (_connectionManager != null)
                 {
-                    var activeConnections = _connectionManager.GetConnectionCount();
-                    _logger.LogDebug("Active SSE connections: {ConnectionCount}", activeConnections);
+                    _logger.LogDebug("SSE transport host is active.");
                 }
                 
                 await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken);

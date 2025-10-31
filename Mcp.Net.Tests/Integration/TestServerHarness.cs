@@ -5,6 +5,8 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ServerBuilder;
+using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Server.Transport.Stdio;
 using SseTransportConnectionManager = Mcp.Net.Server.Transport.Sse.SseTransportHost;
@@ -123,11 +125,15 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
 
                     services.AddSingleton<McpServer>(server);
 
+                    services.AddSingleton<IConnectionManager>(
+                        _ => new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(5))
+                    );
+
                     services.AddSingleton<SseTransportConnectionManager>(sp =>
                         new SseTransportConnectionManager(
                             server,
                             loggerFactory,
-                            TimeSpan.FromMinutes(5),
+                            sp.GetRequiredService<IConnectionManager>(),
                             authHandler: null,
                             allowedOrigins: null,
                             canonicalOrigin: null

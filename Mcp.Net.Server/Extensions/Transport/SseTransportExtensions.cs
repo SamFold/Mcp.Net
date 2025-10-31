@@ -1,7 +1,11 @@
+using System;
+using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.Options;
 using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Transport.Sse;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Mcp.Net.Server.Extensions.Transport;
@@ -26,7 +30,7 @@ public static class SseTransportExtensions
         services.Configure(configureOptions);
 
         // Add connection manager
-        services.AddSingleton<SseTransportHost>(sp =>
+        services.AddSingleton<IConnectionManager>(sp =>
         {
             var server = sp.GetRequiredService<McpServer>();
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
@@ -37,13 +41,23 @@ public static class SseTransportExtensions
                 TimeSpan.FromMinutes(30)
             );
 
+            return new InMemoryConnectionManager(loggerFactory, connectionTimeout);
+        });
+
+        services.AddSingleton<SseTransportHost>(sp =>
+        {
+            var server = sp.GetRequiredService<McpServer>();
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var options = sp.GetRequiredService<IOptions<SseServerOptions>>().Value;
+            var connectionManager = sp.GetRequiredService<IConnectionManager>();
+
             // Get auth handler from service provider
             var authHandler = sp.GetService<IAuthHandler>();
 
             return new SseTransportHost(
                 server,
                 loggerFactory,
-                connectionTimeout,
+                connectionManager,
                 authHandler,
                 options.AllowedOrigins,
                 options.CanonicalOrigin
