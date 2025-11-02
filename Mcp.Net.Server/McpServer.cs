@@ -14,6 +14,7 @@ using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Logging;
+using Mcp.Net.Server.Services;
 using Mcp.Net.Server.Completions;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
@@ -28,18 +29,12 @@ public class McpServer : IMcpServer
     };
 
     private readonly Dictionary<string, Func<string, Task<object>>> _methodHandlers = new();
-    private readonly Dictionary<string, Tool> _tools = new();
-    private readonly Dictionary<string, Func<JsonElement?, Task<ToolCallResult>>> _toolHandlers = new();
-    private readonly Dictionary<string, ResourceRegistration> _resources = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<string> _resourceOrder = new();
-    private readonly Dictionary<string, PromptRegistration> _prompts = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<string> _promptOrder = new();
-    private readonly object _resourceLock = new();
-    private readonly object _promptLock = new();
-    private readonly Dictionary<string, CompletionHandler> _completionHandlers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _completionLock = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
     private readonly IConnectionManager _connectionManager;
+    private readonly IToolService _toolService;
+    private readonly IResourceService _resourceService;
+    private readonly IPromptService _promptService;
+    private readonly ICompletionService _completionService;
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
@@ -77,15 +72,32 @@ public class McpServer : IMcpServer
     public McpServer(
         ServerInfo serverInfo,
         IConnectionManager connectionManager,
-        ServerOptions? options = null
+        ServerOptions? options = null,
+        IToolService? toolService = null,
+        IResourceService? resourceService = null,
+        IPromptService? promptService = null,
+        ICompletionService? completionService = null
     )
-        : this(serverInfo, connectionManager, options, new LoggerFactory()) { }
+        : this(
+            serverInfo,
+            connectionManager,
+            options,
+            new LoggerFactory(),
+            toolService,
+            resourceService,
+            promptService,
+            completionService
+        ) { }
 
     public McpServer(
         ServerInfo serverInfo,
         IConnectionManager connectionManager,
         ServerOptions? options,
-        ILoggerFactory loggerFactory
+        ILoggerFactory loggerFactory,
+        IToolService? toolService = null,
+        IResourceService? resourceService = null,
+        IPromptService? promptService = null,
+        ICompletionService? completionService = null
     )
     {
         _serverInfo = serverInfo;
@@ -94,6 +106,21 @@ public class McpServer : IMcpServer
         _capabilities = options?.Capabilities ?? new ServerCapabilities();
         _logger = loggerFactory.CreateLogger<McpServer>();
         _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
+        _toolService =
+            toolService
+            ?? new ToolService(_capabilities, loggerFactory.CreateLogger<ToolService>());
+        _resourceService =
+            resourceService
+            ?? new ResourceService(loggerFactory.CreateLogger<ResourceService>());
+        _promptService =
+            promptService
+            ?? new PromptService(_capabilities, loggerFactory.CreateLogger<PromptService>());
+        _completionService =
+            completionService
+            ?? new CompletionService(
+                _capabilities,
+                loggerFactory.CreateLogger<CompletionService>()
+            );
 
         // Ensure all capabilities are initialized
         if (_capabilities.Tools == null)
@@ -150,80 +177,12 @@ public class McpServer : IMcpServer
         Resource resource,
         Func<CancellationToken, Task<ResourceContent[]>> reader,
         bool overwrite = false
-    )
-    {
-        if (resource == null)
-        {
-            throw new ArgumentNullException(nameof(resource));
-        }
+    ) => _resourceService.RegisterResource(resource, reader, overwrite);
 
-        if (reader == null)
-        {
-            throw new ArgumentNullException(nameof(reader));
-        }
+    public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false) =>
+        _resourceService.RegisterResource(resource, contents, overwrite);
 
-        if (string.IsNullOrWhiteSpace(resource.Uri))
-        {
-            throw new ArgumentException("Resource URI must be specified.", nameof(resource));
-        }
-
-        lock (_resourceLock)
-        {
-            var key = resource.Uri;
-            if (_resources.ContainsKey(key))
-            {
-                if (!overwrite)
-                {
-                    throw new InvalidOperationException(
-                        $"Resource '{resource.Uri}' is already registered."
-                    );
-                }
-            }
-            else
-            {
-                _resourceOrder.Add(key);
-            }
-
-            _resources[key] = new ResourceRegistration(CloneResource(resource), reader);
-        }
-
-        _logger.LogInformation("Registered resource: {Uri}", resource.Uri);
-    }
-
-    /// <summary>
-    /// Registers a resource with static content.
-    /// </summary>
-    public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false)
-    {
-        if (contents == null)
-        {
-            throw new ArgumentNullException(nameof(contents));
-        }
-
-        RegisterResource(resource, _ => Task.FromResult(contents), overwrite);
-    }
-
-    /// <summary>
-    /// Removes a previously registered resource.
-    /// </summary>
-    public bool UnregisterResource(string uri)
-    {
-        if (string.IsNullOrWhiteSpace(uri))
-        {
-            throw new ArgumentException("Resource URI must be specified.", nameof(uri));
-        }
-
-        lock (_resourceLock)
-        {
-            var removed = _resources.Remove(uri);
-            if (removed)
-            {
-                _resourceOrder.Remove(uri);
-            }
-
-            return removed;
-        }
-    }
+    public bool UnregisterResource(string uri) => _resourceService.UnregisterResource(uri);
 
     /// <summary>
     /// Registers a prompt that the server can advertise to clients.
@@ -235,58 +194,10 @@ public class McpServer : IMcpServer
         Prompt prompt,
         Func<CancellationToken, Task<object[]>> messageFactory,
         bool overwrite = false
-    )
-    {
-        if (prompt == null)
-        {
-            throw new ArgumentNullException(nameof(prompt));
-        }
+    ) => _promptService.RegisterPrompt(prompt, messageFactory, overwrite);
 
-        if (messageFactory == null)
-        {
-            throw new ArgumentNullException(nameof(messageFactory));
-        }
-
-        if (string.IsNullOrWhiteSpace(prompt.Name))
-        {
-            throw new ArgumentException("Prompt name must be specified.", nameof(prompt));
-        }
-
-        lock (_promptLock)
-        {
-            var key = prompt.Name;
-            if (_prompts.ContainsKey(key))
-            {
-                if (!overwrite)
-                {
-                    throw new InvalidOperationException(
-                        $"Prompt '{prompt.Name}' is already registered."
-                    );
-                }
-            }
-            else
-            {
-                _promptOrder.Add(key);
-            }
-
-            _prompts[key] = new PromptRegistration(ClonePrompt(prompt), messageFactory);
-        }
-
-        _logger.LogInformation("Registered prompt: {PromptName}", prompt.Name);
-    }
-
-    /// <summary>
-    /// Registers a prompt with static messages.
-    /// </summary>
-    public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false)
-    {
-        if (messages == null)
-        {
-            throw new ArgumentNullException(nameof(messages));
-        }
-
-        RegisterPrompt(prompt, _ => Task.FromResult(messages), overwrite);
-    }
+    public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false) =>
+        _promptService.RegisterPrompt(prompt, messages, overwrite);
 
     /// <summary>
     /// Registers a completion handler scoped to a specific prompt.
@@ -298,101 +209,18 @@ public class McpServer : IMcpServer
         string promptName,
         CompletionHandler handler,
         bool overwrite = false
-    )
-    {
-        if (string.IsNullOrWhiteSpace(promptName))
-        {
-            throw new ArgumentException("Prompt name must be provided.", nameof(promptName));
-        }
+    ) => _completionService.RegisterPromptCompletion(promptName, handler, overwrite);
 
-        if (handler == null)
-        {
-            throw new ArgumentNullException(nameof(handler));
-        }
-
-        var key = BuildCompletionKey("ref/prompt", promptName);
-        lock (_completionLock)
-        {
-            if (!overwrite && _completionHandlers.ContainsKey(key))
-            {
-                throw new InvalidOperationException(
-                    $"A completion handler is already registered for prompt '{promptName}'."
-                );
-            }
-
-            _completionHandlers[key] = handler;
-            EnsureCompletionCapabilityAdvertised();
-        }
-
-        _logger.LogInformation(
-            "Registered completion handler for prompt {PromptName}",
-            promptName
-        );
-    }
-
-    /// <summary>
-    /// Registers a completion handler scoped to a specific resource.
-    /// </summary>
-    /// <param name="resourceUri">The resource URI for which suggestions will be provided.</param>
-    /// <param name="handler">The delegate responsible for producing completion suggestions.</param>
-    /// <param name="overwrite">Set to <c>true</c> to replace an existing handler.</param>
     public void RegisterResourceCompletion(
         string resourceUri,
         CompletionHandler handler,
         bool overwrite = false
-    )
-    {
-        if (string.IsNullOrWhiteSpace(resourceUri))
-        {
-            throw new ArgumentException("Resource URI must be provided.", nameof(resourceUri));
-        }
-
-        if (handler == null)
-        {
-            throw new ArgumentNullException(nameof(handler));
-        }
-
-        var key = BuildCompletionKey("ref/resource", resourceUri);
-        lock (_completionLock)
-        {
-            if (!overwrite && _completionHandlers.ContainsKey(key))
-            {
-                throw new InvalidOperationException(
-                    $"A completion handler is already registered for resource '{resourceUri}'."
-                );
-            }
-
-            _completionHandlers[key] = handler;
-            EnsureCompletionCapabilityAdvertised();
-        }
-
-        _logger.LogInformation(
-            "Registered completion handler for resource {ResourceUri}",
-            resourceUri
-        );
-    }
+    ) => _completionService.RegisterResourceCompletion(resourceUri, handler, overwrite);
 
     /// <summary>
     /// Removes a previously registered prompt.
     /// </summary>
-    public bool UnregisterPrompt(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            throw new ArgumentException("Prompt name must be specified.", nameof(name));
-        }
-
-        lock (_promptLock)
-        {
-            var removed = _prompts.Remove(name);
-            if (removed)
-            {
-                _promptOrder.Remove(name);
-            }
-
-            return removed;
-        }
-    }
+    public bool UnregisterPrompt(string name) => _promptService.UnregisterPrompt(name);
 
     public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
 
@@ -788,150 +616,23 @@ public class McpServer : IMcpServer
 
     private Task<object> HandleToolsList(ListToolsRequest _)
     {
-        _logger.LogDebug("Handling tools/list request, returning {Count} tools", _tools.Count);
-        return Task.FromResult<object>(new { tools = _tools.Values });
+        var tools = _toolService.GetTools();
+        _logger.LogDebug("Handling tools/list request, returning {Count} tools", tools.Count);
+        return Task.FromResult<object>(new { tools });
     }
 
     private async Task<object> HandleToolCall(ToolCallRequest request)
     {
-        if (string.IsNullOrEmpty(request.Name))
-        {
-            _logger.LogWarning("Tool call received with empty tool name");
-            throw new McpException(ErrorCode.InvalidParams, "Tool name cannot be empty");
-        }
-
-        // Create a tool-specific logging scope
-        using (_logger.BeginToolScope<string>(request.Name))
-        {
-            try
-            {
-                if (!_toolHandlers.TryGetValue(request.Name, out var handler))
-                {
-                    _logger.LogWarning(
-                        "Tool call received for unknown tool: {ToolName}",
-                        request.Name
-                    );
-                    throw new McpException(
-                        ErrorCode.InvalidParams,
-                        $"Tool not found: {request.Name}"
-                    );
-                }
-
-                // Extract arguments from the request if they exist
-                JsonElement? argumentsElement = request.GetArguments();
-
-                // Log the beginning of tool execution with parameters if present
-                if (argumentsElement.HasValue)
-                {
-                    // Truncate large parameter values to avoid huge log entries
-                    string argsJson = argumentsElement.Value.ToString();
-                    string logArgs =
-                        argsJson.Length > 500
-                            ? argsJson.Substring(0, 500) + "... [truncated]"
-                            : argsJson;
-
-                    _logger.LogInformation(
-                        "Executing tool {ToolName} with parameters: {Parameters}",
-                        request.Name,
-                        logArgs
-                    );
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "Executing tool {ToolName} with no parameters",
-                        request.Name
-                    );
-                }
-
-                // Use timing scope to measure and log execution time
-                using (_logger.BeginTimingScope($"Execute{request.Name}Tool", LogLevel.Information))
-                {
-                    var response = await handler(argumentsElement);
-
-                    // Log tool execution result
-                    if (response.IsError)
-                    {
-                        string errorMessage = response.Content?.FirstOrDefault()
-                            is TextContent textContent
-                            ? textContent.Text
-                            : "Unknown error";
-
-                        _logger.LogWarning(
-                            "Tool {ToolName} execution failed: {ErrorMessage}",
-                            request.Name,
-                            errorMessage
-                        );
-                    }
-                    else
-                    {
-                        int contentCount = response.Content?.Count() ?? 0;
-                        _logger.LogInformation(
-                            "Tool {ToolName} executed successfully, returned {ContentCount} content items",
-                            request.Name,
-                            contentCount
-                        );
-                    }
-
-                    return response;
-                }
-            }
-            catch (JsonException ex)
-            {
-                // Handle JSON parsing errors
-                _logger.LogToolException(ex, request.Name, "JSON parsing error");
-                return new ToolCallResult
-                {
-                    IsError = true,
-                    Content = new[]
-                    {
-                        new TextContent { Text = $"Invalid tool call parameters: {ex.Message}" },
-                    },
-                };
-            }
-            catch (McpException ex)
-            {
-                // Propagate MCP exceptions with their error codes
-                _logger.LogWarning(
-                    "MCP exception in tool {ToolName}: {Message}",
-                    request.Name,
-                    ex.Message
-                );
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Convert other exceptions to a tool response with error
-                _logger.LogToolException(ex, request.Name);
-                return new ToolCallResult
-                {
-                    IsError = true,
-                    Content = new[]
-                    {
-                        new TextContent { Text = $"Error executing tool: {ex.Message}" },
-                    },
-                };
-            }
-        }
+        var result = await _toolService
+            .ExecuteAsync(request.Name ?? string.Empty, request.GetArguments())
+            .ConfigureAwait(false);
+        return result;
     }
 
     private Task<object> HandleResourcesList(ResourcesListRequest _)
     {
         _logger.LogDebug("Handling resources/list request");
-
-        List<Resource> resources;
-        lock (_resourceLock)
-        {
-            resources = new List<Resource>(_resourceOrder.Count);
-            foreach (var uri in _resourceOrder)
-            {
-                if (_resources.TryGetValue(uri, out var registration))
-                {
-                    resources.Add(CloneResource(registration.Resource));
-                }
-            }
-        }
-
+        var resources = _resourceService.ListResources();
         return Task.FromResult<object>(
             new ResourcesListResponse { Resources = resources.ToArray() }
         );
@@ -940,105 +641,28 @@ public class McpServer : IMcpServer
     private async Task<object> HandleResourcesRead(ResourcesReadRequest request)
     {
         _logger.LogDebug("Handling resources/read request");
-
-        if (string.IsNullOrEmpty(request.Uri))
-        {
-            throw new McpException(ErrorCode.InvalidParams, "Invalid URI");
-        }
-
-        ResourceRegistration? registration;
-        lock (_resourceLock)
-        {
-            if (!_resources.TryGetValue(request.Uri, out registration))
-            {
-                _logger.LogWarning("Resource not found: {Uri}", request.Uri);
-                throw new McpException(
-                    ErrorCode.ResourceNotFound,
-                    $"Resource not found: {request.Uri}"
-                );
-            }
-        }
-
-        ResourceContent[] contents;
-        try
-        {
-            contents = registration.Reader != null
-                ? await registration.Reader(CancellationToken.None).ConfigureAwait(false)
-                : Array.Empty<ResourceContent>();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error reading resource {Uri}", request.Uri);
-            throw new McpException(
-                ErrorCode.InternalError,
-                $"Failed to read resource: {request.Uri}"
-            );
-        }
-
+        var contents = await _resourceService
+            .ReadResourceAsync(request.Uri ?? string.Empty)
+            .ConfigureAwait(false);
         _logger.LogInformation("Resource read requested for URI: {Uri}", request.Uri);
-        return new ResourceReadResponse { Contents = contents ?? Array.Empty<ResourceContent>() };
+        return new ResourceReadResponse { Contents = contents };
     }
 
     private Task<object> HandlePromptsList(PromptsListRequest _)
     {
         _logger.LogDebug("Handling prompts/list request");
-
-        List<Prompt> prompts;
-        lock (_promptLock)
-        {
-            prompts = new List<Prompt>(_promptOrder.Count);
-            foreach (var name in _promptOrder)
-            {
-                if (_prompts.TryGetValue(name, out var registration))
-                {
-                    prompts.Add(ClonePrompt(registration.Prompt));
-                }
-            }
-        }
-
+        var prompts = _promptService.ListPrompts();
         return Task.FromResult<object>(new PromptsListResponse { Prompts = prompts.ToArray() });
     }
 
     private async Task<object> HandlePromptsGet(PromptsGetRequest request)
     {
         _logger.LogDebug("Handling prompts/get request");
-
-        if (string.IsNullOrEmpty(request.Name))
-        {
-            throw new McpException(ErrorCode.InvalidParams, "Invalid prompt name");
-        }
-
-        PromptRegistration? registration;
-        lock (_promptLock)
-        {
-            if (!_prompts.TryGetValue(request.Name, out registration))
-            {
-                _logger.LogWarning("Prompt not found: {Name}", request.Name);
-                throw new McpException(
-                    ErrorCode.PromptNotFound,
-                    $"Prompt not found: {request.Name}"
-                );
-            }
-        }
-
-        object[] messages;
-        try
-        {
-            messages = registration.MessagesFactory != null
-                ? await registration.MessagesFactory(CancellationToken.None).ConfigureAwait(false)
-                : Array.Empty<object>();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error generating prompt {Name}", request.Name);
-            throw new McpException(
-                ErrorCode.InternalError,
-                $"Failed to generate prompt: {request.Name}"
-            );
-        }
-
+        var messages = await _promptService
+            .GetPromptMessagesAsync(request.Name ?? string.Empty)
+            .ConfigureAwait(false);
         _logger.LogInformation("Prompt requested: {Name}", request.Name);
-        return new PromptsGetResponse { Messages = messages ?? Array.Empty<object>() };
+        return new PromptsGetResponse { Messages = messages };
     }
 
     private async Task<object> HandleCompletionComplete(CompletionCompleteParams request)
@@ -1054,162 +678,14 @@ public class McpServer : IMcpServer
             );
         }
 
-        if (request.Reference == null)
-        {
-            throw new McpException(ErrorCode.InvalidParams, "Completion reference is required.");
-        }
-
-        if (request.Argument == null)
-        {
-            throw new McpException(ErrorCode.InvalidParams, "Completion argument is required.");
-        }
-
-        var referenceType = request.Reference.Type?.Trim();
-        if (string.IsNullOrWhiteSpace(referenceType))
-        {
-            throw new McpException(ErrorCode.InvalidParams, "Completion reference type is required.");
-        }
-
-        string identifier = referenceType switch
-        {
-            "ref/prompt" when !string.IsNullOrWhiteSpace(request.Reference.Name)
-                => request.Reference.Name,
-            "ref/resource" when !string.IsNullOrWhiteSpace(request.Reference.Uri)
-                => request.Reference.Uri!,
-            _ => throw new McpException(
-                ErrorCode.InvalidParams,
-                $"Unsupported completion reference '{referenceType}'."
-            ),
-        };
-
-        var key = BuildCompletionKey(referenceType, identifier);
-        CompletionHandler? handler;
-        lock (_completionLock)
-        {
-            _completionHandlers.TryGetValue(key, out handler);
-        }
-
-        if (handler == null)
-        {
-            throw new McpException(
-                ErrorCode.InvalidParams,
-                $"No completion handler registered for {referenceType} '{identifier}'."
-            );
-        }
-
-        _logger.LogDebug(
-            "Handling completion for {ReferenceType} '{Identifier}' argument '{ArgumentName}'.",
-            referenceType,
-            identifier,
-            request.Argument.Name
-        );
-
-        CompletionValues suggestions;
-        try
-        {
-            var context = new CompletionRequestContext(request);
-            suggestions = await handler(context, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (McpException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Error generating completion values for {ReferenceType} '{Identifier}'.",
-                referenceType,
-                identifier
-            );
-            throw new McpException(
-                ErrorCode.InternalError,
-                "Failed to generate completion suggestions."
-            );
-        }
-
-        suggestions ??= new CompletionValues();
+        var suggestions = await _completionService
+            .CompleteAsync(request, CancellationToken.None)
+            .ConfigureAwait(false);
 
         return new CompletionCompleteResult
         {
             Completion = suggestions,
         };
-    }
-
-    private static Resource CloneResource(Resource source)
-    {
-        return new Resource
-        {
-            Uri = source.Uri,
-            Name = source.Name,
-            Description = source.Description,
-            MimeType = source.MimeType,
-            Annotations = CloneDictionary(source.Annotations),
-            Meta = CloneDictionary(source.Meta),
-        };
-    }
-
-    private static Prompt ClonePrompt(Prompt source)
-    {
-        return new Prompt
-        {
-            Name = source.Name,
-            Title = source.Title,
-            Description = source.Description,
-            Arguments = source.Arguments?.Select(ClonePromptArgument).ToArray(),
-            Annotations = CloneDictionary(source.Annotations),
-            Meta = CloneDictionary(source.Meta),
-        };
-    }
-
-    private static PromptArgument ClonePromptArgument(PromptArgument source)
-    {
-        return new PromptArgument
-        {
-            Name = source.Name,
-            Description = source.Description,
-            Required = source.Required,
-            Default = source.Default,
-            Annotations = CloneDictionary(source.Annotations),
-            Meta = CloneDictionary(source.Meta),
-        };
-    }
-
-    private static IDictionary<string, object?>? CloneDictionary(
-        IDictionary<string, object?>? source
-    )
-    {
-        if (source == null)
-        {
-            return null;
-        }
-
-        return new Dictionary<string, object?>(source);
-    }
-
-    private sealed record ResourceRegistration(
-        Resource Resource,
-        Func<CancellationToken, Task<ResourceContent[]>> Reader
-    );
-
-    private sealed record PromptRegistration(
-        Prompt Prompt,
-        Func<CancellationToken, Task<object[]>> MessagesFactory
-    );
-
-    private static string BuildCompletionKey(string referenceType, string identifier)
-    {
-        var normalizedType = referenceType?.Trim().ToLowerInvariant() ?? string.Empty;
-        var normalizedIdentifier = identifier?.Trim() ?? string.Empty;
-        return $"{normalizedType}::{normalizedIdentifier}";
-    }
-
-    private void EnsureCompletionCapabilityAdvertised()
-    {
-        if (_capabilities.Completions == null)
-        {
-            _capabilities.Completions = new { };
-        }
     }
 
     /// <summary>
@@ -1277,63 +753,7 @@ public class McpServer : IMcpServer
         JsonElement inputSchema,
         Func<JsonElement?, Task<ToolCallResult>> handler,
         IDictionary<string, object?>? annotations = null
-    )
-    {
-        var tool = new Tool
-        {
-            Name = name,
-            Description = description,
-            InputSchema = inputSchema,
-            Annotations = annotations != null ? CopyAnnotations(annotations) : null,
-        };
-
-        _tools[name] = tool;
-        _toolHandlers[name] = async (args) =>
-        {
-            try
-            {
-                _logger.LogInformation("Tool {ToolName} invoked", name);
-                return await handler(args);
-            }
-            catch (Exception ex)
-            {
-                // Convert any exceptions in the tool handler to a proper CallToolResult with IsError=true
-                _logger.LogError(ex, "Error in tool handler: {ToolName}", name);
-                return new ToolCallResult
-                {
-                    IsError = true,
-                    Content = new[]
-                    {
-                        new TextContent { Text = ex.Message },
-                        new TextContent { Text = $"Stack trace:\n{ex.StackTrace}" },
-                    },
-                };
-            }
-        };
-
-        // Ensure tools capability is registered
-        if (_capabilities.Tools == null)
-        {
-            _capabilities.Tools = new { };
-        }
-
-        _logger.LogInformation(
-            "Registered tool: {ToolName} - {Description}",
-            name,
-            description ?? "No description"
-        );
-    }
-
-    private static IDictionary<string, object?> CopyAnnotations(IDictionary<string, object?> source)
-    {
-        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kvp in source)
-        {
-            result[kvp.Key] = kvp.Value;
-        }
-
-        return result;
-    }
+    ) => _toolService.RegisterTool(name, description, inputSchema, handler, annotations);
 
     public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(JsonRpcRequestMessage request)
     {
