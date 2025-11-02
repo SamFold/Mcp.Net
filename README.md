@@ -93,6 +93,7 @@ shows a full end-to-end implementation.
 using Mcp.Net.Core.Attributes;
 using Mcp.Net.Server;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Extensions;
 using Microsoft.Extensions.Logging;
 
 // 1. Create a simple stdio server
@@ -142,10 +143,7 @@ public class WeatherResponse
     public string[] Forecast { get; set; }
 }
 
-// 3. Register all tools from assembly in one line
-server.RegisterToolsFromAssembly(Assembly.GetExecutingAssembly(), serviceProvider);
-
-// 4. Connect to stdio transport and start
+// 3. Connect to stdio transport and start
 await server.ConnectAsync(new StdioTransport());
 
 // Server is now running and ready to process requests!

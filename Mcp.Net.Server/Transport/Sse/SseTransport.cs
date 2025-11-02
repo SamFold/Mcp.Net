@@ -9,7 +9,7 @@ namespace Mcp.Net.Server.Transport.Sse;
 /// <summary>
 /// Implements the MCP server transport over Server-Sent Events (SSE), including connection metadata and per-session metrics.
 /// </summary>
-public class SseTransport : ServerTransportBase
+public class SseTransport : TransportBase, IServerTransport
 {
     // Cache the SSE data format for better performance
     private const string SSE_DATA_FORMAT = "data: {0}\n\n";
@@ -22,6 +22,10 @@ public class SseTransport : ServerTransportBase
     private int _messagesReceived;
     private int _bytesReceived;
     private int _bytesSent;
+
+    public event Action<JsonRpcRequestMessage>? OnRequest;
+    public event Action<JsonRpcNotificationMessage>? OnNotification;
+    public event Action<JsonRpcResponseMessage>? OnResponse;
 
     /// <summary>
     /// Gets the unique identifier for this transport session.
@@ -148,7 +152,7 @@ public class SseTransport : ServerTransportBase
 
     /// <inheritdoc />
     /// <remarks>Serialises the response into SSE frames and tracks throughput in the transport metrics.</remarks>
-    public override async Task SendAsync(JsonRpcResponseMessage responseMessage)
+    public async Task SendAsync(JsonRpcResponseMessage responseMessage)
     {
         if (IsClosed)
         {
@@ -200,7 +204,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <inheritdoc />
-    public override async Task SendRequestAsync(JsonRpcRequestMessage requestMessage)
+    public async Task SendRequestAsync(JsonRpcRequestMessage requestMessage)
     {
         if (IsClosed)
         {
@@ -251,7 +255,7 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <inheritdoc />
-    public override async Task SendNotificationAsync(JsonRpcNotificationMessage notificationMessage)
+    public async Task SendNotificationAsync(JsonRpcNotificationMessage notificationMessage)
     {
         if (IsClosed)
         {
@@ -299,17 +303,6 @@ public class SseTransport : ServerTransportBase
     }
 
     /// <summary>
-    /// Serializes a message to JSON
-    /// </summary>
-    /// <param name="message">The message to serialize</param>
-    /// <returns>The serialized message</returns>
-    protected new string SerializeMessage(object message)
-    {
-        // Use System.Text.Json to serialize the object
-        return System.Text.Json.JsonSerializer.Serialize(message);
-    }
-
-    /// <summary>
     /// Sends data as an SSE data-only event.
     /// </summary>
     /// <param name="data">The data to send</param>
@@ -318,6 +311,28 @@ public class SseTransport : ServerTransportBase
         string sseData = string.Format(SSE_DATA_FORMAT, data);
         await ResponseWriter.WriteAsync(sseData, CancellationTokenSource.Token);
         await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
+    }
+
+    private void PublishRequest(JsonRpcRequestMessage request)
+    {
+        Logger.LogDebug("Processing request: Method={Method}, Id={Id}", request.Method, request.Id);
+        OnRequest?.Invoke(request);
+    }
+
+    private void PublishNotification(JsonRpcNotificationMessage notification)
+    {
+        Logger.LogDebug("Processing notification: Method={Method}", notification.Method);
+        OnNotification?.Invoke(notification);
+    }
+
+    private void PublishResponse(JsonRpcResponseMessage response)
+    {
+        Logger.LogDebug(
+            "Processing response: Id={Id}, HasError={HasError}",
+            response.Id,
+            response.Error != null
+        );
+        OnResponse?.Invoke(response);
     }
 
     /// <summary>
@@ -346,8 +361,7 @@ public class SseTransport : ServerTransportBase
                     // Log detailed request info
                     Logger.LogJsonRpcRequest(requestMessage, SessionId);
 
-                    // Process the request
-                    RaiseOnRequest(requestMessage);
+                    PublishRequest(requestMessage);
                 }
                 else
                 {
@@ -390,7 +404,7 @@ public class SseTransport : ServerTransportBase
                 responseMessage.Error != null
             );
 
-                RaiseOnResponse(responseMessage);
+                PublishResponse(responseMessage);
         }
     }
 
@@ -421,7 +435,7 @@ public class SseTransport : ServerTransportBase
 
                     Logger.LogJsonRpcNotification(notificationMessage, SessionId);
 
-                    RaiseOnNotification(notificationMessage);
+                    PublishNotification(notificationMessage);
                 }
                 else
                 {

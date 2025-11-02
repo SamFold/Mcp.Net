@@ -6,6 +6,7 @@ using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.Logging;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Interfaces;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Server.ServerBuilder;
 
@@ -447,8 +448,27 @@ public class McpServerBuilder
             sseBuilder.SetConnectionManager(connectionManager);
         }
 
-        // Create server
-        var server = new McpServer(_serverInfo, connectionManager, serverOptions, loggerFactory);
+        var capabilities = serverOptions.Capabilities ?? new ServerCapabilities();
+        serverOptions.Capabilities = capabilities;
+
+        var toolService = new ToolService(capabilities, loggerFactory.CreateLogger<ToolService>());
+        var resourceService = new ResourceService(loggerFactory.CreateLogger<ResourceService>());
+        var promptService = new PromptService(capabilities, loggerFactory.CreateLogger<PromptService>());
+        var completionService = new CompletionService(
+            capabilities,
+            loggerFactory.CreateLogger<CompletionService>()
+        );
+
+        var server = new McpServer(
+            _serverInfo,
+            connectionManager,
+            serverOptions,
+            loggerFactory,
+            toolService,
+            resourceService,
+            promptService,
+            completionService
+        );
 
         // NOTE: We don't register tools here anymore.
         // Tool registration now happens exclusively in the DI container 

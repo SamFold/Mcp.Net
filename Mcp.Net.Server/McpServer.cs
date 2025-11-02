@@ -736,17 +736,6 @@ public class McpServer : IMcpServer
         _logger.LogDebug("Registered method: {MethodName}", methodName);
     }
 
-    public void RegisterToolsFromAssembly(Assembly assembly, IServiceProvider serviceProvider)
-    {
-        // This is a bridge to the extension method that does the actual work
-        // This instance method ensures consistency across different calling patterns
-        Mcp.Net.Server.Extensions.McpServerExtensions.RegisterToolsFromAssembly(
-            this,
-            assembly,
-            serviceProvider
-        );
-    }
-
     public void RegisterTool(
         string name,
         string? description,
