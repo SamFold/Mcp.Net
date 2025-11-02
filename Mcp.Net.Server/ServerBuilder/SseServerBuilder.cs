@@ -24,6 +24,7 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     private readonly SseServerOptions _options = new();
     private readonly Dictionary<string, string> _customSettings = new();
     private IConfiguration? _configuration;
+    private IConnectionManager? _connectionManager;
 
     /// <summary>
     /// Gets the hostname for the SSE server.
@@ -65,6 +66,12 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = _loggerFactory.CreateLogger<SseServerBuilder>();
+    }
+
+    internal void SetConnectionManager(IConnectionManager connectionManager)
+    {
+        _connectionManager =
+            connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
     }
 
     /// <summary>
@@ -311,23 +318,26 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
             }
         }
 
-        // Register connection managers
-        builder.Services.AddSingleton<IConnectionManager, InMemoryConnectionManager>(
-            provider => new InMemoryConnectionManager(_loggerFactory, TimeSpan.FromMinutes(30))
-        );
-
-        builder.Services.AddSingleton<SseConnectionManagerType>(provider =>
+        if (_connectionManager == null)
         {
-            var connectionManager = provider.GetRequiredService<IConnectionManager>();
-            return new SseConnectionManagerType(
+            throw new InvalidOperationException(
+                "Connection manager has not been configured. Build the server using McpServerBuilder or call SetConnectionManager before starting the SSE server."
+            );
+        }
+
+        // Register connection manager
+        builder.Services.AddSingleton<IConnectionManager>(_connectionManager);
+
+        builder.Services.AddSingleton<SseConnectionManagerType>(_ =>
+            new SseTransportHost(
                 server,
                 _loggerFactory,
-                connectionManager,
+                _connectionManager,
                 _options.Authentication?.AuthHandler,
                 _options.AllowedOrigins,
                 _options.CanonicalOrigin
-            );
-        });
+            )
+        );
 
         // Register authentication if configured
         if (_options.Authentication?.AuthHandler != null)

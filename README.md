@@ -92,10 +92,13 @@ shows a full end-to-end implementation.
 ```csharp
 using Mcp.Net.Core.Attributes;
 using Mcp.Net.Server;
+using Mcp.Net.Server.ConnectionManagers;
+using Microsoft.Extensions.Logging;
 
 // 1. Create a simple stdio server
 var server = new McpServer(
-    new ServerInfo { Name = "QuickStart Server", Version = "1.0" }
+    new ServerInfo { Name = "QuickStart Server", Version = "1.0" },
+    new InMemoryConnectionManager(new LoggerFactory())
 );
 
 // 2. Define tools using simple attributes and POCOs
@@ -157,10 +160,13 @@ using System.Text.Json;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Server;
+using Mcp.Net.Server.ConnectionManagers;
+using Microsoft.Extensions.Logging;
 
 // Create server
 var server = new McpServer(
-    new ServerInfo { Name = "Manual Server", Version = "1.0" }
+    new ServerInfo { Name = "Manual Server", Version = "1.0" },
+    new InMemoryConnectionManager(new LoggerFactory())
 );
 
 // Register tool with explicit schema and handler

@@ -9,6 +9,7 @@ using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
+using Mcp.Net.Server.ConnectionManagers;
 
 namespace Mcp.Net.Tests.Server.Elicitation;
 
@@ -23,7 +24,8 @@ public class ElicitationServiceTests
             Instructions = "Test server",
         };
 
-        return new McpServer(serverInfo, serverOptions, NullLoggerFactory.Instance);
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        return new McpServer(serverInfo, connectionManager, serverOptions, NullLoggerFactory.Instance);
     }
 
     private static ElicitationPrompt CreatePrompt()

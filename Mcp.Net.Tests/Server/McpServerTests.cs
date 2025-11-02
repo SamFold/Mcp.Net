@@ -9,6 +9,8 @@ using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Moq;
+using Mcp.Net.Server.ConnectionManagers;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -20,6 +22,7 @@ public class McpServerTests
     public McpServerTests()
     {
         _mockTransport = new Mock<IServerTransport>();
+        _mockTransport.Setup(t => t.Id()).Returns("test-transport");
 
         var serverInfo = new ServerInfo { Name = "Test Server", Version = "1.0.0" };
 
@@ -29,7 +32,8 @@ public class McpServerTests
             Capabilities = new ServerCapabilities(),
         };
 
-        _server = new McpServer(serverInfo, options);
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        _server = new McpServer(serverInfo, connectionManager, options, NullLoggerFactory.Instance);
     }
 
     [Fact]

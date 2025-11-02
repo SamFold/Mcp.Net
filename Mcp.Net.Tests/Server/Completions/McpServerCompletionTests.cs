@@ -8,6 +8,7 @@ using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server;
 using Microsoft.Extensions.Logging.Abstractions;
+using Mcp.Net.Server.ConnectionManagers;
 
 namespace Mcp.Net.Tests.Server.Completions;
 
@@ -20,7 +21,8 @@ public class McpServerCompletionTests
         {
             Capabilities = new ServerCapabilities(),
         };
-        return new McpServer(info, options, NullLoggerFactory.Instance);
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        return new McpServer(info, connectionManager, options, NullLoggerFactory.Instance);
     }
 
     [Fact]

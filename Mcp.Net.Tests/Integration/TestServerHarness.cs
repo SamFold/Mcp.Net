@@ -34,15 +34,10 @@ internal static class IntegrationTestServerFactory
         CancellationToken cancellationToken = default
     ) => StdioIntegrationTestServer.StartAsync(configureServer, cancellationToken);
 
-    internal static McpServer CreateServer(ILoggerFactory loggerFactory)
+    internal static (McpServer Server, IConnectionManager ConnectionManager) CreateServer(
+        ILoggerFactory loggerFactory
+    )
     {
-        var serverBuilder = McpServerBuilder
-            .ForSse()
-            .WithName("IntegrationTestServer")
-            .WithTitle("Integration Test Server")
-            .WithVersion("1.0.0")
-            .WithNoAuth();
-
         var serverOptions = new ServerOptions
         {
             Capabilities = new ServerCapabilities
@@ -53,16 +48,21 @@ internal static class IntegrationTestServerFactory
             },
         };
 
-        return new McpServer(
+        var connectionManager = new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(30));
+
+        var server = new McpServer(
             new ServerInfo
             {
                 Name = "IntegrationTestServer",
                 Title = "Integration Test Server",
                 Version = "1.0.0",
             },
+            connectionManager,
             serverOptions,
             loggerFactory
         );
+
+        return (server, connectionManager);
     }
 }
 
@@ -103,7 +103,7 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
             builder.SetMinimumLevel(LogLevel.Debug);
         });
 
-        var server = IntegrationTestServerFactory.CreateServer(loggerFactory);
+        var (server, connectionManager) = IntegrationTestServerFactory.CreateServer(loggerFactory);
         configureServer?.Invoke(server);
 
         var hostBuilder = new HostBuilder()
@@ -124,10 +124,7 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
                     services.AddSingleton(authOptions);
 
                     services.AddSingleton<McpServer>(server);
-
-                    services.AddSingleton<IConnectionManager>(
-                        _ => new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(5))
-                    );
+                    services.AddSingleton<IConnectionManager>(connectionManager);
 
                     services.AddSingleton<SseTransportConnectionManager>(sp =>
                         new SseTransportConnectionManager(
@@ -163,9 +160,9 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
         // Ensure BaseAddress is set so SseClientTransport resolves endpoint correctly.
         testClient.BaseAddress ??= new Uri("http://localhost");
 
-        var connectionManager = host.Services.GetRequiredService<SseTransportConnectionManager>();
+        var transportHost = host.Services.GetRequiredService<SseTransportConnectionManager>();
 
-        return new SseIntegrationTestServer(host, testClient, server, connectionManager);
+        return new SseIntegrationTestServer(host, testClient, server, transportHost);
     }
 
     public async ValueTask DisposeAsync()
@@ -240,13 +237,6 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
             builder.SetMinimumLevel(LogLevel.Debug);
         });
 
-        var serverBuilder = McpServerBuilder
-            .ForStdio()
-            .WithName("IntegrationTestServer")
-            .WithTitle("Integration Test Server")
-            .WithVersion("1.0.0")
-            .WithNoAuth();
-
         var serverOptions = new ServerOptions
         {
             Capabilities = new ServerCapabilities
@@ -257,6 +247,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
             },
         };
 
+        var connectionManager = new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(30));
+
         var server = new McpServer(
             new ServerInfo
             {
@@ -264,6 +256,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
                 Title = "Integration Test Server",
                 Version = "1.0.0",
             },
+            connectionManager,
             serverOptions,
             loggerFactory
         );
@@ -280,7 +273,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         var clientInput = serverToClient.Reader.AsStream(leaveOpen: true);
 
         var stdioTransport = new StdioTransport(
-            "",
+            "integration-stdio",
             serverInput,
             serverOutput,
             loggerFactory.CreateLogger<StdioTransport>()

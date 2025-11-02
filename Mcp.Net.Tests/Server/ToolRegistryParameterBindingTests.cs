@@ -7,6 +7,7 @@ using Mcp.Net.Server;
 using Mcp.Net.Core.JsonRpc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Mcp.Net.Server.ConnectionManagers;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -28,7 +29,8 @@ public class ToolRegistryParameterBindingTests
             },
         };
 
-        return new McpServer(info, options, NullLoggerFactory.Instance);
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        return new McpServer(info, connectionManager, options, NullLoggerFactory.Instance);
     }
 
     [Fact]

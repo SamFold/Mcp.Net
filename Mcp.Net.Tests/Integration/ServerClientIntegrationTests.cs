@@ -16,6 +16,7 @@ using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
+using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -34,8 +35,8 @@ public class ServerClientIntegrationTests
             Instructions = "Test server for integration tests",
             Capabilities = new ServerCapabilities()
         };
-        
-        var server = new McpServer(serverInfo, serverOptions);
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(serverInfo, connectionManager, serverOptions, NullLoggerFactory.Instance);
         
         // Register a simple calculator tool
         server.RegisterTool(

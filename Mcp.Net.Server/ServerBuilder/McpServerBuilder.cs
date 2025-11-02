@@ -1,8 +1,11 @@
+using System;
 using System.Reflection;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.Logging;
+using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 
 namespace Mcp.Net.Server.ServerBuilder;
 
@@ -24,6 +27,7 @@ public class McpServerBuilder
     private ILoggerFactory? _loggerFactory;
     private bool _securityConfigured = false;
     private bool _noAuthExplicitlyConfigured = false;
+    private IConnectionManager? _connectionManager;
 
     /// <summary>
     /// Creates a new server builder for stdio transport.
@@ -436,8 +440,15 @@ public class McpServerBuilder
         // Use security configuration if needed
         ConfigureSecurity();
 
+        var connectionManager = GetOrCreateConnectionManager(loggerFactory);
+
+        if (_transportBuilder is SseServerBuilder sseBuilder)
+        {
+            sseBuilder.SetConnectionManager(connectionManager);
+        }
+
         // Create server
-        var server = new McpServer(_serverInfo, serverOptions, loggerFactory);
+        var server = new McpServer(_serverInfo, connectionManager, serverOptions, loggerFactory);
 
         // NOTE: We don't register tools here anymore.
         // Tool registration now happens exclusively in the DI container 
@@ -478,6 +489,20 @@ public class McpServerBuilder
                 );
             }
         }
+    }
+
+    private IConnectionManager GetOrCreateConnectionManager(ILoggerFactory loggerFactory)
+    {
+        if (_connectionManager != null)
+        {
+            return _connectionManager;
+        }
+
+        _connectionManager = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
+        return _connectionManager;
     }
 
     /// <summary>

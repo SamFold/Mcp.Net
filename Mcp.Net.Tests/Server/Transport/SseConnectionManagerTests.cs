@@ -207,16 +207,16 @@ public class SseConnectionManagerTests
     )
     {
         allowedOrigins ??= new[] { DefaultOrigin };
-        var serverInfo = new ServerInfo { Name = "Test Server", Version = "1.0.0" };
-        var server = new McpServer(
-            serverInfo,
-            new ServerOptions { Capabilities = new ServerCapabilities() },
-            new LoggerFactory()
-        );
         var loggerFactory = LoggerFactory.Create(builder => { });
         var transportRegistry = new InMemoryConnectionManager(
             loggerFactory,
             TimeSpan.FromMinutes(30)
+        );
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            transportRegistry,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            loggerFactory
         );
         var connectionManager = new SseTransportHost(
             server,

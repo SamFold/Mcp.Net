@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
 using Mcp.Net.Core.JsonRpc;
+using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
@@ -19,7 +20,6 @@ using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 public class McpServer : IMcpServer
 {
     public const string LatestProtocolVersion = "2025-06-18";
-    private const string SingleSessionKey = "_single_session";
 
     private static readonly IReadOnlyList<string> s_supportedProtocolVersions = new[]
     {
@@ -27,37 +27,38 @@ public class McpServer : IMcpServer
         "2024-11-05",
     };
 
-    // Dictionary to store method handlers that take a JSON string parameter
     private readonly Dictionary<string, Func<string, Task<object>>> _methodHandlers = new();
     private readonly Dictionary<string, Tool> _tools = new();
-    private readonly Dictionary<string, Func<JsonElement?, Task<ToolCallResult>>> _toolHandlers =
-        new();
-    private readonly Dictionary<string, ResourceRegistration> _resources =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<JsonElement?, Task<ToolCallResult>>> _toolHandlers = new();
+    private readonly Dictionary<string, ResourceRegistration> _resources = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _resourceOrder = new();
-    private readonly Dictionary<string, PromptRegistration> _prompts =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PromptRegistration> _prompts = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _promptOrder = new();
     private readonly object _resourceLock = new();
     private readonly object _promptLock = new();
-    private readonly Dictionary<string, CompletionHandler> _completionHandlers =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompletionHandler> _completionHandlers = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _completionLock = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
-    private readonly ConcurrentDictionary<string, IServerTransport> _knownTransports = new();
-    private readonly AsyncLocal<string?> _activeSessionId = new();
+    private readonly IConnectionManager _connectionManager;
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
-    private IConnectionManager? _connectionManager;
+
+    private readonly ServerInfo _serverInfo;
+    private readonly AsyncLocal<string?> _activeSessionId = new();
+    private readonly ServerCapabilities _capabilities;
+    private readonly string? _instructions;
+    private readonly ILogger<McpServer> _logger;
+    private string? _negotiatedProtocolVersion;
+
     private sealed class SessionContext : IDisposable
     {
         private readonly McpServer _server;
-        private readonly string? _previous;
+        private readonly string? _previousSession;
         private bool _disposed;
 
         public SessionContext(McpServer server, string sessionId)
         {
             _server = server;
-            _previous = server._activeSessionId.Value;
+            _previousSession = server._activeSessionId.Value;
             server._activeSessionId.Value = sessionId;
         }
 
@@ -68,27 +69,31 @@ public class McpServer : IMcpServer
                 return;
             }
 
-            _server._activeSessionId.Value = _previous;
+            _server._activeSessionId.Value = _previousSession;
             _disposed = true;
         }
     }
 
-    private readonly ServerInfo _serverInfo;
-    private readonly ServerCapabilities _capabilities;
-    private readonly string? _instructions;
-    private readonly ILogger<McpServer> _logger;
-    private string? _negotiatedProtocolVersion;
+    public McpServer(
+        ServerInfo serverInfo,
+        IConnectionManager connectionManager,
+        ServerOptions? options = null
+    )
+        : this(serverInfo, connectionManager, options, new LoggerFactory()) { }
 
-    public McpServer(ServerInfo serverInfo, ServerOptions? options = null)
-        : this(serverInfo, options, new LoggerFactory()) { }
-
-    public McpServer(ServerInfo serverInfo, ServerOptions? options, ILoggerFactory loggerFactory)
+    public McpServer(
+        ServerInfo serverInfo,
+        IConnectionManager connectionManager,
+        ServerOptions? options,
+        ILoggerFactory loggerFactory
+    )
     {
         _serverInfo = serverInfo;
         if (string.IsNullOrWhiteSpace(_serverInfo.Title))
             _serverInfo.Title = _serverInfo.Name;
         _capabilities = options?.Capabilities ?? new ServerCapabilities();
         _logger = loggerFactory.CreateLogger<McpServer>();
+        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
 
         // Ensure all capabilities are initialized
         if (_capabilities.Tools == null)
@@ -109,6 +114,31 @@ public class McpServer : IMcpServer
             serverInfo.Version
         );
     }
+
+    private SessionContext EnterSessionScope(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
+        }
+
+        return new SessionContext(this, sessionId);
+    }
+
+    private string GetActiveSessionId()
+    {
+        var sessionId = _activeSessionId.Value;
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new InvalidOperationException(
+                "No active session context is available for server-initiated requests. Provide a session identifier explicitly or ensure the call runs within a request scope."
+            );
+        }
+
+        return sessionId;
+    }
+
+    internal IDisposable PushSessionContext(string sessionId) => EnterSessionScope(sessionId);
 
     /// <summary>
     /// Registers a resource that the server can advertise and serve to clients.
@@ -392,63 +422,33 @@ public class McpServer : IMcpServer
     {
         _negotiatedProtocolVersion = null;
 
+        var sessionId = transport.Id();
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new InvalidOperationException(
+                "Transport must provide a non-empty identifier."
+            );
+        }
+
         _logger.LogInformation(
             "Rigging up event handlers for Transport Id = {TransportId}",
-            transport.Id()
+            sessionId
         );
 
-        // Capture the transport instance for inbound events.
-        transport.OnRequest += request =>
-        {
-            HandleRequestWithTransport(transport, request);
-        };
+        transport.OnRequest += request => HandleRequestWithTransport(transport, request);
 
         transport.OnNotification += HandleNotification;
         transport.OnResponse += HandleClientResponse;
         transport.OnError += HandleTransportError;
         transport.OnClose += HandleTransportClose;
 
-        var transportId = GetSessionKey(transport);
-        if (!string.IsNullOrWhiteSpace(transportId))
-        {
-            _knownTransports[transportId] = transport;
-            transport.OnClose += () =>
-            {
-                _knownTransports.TryRemove(transportId, out _);
-            };
-        }
-
         _logger.LogInformation("MCP server connecting to transport");
 
+        await _connectionManager
+            .RegisterTransportAsync(sessionId, transport)
+            .ConfigureAwait(false);
+
         await transport.StartAsync();
-    }
-
-    private SessionContext EnterSessionScope(string sessionId) => new(this, sessionId);
-
-    private string GetActiveSessionId()
-    {
-        var sessionId = _activeSessionId.Value;
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new InvalidOperationException(
-                "No active session context is available for server-initiated requests. Provide a session identifier explicitly or ensure the call runs within a request scope."
-            );
-        }
-
-        return sessionId;
-    }
-
-    internal IDisposable PushSessionContext(string sessionId) => EnterSessionScope(sessionId);
-
-    internal void UseConnectionManager(IConnectionManager connectionManager)
-    {
-        _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
-    }
-
-    private static string GetSessionKey(IServerTransport transport)
-    {
-        var id = transport.Id();
-        return string.IsNullOrWhiteSpace(id) ? SingleSessionKey : id;
     }
 
     private async void HandleRequestWithTransport(
@@ -458,15 +458,23 @@ public class McpServer : IMcpServer
     {
         using (_logger.BeginRequestScope(request.Id, request.Method))
         {
+            var sessionId = transport.Id();
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                throw new InvalidOperationException(
+                    "Transport must provide a non-empty identifier."
+                );
+            }
+
             _logger.LogDebug(
                 "Received request: ID={RequestId}, Method={Method} on Transport={TransportId}",
                 request.Id,
                 request.Method,
-                transport.Id()
+                sessionId
             );
             try
             {
-                using var scope = EnterSessionScope(GetSessionKey(transport));
+                using var scope = EnterSessionScope(sessionId);
                 await ProcessRequestAsync(transport, request).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -570,22 +578,24 @@ public class McpServer : IMcpServer
 
     private async Task<IServerTransport> ResolveTransportAsync(string sessionId)
     {
-        if (_connectionManager != null)
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
-            var resolved = await _connectionManager
-                .GetTransportAsync(sessionId)
-                .ConfigureAwait(false);
-
-            if (resolved is IServerTransport serverTransport)
-            {
-                return serverTransport;
-            }
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
         }
 
-        if (_knownTransports.TryGetValue(sessionId, out var transport))
+        var resolved = await _connectionManager
+            .GetTransportAsync(sessionId)
+            .ConfigureAwait(false);
+
+        if (resolved is IServerTransport serverTransport)
         {
-            return transport;
+            return serverTransport;
         }
+
+        _logger.LogWarning(
+            "Transport not found for session {SessionId}",
+            sessionId
+        );
 
         throw new InvalidOperationException(
             $"No active transport found for session '{sessionId}'."
@@ -609,14 +619,14 @@ public class McpServer : IMcpServer
         CancellationToken cancellationToken = default
     )
     {
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
-        }
-
         if (string.IsNullOrWhiteSpace(method))
         {
             throw new ArgumentException("Method name must be provided.", nameof(method));
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
         }
 
         var transport = await ResolveTransportAsync(sessionId).ConfigureAwait(false);
