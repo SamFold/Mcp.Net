@@ -117,7 +117,7 @@ public class JsonRpcMessageTests
 
         // Assert - verify the serialized property names match JSON-RPC spec
         json.Should().Contain("\"jsonrpc\":\"2.0\"");
-        json.Should().Contain("\"id\":\"123\"");
+        json.Should().Contain("\"id\":123");
         json.Should().Contain("\"method\":\"method\"");
     }
 
@@ -129,7 +129,7 @@ public class JsonRpcMessageTests
 
         // Assert - verify the serialized property names match JSON-RPC spec
         json.Should().Contain("\"jsonrpc\":\"2.0\"");
-        json.Should().Contain("\"id\":\"123\"");
+        json.Should().Contain("\"id\":123");
     }
 
     [Fact]
@@ -166,6 +166,34 @@ public class JsonRpcMessageTests
         json.Should().Contain("\"jsonrpc\":\"2.0\"");
         json.Should().Contain("\"method\":\"method\"");
         json.Should().NotContain("\"id\":");
+    }
+
+    [Fact]
+    public void JsonRpcResponse_Id_Should_Match_Request_Id_Type_And_Value()
+    {
+        // Numeric id should stay numeric in the response
+        var requestNumeric = new JsonRpcRequestMessage("2.0", "0", "initialize", null);
+        var responseNumeric = new JsonRpcResponseMessage(
+            "2.0",
+            requestNumeric.Id,
+            new { ok = true },
+            null
+        );
+        var jsonNumeric = JsonSerializer.Serialize(responseNumeric);
+        jsonNumeric.Should().Contain("\"id\":0"); // numeric
+        jsonNumeric.Should().NotContain("\"id\":\"0\""); // not string
+
+        // String id should stay string in the response
+        var requestString = new JsonRpcRequestMessage("2.0", "abc", "initialize", null);
+        var responseString = new JsonRpcResponseMessage(
+            "2.0",
+            requestString.Id,
+            new { ok = true },
+            null
+        );
+        var jsonString = JsonSerializer.Serialize(responseString);
+        jsonString.Should().Contain("\"id\":\"abc\"");
+        jsonString.Should().NotContain("\"id\":abc");
     }
 
     [Fact]

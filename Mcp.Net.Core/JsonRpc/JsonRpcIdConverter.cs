@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -35,9 +36,21 @@ public class JsonRpcIdConverter : JsonConverter<string?>
     {
         if (value == null)
             writer.WriteNullValue();
+        else if (IsInteger(value, out long longValue))
+            writer.WriteNumberValue(longValue);
         else
             writer.WriteStringValue(value);
         // We can't use Logger directly here as it may not be available
         // Log ID conversion in the calling code instead
+    }
+
+    private static bool IsInteger(string value, out long number)
+    {
+        return long.TryParse(
+            value,
+            NumberStyles.AllowLeadingSign,
+            CultureInfo.InvariantCulture,
+            out number
+        );
     }
 }
