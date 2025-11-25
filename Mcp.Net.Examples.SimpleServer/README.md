@@ -72,6 +72,9 @@ dotnet run -- --tool-assembly /path/to/custom/tools.dll
 # Set log level
 dotnet run -- --log-level Debug
 
+# Persist stdio logs to a specific file
+dotnet run -- --stdio --log-path /tmp/simple_server_stdio.log
+
 # Combine multiple options
 dotnet run -- --port 8080 --hostname 0.0.0.0 --name "Production MCP Server" --tool-assembly tools1.dll --tool-assembly tools2.dll
 ```
@@ -181,6 +184,7 @@ Try it with the SimpleClient example—after initialization the client will requ
 - `HOSTNAME` or `MCP_HOSTNAME`: Set the hostname to bind to (default: localhost)
 - `SERVER_NAME` or `MCP_SERVER_NAME`: Set the server name
 - `LOG_LEVEL` or `MCP_LOG_LEVEL`: Set the log level (default: Debug)
+- `LOG_PATH` or `MCP_LOG_PATH`: Explicit log file used by strict stdio mode; falls back to your temp directory when not set
 - `MCP_DEBUG_TOOLS`: Enable tool registration debugging (default: true)
 - `OPENAI_API_KEY`: API key used by `model_catalog.list_models` when querying OpenAI (optional, but required to see OpenAI models).
 - `ANTHROPIC_API_KEY`: API key used by `model_catalog.list_models` when querying Anthropic (optional, but required to see Anthropic models).

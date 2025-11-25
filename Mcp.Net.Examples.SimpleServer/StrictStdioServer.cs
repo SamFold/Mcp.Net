@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Examples.SimpleServer.Services;
@@ -13,6 +14,7 @@ using Mcp.Net.Server.Options;
 using Mcp.Net.Server.Transport.Stdio;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Mcp.Net.Server.Services;
 using Serilog;
 
 namespace Mcp.Net.Examples.SimpleServer;
@@ -53,40 +55,64 @@ internal static class StrictStdioServer
     /// </summary>
     public static async Task RunAsync(string[] args)
     {
-        // CRITICAL: Disable all console output by redirecting standard streams
-        // We must do this as early as possible to prevent any internal components
-        // from writing to stdout/stderr
-        DisableAllConsoleOutput();
-        
-        // Capture original standard in/out for protocol use
+        // Capture the original stdio streams BEFORE we silence console output so the
+        // transport can continue to use the real pipes for JSON-RPC traffic.
         Stream originalStdin = Console.OpenStandardInput();
         Stream originalStdout = Console.OpenStandardOutput();
+
+        // CRITICAL: Disable all console output by redirecting standard streams.
+        // This must happen after capturing the original handles so we don't end up
+        // writing protocol responses to the null stream.
+        DisableAllConsoleOutput();
         
+        // Parse args silently (needs to happen before we decide where to log)
+        var options = new CommandLineOptions.StrictParser().Parse(args);
+
         // We DO NOT print ANYTHING to stdout/stderr!
         // Create a logger that logs only to file (if possible)
-        string? logFilePath = null;
+        string? logFilePath = options.LogPath;
         StreamWriter? logWriter = null;
-        
-        try
+
+        StreamWriter? TryCreateLogWriter(string path)
         {
-            // Try to set up file logging in temp directory
-            string tempDir = Path.GetTempPath();
-            string logsDir = Path.Combine(tempDir, "mcp_logs");
-            
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
             try
             {
-                Directory.CreateDirectory(logsDir);
-                logFilePath = Path.Combine(logsDir, $"mcp_stdio_{DateTime.Now:yyyyMMdd_HHmmss}.log");
-                logWriter = new StreamWriter(logFilePath, true);
+                var directory = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                return new StreamWriter(path, append: true) { AutoFlush = true };
             }
-            catch (Exception)
+            catch
             {
-                // Silently fail - we'll operate without logging
+                return null;
             }
         }
-        catch
+
+        logWriter = TryCreateLogWriter(logFilePath ?? string.Empty);
+
+        if (logWriter == null)
         {
-            // Silently fail - we'll operate without logging
+            try
+            {
+                string tempDir = Path.GetTempPath();
+                string logsDir = Path.Combine(tempDir, "mcp_logs");
+                Directory.CreateDirectory(logsDir);
+                logFilePath = Path.Combine(logsDir, $"mcp_stdio_{DateTime.Now:yyyyMMdd_HHmmss}.log");
+                logWriter = TryCreateLogWriter(logFilePath);
+            }
+            catch
+            {
+                logWriter = null;
+                logFilePath = null;
+            }
         }
         
         // Helper method for silent logging
@@ -106,10 +132,26 @@ internal static class StrictStdioServer
                 // Silently fail - never let logging errors break the protocol
             }
         }
+        string FormatPayload(object? payload)
+        {
+            if (payload == null)
+            {
+                return "<null>";
+            }
 
-        // Parse args silently
-        var options = new CommandLineOptions.StrictParser().Parse(args);
-        
+            try
+            {
+                string raw = payload is JsonElement element
+                    ? element.GetRawText()
+                    : JsonSerializer.Serialize(payload);
+                return raw.Length > 2000 ? raw.Substring(0, 2000) + "..." : raw;
+            }
+            catch
+            {
+                return "<unserializable>";
+            }
+        }
+
         // Use default log level or parsed one
         LogLevel logLevel = string.IsNullOrEmpty(options.LogLevel)
             ? LogLevel.Warning  // Use higher level by default to reduce noise
@@ -215,12 +257,14 @@ internal static class StrictStdioServer
             logging.SetMinimumLevel(LogLevel.Error); // Set very high threshold
         });
 
+        services.AddSingleton<IToolInvocationContextAccessor, ToolInvocationContextAccessor>();
         services.AddSingleton<CSharpCodeExecutionService>();
         services.AddSingleton(server);
         services.AddSingleton<IElicitationService>(sp =>
         {
             var logger = sp.GetRequiredService<ILogger<ElicitationService>>();
-            return new ElicitationService(server, logger);
+            var accessor = sp.GetRequiredService<IToolInvocationContextAccessor>();
+            return new ElicitationService(server, logger, accessor);
         });
 
         // Set up logging options
@@ -279,12 +323,39 @@ internal static class StrictStdioServer
 
         // Create our own custom StdioTransport to ensure we use the original stdin/stdout
         LogToFile("Creating custom StdioTransport with explicit streams");
-        var transport = new Mcp.Net.Server.Transport.Stdio.StdioTransport(
+        var transport = new LoggingStdioTransport(
             "0",
             originalStdin,  // Use the captured stdin 
             originalStdout, // Use the captured stdout
-            loggerFactory.CreateLogger<Mcp.Net.Server.Transport.Stdio.StdioTransport>()
+            loggerFactory.CreateLogger<Mcp.Net.Server.Transport.Stdio.StdioTransport>(),
+            LogToFile
         );
+        transport.OnRequest += request =>
+        {
+            string payload = FormatPayload(new
+            {
+                request.JsonRpc,
+                request.Id,
+                request.Method,
+                request.Params,
+            });
+            LogToFile($"Transport received request: {payload}");
+        };
+        transport.OnResponse += response =>
+        {
+            string payload = response.Result != null
+                ? FormatPayload(response.Result)
+                : FormatPayload(response.Error);
+            LogToFile($"Transport received response: {response.Id} payload={payload}");
+        };
+        transport.OnError += ex => LogToFile($"Transport error: {ex.Message}");
+        transport.OnNotification += notification =>
+        {
+            string payload = notification.Params != null
+                ? FormatPayload(notification.Params)
+                : "<no params>";
+            LogToFile($"Transport received notification: {notification.Method} payload={payload}");
+        };
         
         try
         {

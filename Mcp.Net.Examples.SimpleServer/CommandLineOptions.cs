@@ -39,6 +39,11 @@ public class CommandLineOptions
     public string? LogLevel { get; private set; }
 
     /// <summary>
+    /// Gets the log file path to write to (primarily for stdio mode)
+    /// </summary>
+    public string? LogPath { get; private set; }
+
+    /// <summary>
     /// Gets a value indicating whether to disable authentication
     /// </summary>
     public bool NoAuth { get; private set; }
@@ -106,6 +111,14 @@ public class CommandLineOptions
                     }
                     break;
 
+                case "--log-path":
+                    if (nextArg != null)
+                    {
+                        options.LogPath = nextArg;
+                        i++;
+                    }
+                    break;
+
                 case "--no-auth":
                     options.NoAuth = true;
                     break;
@@ -143,6 +156,12 @@ public class CommandLineOptions
             options.LogLevel = envLogLevel;
         }
 
+        string? envLogPath = Environment.GetEnvironmentVariable("LOG_PATH");
+        if (!string.IsNullOrEmpty(envLogPath))
+        {
+            options.LogPath = envLogPath;
+        }
+
         // Add MCP_ prefixed environment variables as well
         envPort = Environment.GetEnvironmentVariable("MCP_PORT");
         if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out parsedPort))
@@ -166,6 +185,12 @@ public class CommandLineOptions
         if (!string.IsNullOrEmpty(envLogLevel))
         {
             options.LogLevel = envLogLevel;
+        }
+
+        envLogPath = Environment.GetEnvironmentVariable("MCP_LOG_PATH");
+        if (!string.IsNullOrEmpty(envLogPath))
+        {
+            options.LogPath = envLogPath;
         }
 
         // Only print options if we're not using stdio
@@ -250,19 +275,27 @@ public class CommandLineOptions
                         }
                         break;
 
-                    case "--log-level":
-                        if (nextArg != null)
-                        {
-                            options.LogLevel = nextArg;
-                            i++;
-                        }
-                        break;
+                case "--log-level":
+                    if (nextArg != null)
+                    {
+                        options.LogLevel = nextArg;
+                        i++;
+                    }
+                    break;
 
-                    case "--no-auth":
-                        options.NoAuth = true;
-                        break;
-                }
+                case "--log-path":
+                    if (nextArg != null)
+                    {
+                        options.LogPath = nextArg;
+                        i++;
+                    }
+                    break;
+
+                case "--no-auth":
+                    options.NoAuth = true;
+                    break;
             }
+        }
 
             // Set tool assemblies if any were specified
             if (toolAssemblies.Count > 0)
@@ -292,11 +325,11 @@ public class CommandLineOptions
             string? envLogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL");
             if (!string.IsNullOrEmpty(envLogLevel))
             {
-                options.LogLevel = envLogLevel;
-            }
+            options.LogLevel = envLogLevel;
+        }
 
-            // Add MCP_ prefixed environment variables as well
-            envPort = Environment.GetEnvironmentVariable("MCP_PORT");
+        // Add MCP_ prefixed environment variables as well
+        envPort = Environment.GetEnvironmentVariable("MCP_PORT");
             if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out parsedPort))
             {
                 options.Port = parsedPort;
@@ -315,15 +348,27 @@ public class CommandLineOptions
             }
 
             envLogLevel = Environment.GetEnvironmentVariable("MCP_LOG_LEVEL");
-            if (!string.IsNullOrEmpty(envLogLevel))
-            {
-                options.LogLevel = envLogLevel;
-            }
-
-            // IMPORTANT: In strict mode, we NEVER write to console
-            options.UseStdio = true; // Force stdio mode to be safe
-
-            return options;
+        if (!string.IsNullOrEmpty(envLogLevel))
+        {
+            options.LogLevel = envLogLevel;
         }
+
+        string? envLogPath = Environment.GetEnvironmentVariable("LOG_PATH");
+        if (!string.IsNullOrEmpty(envLogPath))
+        {
+            options.LogPath = envLogPath;
+        }
+
+        envLogPath = Environment.GetEnvironmentVariable("MCP_LOG_PATH");
+        if (!string.IsNullOrEmpty(envLogPath))
+        {
+            options.LogPath = envLogPath;
+        }
+
+        // IMPORTANT: In strict mode, we NEVER write to console
+        options.UseStdio = true; // Force stdio mode to be safe
+
+        return options;
+    }
     }
 }
