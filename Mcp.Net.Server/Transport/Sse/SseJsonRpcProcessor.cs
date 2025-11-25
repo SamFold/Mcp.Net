@@ -7,6 +7,7 @@ using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Exceptions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Mcp.Net.Server.Models;
 
 namespace Mcp.Net.Server.Transport.Sse;
 
@@ -137,7 +138,7 @@ internal sealed class SseJsonRpcProcessor
                 );
                 if (payload.Response != null)
                 {
-                    transport.HandleResponse(payload.Response);
+                    await _server.HandleClientResponseAsync(sessionId, payload.Response);
                 }
                 await WriteAcceptedAsync(
                     context,
@@ -174,7 +175,16 @@ internal sealed class SseJsonRpcProcessor
                     );
                 }
 
-                transport.HandleRequest(payload.Request!);
+                var requestContext = new ServerRequestContext(
+                    sessionId,
+                    transport.SessionId,
+                    payload.Request!,
+                    context.RequestAborted,
+                    transport.Metadata
+                );
+                var response = await _server.HandleRequestAsync(requestContext);
+
+                await transport.SendAsync(response);
                 await WriteAcceptedAsync(
                     context,
                     sessionId,
