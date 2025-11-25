@@ -39,6 +39,10 @@ public interface IMcpServer
     /// Processes a JSON-RPC request message.
     /// </summary>
     /// <param name="request">The request message to process.</param>
+    /// <param name="sessionId">Optional session identifier associated with the request.</param>
     /// <returns>A task that returns the response message.</returns>
-    Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(JsonRpcRequestMessage request);
+    Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(
+        JsonRpcRequestMessage request,
+        string? sessionId = null
+    );
 }

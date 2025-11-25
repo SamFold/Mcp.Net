@@ -6,6 +6,7 @@ using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Elicitation;
 using Mcp.Net.Core.Models.Exceptions;
 using Microsoft.Extensions.Logging;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Server.Elicitation;
 
@@ -18,10 +19,12 @@ public interface IElicitationService
     /// Sends an elicitation prompt to the connected client and awaits the user's response.
     /// </summary>
     /// <param name="prompt">Prompt description and schema.</param>
+    /// <param name="sessionId">Optional session identifier that should receive the elicitation.</param>
     /// <param name="cancellationToken">Cancellation token to abort the request.</param>
     /// <returns>The elicitation result from the client.</returns>
     Task<ElicitationResult> RequestAsync(
         ElicitationPrompt prompt,
+        string? sessionId = null,
         CancellationToken cancellationToken = default
     );
 }
@@ -33,12 +36,19 @@ public sealed class ElicitationService : IElicitationService
 {
     private readonly McpServer _server;
     private readonly ILogger<ElicitationService> _logger;
+    private readonly IToolInvocationContextAccessor _contextAccessor;
     private readonly JsonSerializerOptions _serializerOptions;
 
-    public ElicitationService(McpServer server, ILogger<ElicitationService> logger)
+    public ElicitationService(
+        McpServer server,
+        ILogger<ElicitationService> logger,
+        IToolInvocationContextAccessor contextAccessor
+    )
     {
         _server = server ?? throw new ArgumentNullException(nameof(server));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _contextAccessor =
+            contextAccessor ?? throw new ArgumentNullException(nameof(contextAccessor));
         _serializerOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -47,6 +57,7 @@ public sealed class ElicitationService : IElicitationService
 
     public async Task<ElicitationResult> RequestAsync(
         ElicitationPrompt prompt,
+        string? sessionId = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -62,6 +73,14 @@ public sealed class ElicitationService : IElicitationService
 
         _logger.LogInformation("Requesting elicitation: {Message}", prompt.Message);
 
+        var effectiveSessionId = sessionId ?? _contextAccessor.SessionId;
+        if (string.IsNullOrWhiteSpace(effectiveSessionId))
+        {
+            throw new InvalidOperationException(
+                "No active session provided for elicitation. Pass a session id explicitly or invoke the service within a tool invocation context."
+            );
+        }
+
         var payload = new ElicitationCreateParams
         {
             Message = prompt.Message,
@@ -69,7 +88,7 @@ public sealed class ElicitationService : IElicitationService
         };
 
         JsonRpcResponseMessage response = await _server
-            .SendClientRequestAsync("elicitation/create", payload, cancellationToken)
+            .SendClientRequestAsync(effectiveSessionId, "elicitation/create", payload, cancellationToken)
             .ConfigureAwait(false);
 
         var resultElement = NormalizeResultElement(response.Result);

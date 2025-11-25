@@ -8,6 +8,7 @@ using Mcp.Net.Core.JsonRpc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -30,7 +31,14 @@ public class ToolRegistryParameterBindingTests
         };
 
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        return new McpServer(info, connectionManager, options, NullLoggerFactory.Instance);
+        var accessor = new ToolInvocationContextAccessor();
+        return new McpServer(
+            info,
+            connectionManager,
+            options,
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
     }
 
     [Fact]
@@ -50,7 +58,7 @@ public class ToolRegistryParameterBindingTests
             new { name = "caseSensitive.echo", arguments = new { userId = "Value42" } }
         );
 
-        var response = await server.ProcessJsonRpcRequest(request);
+        var response = await server.ProcessJsonRpcRequest(request, "test-session");
         Assert.Null(response.Error);
 
         var toolResult = Assert.IsType<ToolCallResult>(response.Result);
@@ -77,7 +85,7 @@ public class ToolRegistryParameterBindingTests
             new { name = "pascal.echo", arguments = new { ApiKey = "Snake" } }
         );
 
-        var response = await server.ProcessJsonRpcRequest(request);
+        var response = await server.ProcessJsonRpcRequest(request, "test-session");
         Assert.Null(response.Error);
 
         var toolResult = Assert.IsType<ToolCallResult>(response.Result);

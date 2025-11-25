@@ -10,12 +10,13 @@ using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Tests.Server.Elicitation;
 
 public class ElicitationServiceTests
 {
-    private static McpServer CreateServer()
+    private static (McpServer Server, ToolInvocationContextAccessor Accessor) CreateServer()
     {
         var serverInfo = new ServerInfo { Name = "Test Server", Version = "1.0.0" };
         var serverOptions = new ServerOptions
@@ -25,7 +26,16 @@ public class ElicitationServiceTests
         };
 
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        return new McpServer(serverInfo, connectionManager, serverOptions, NullLoggerFactory.Instance);
+        var accessor = new ToolInvocationContextAccessor();
+        var server = new McpServer(
+            serverInfo,
+            connectionManager,
+            serverOptions,
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
+
+        return (server, accessor);
     }
 
     private static ElicitationPrompt CreatePrompt()
@@ -46,12 +56,16 @@ public class ElicitationServiceTests
     [Fact]
     public async Task RequestAsync_ShouldReturnAcceptResult_WhenClientProvidesContent()
     {
-        var server = CreateServer();
+        var (server, accessor) = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushSessionContext(transport.Id());
+        using var scope = accessor.Push(transport.Id());
 
-        var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
+        var service = new ElicitationService(
+            server,
+            NullLogger<ElicitationService>.Instance,
+            accessor
+        );
         var prompt = CreatePrompt();
 
         var requestTask = service.RequestAsync(prompt);
@@ -79,12 +93,16 @@ public class ElicitationServiceTests
     [Fact]
     public async Task RequestAsync_ShouldReturnDecline_WhenClientDeclines()
     {
-        var server = CreateServer();
+        var (server, accessor) = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushSessionContext(transport.Id());
+        using var scope = accessor.Push(transport.Id());
 
-        var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
+        var service = new ElicitationService(
+            server,
+            NullLogger<ElicitationService>.Instance,
+            accessor
+        );
         var prompt = CreatePrompt();
 
         var requestTask = service.RequestAsync(prompt);
@@ -102,12 +120,16 @@ public class ElicitationServiceTests
     [Fact]
     public async Task RequestAsync_ShouldThrow_WhenClientReturnsError()
     {
-        var server = CreateServer();
+        var (server, accessor) = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushSessionContext(transport.Id());
+        using var scope = accessor.Push(transport.Id());
 
-        var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
+        var service = new ElicitationService(
+            server,
+            NullLogger<ElicitationService>.Instance,
+            accessor
+        );
         var prompt = CreatePrompt();
 
         var requestTask = service.RequestAsync(prompt);
@@ -132,13 +154,17 @@ public class ElicitationServiceTests
     [Fact]
     public async Task RequestAsync_ShouldThrowTimeout_WhenClientDoesNotRespond()
     {
-        var server = CreateServer();
+        var (server, accessor) = CreateServer();
         server.ClientRequestTimeout = TimeSpan.FromMilliseconds(50);
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        using var scope = server.PushSessionContext(transport.Id());
+        using var scope = accessor.Push(transport.Id());
 
-        var service = new ElicitationService(server, NullLogger<ElicitationService>.Instance);
+        var service = new ElicitationService(
+            server,
+            NullLogger<ElicitationService>.Instance,
+            accessor
+        );
         var prompt = CreatePrompt();
 
         await FluentActions

@@ -28,46 +28,21 @@ public class McpServer : IMcpServer
         "2024-11-05",
     };
 
-    private readonly Dictionary<string, Func<string, Task<object>>> _methodHandlers = new();
+    private readonly Dictionary<string, Func<string, string?, Task<object>>> _methodHandlers = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
     private readonly IConnectionManager _connectionManager;
     private readonly IToolService _toolService;
     private readonly IResourceService _resourceService;
     private readonly IPromptService _promptService;
     private readonly ICompletionService _completionService;
+    private readonly IToolInvocationContextAccessor _toolInvocationContextAccessor;
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
-    private readonly AsyncLocal<string?> _activeSessionId = new();
     private readonly ServerCapabilities _capabilities;
     private readonly string? _instructions;
     private readonly ILogger<McpServer> _logger;
     private string? _negotiatedProtocolVersion;
-
-    private sealed class SessionContext : IDisposable
-    {
-        private readonly McpServer _server;
-        private readonly string? _previousSession;
-        private bool _disposed;
-
-        public SessionContext(McpServer server, string sessionId)
-        {
-            _server = server;
-            _previousSession = server._activeSessionId.Value;
-            server._activeSessionId.Value = sessionId;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _server._activeSessionId.Value = _previousSession;
-            _disposed = true;
-        }
-    }
 
     public McpServer(
         ServerInfo serverInfo,
@@ -76,7 +51,8 @@ public class McpServer : IMcpServer
         IToolService? toolService = null,
         IResourceService? resourceService = null,
         IPromptService? promptService = null,
-        ICompletionService? completionService = null
+        ICompletionService? completionService = null,
+        IToolInvocationContextAccessor? toolInvocationContextAccessor = null
     )
         : this(
             serverInfo,
@@ -97,7 +73,8 @@ public class McpServer : IMcpServer
         IToolService? toolService = null,
         IResourceService? resourceService = null,
         IPromptService? promptService = null,
-        ICompletionService? completionService = null
+        ICompletionService? completionService = null,
+        IToolInvocationContextAccessor? toolInvocationContextAccessor = null
     )
     {
         _serverInfo = serverInfo;
@@ -106,9 +83,16 @@ public class McpServer : IMcpServer
         _capabilities = options?.Capabilities ?? new ServerCapabilities();
         _logger = loggerFactory.CreateLogger<McpServer>();
         _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
+        _toolInvocationContextAccessor =
+            toolInvocationContextAccessor ?? new ToolInvocationContextAccessor();
+
         _toolService =
             toolService
-            ?? new ToolService(_capabilities, loggerFactory.CreateLogger<ToolService>());
+            ?? new ToolService(
+                _capabilities,
+                loggerFactory.CreateLogger<ToolService>(),
+                _toolInvocationContextAccessor
+            );
         _resourceService =
             resourceService
             ?? new ResourceService(loggerFactory.CreateLogger<ResourceService>());
@@ -141,31 +125,6 @@ public class McpServer : IMcpServer
             serverInfo.Version
         );
     }
-
-    private SessionContext EnterSessionScope(string sessionId)
-    {
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
-        }
-
-        return new SessionContext(this, sessionId);
-    }
-
-    private string GetActiveSessionId()
-    {
-        var sessionId = _activeSessionId.Value;
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new InvalidOperationException(
-                "No active session context is available for server-initiated requests. Provide a session identifier explicitly or ensure the call runs within a request scope."
-            );
-        }
-
-        return sessionId;
-    }
-
-    internal IDisposable PushSessionContext(string sessionId) => EnterSessionScope(sessionId);
 
     /// <summary>
     /// Registers a resource that the server can advertise and serve to clients.
@@ -302,8 +261,7 @@ public class McpServer : IMcpServer
             );
             try
             {
-                using var scope = EnterSessionScope(sessionId);
-                await ProcessRequestAsync(transport, request).ConfigureAwait(false);
+                await ProcessRequestAsync(transport, request, sessionId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -375,7 +333,8 @@ public class McpServer : IMcpServer
 
     private async Task ProcessRequestAsync(
         IServerTransport transport,
-        JsonRpcRequestMessage request
+        JsonRpcRequestMessage request,
+        string sessionId
     )
     {
         // Use timing scope to automatically log execution time
@@ -387,7 +346,7 @@ public class McpServer : IMcpServer
         )
         {
             _logger.LogDebug("Processing request with ID {RequestId}", request.Id);
-            var response = await ProcessJsonRpcRequest(request);
+            var response = await ProcessJsonRpcRequest(request, sessionId);
 
             var hasError = response.Error != null;
             var logLevel = hasError ? LogLevel.Warning : LogLevel.Debug;
@@ -428,16 +387,6 @@ public class McpServer : IMcpServer
         throw new InvalidOperationException(
             $"No active transport found for session '{sessionId}'."
         );
-    }
-
-    internal Task<JsonRpcResponseMessage> SendClientRequestAsync(
-        string method,
-        object? parameters,
-        CancellationToken cancellationToken = default
-    )
-    {
-        var sessionId = GetActiveSessionId();
-        return SendClientRequestAsync(sessionId, method, parameters, cancellationToken);
     }
 
     internal async Task<JsonRpcResponseMessage> SendClientRequestAsync(
@@ -621,10 +570,21 @@ public class McpServer : IMcpServer
         return Task.FromResult<object>(new { tools });
     }
 
-    private async Task<object> HandleToolCall(ToolCallRequest request)
+    private async Task<object> HandleToolCall(
+        ToolCallRequest request,
+        string? sessionId
+    )
     {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new McpException(
+                ErrorCode.InternalError,
+                "Tool call received without an active session."
+            );
+        }
+
         var result = await _toolService
-            .ExecuteAsync(request.Name ?? string.Empty, request.GetArguments())
+            .ExecuteAsync(request.Name ?? string.Empty, request.GetArguments(), sessionId)
             .ConfigureAwait(false);
         return result;
     }
@@ -694,8 +654,20 @@ public class McpServer : IMcpServer
     private void RegisterMethod<TRequest>(string methodName, Func<TRequest, Task<object>> handler)
         where TRequest : IMcpRequest
     {
+        RegisterMethod<TRequest>(
+            methodName,
+            (request, _) => handler(request)
+        );
+    }
+
+    private void RegisterMethod<TRequest>(
+        string methodName,
+        Func<TRequest, string?, Task<object>> handler
+    )
+        where TRequest : IMcpRequest
+    {
         // Store a function that takes a JSON string, deserializes it and calls the handler
-        _methodHandlers[methodName] = async (jsonParams) =>
+        _methodHandlers[methodName] = async (jsonParams, sessionId) =>
         {
             try
             {
@@ -721,7 +693,7 @@ public class McpServer : IMcpServer
                 }
 
                 // Call the handler with the typed request
-                return await handler(request);
+                return await handler(request, sessionId);
             }
             catch (JsonException ex)
             {
@@ -744,7 +716,10 @@ public class McpServer : IMcpServer
         IDictionary<string, object?>? annotations = null
     ) => _toolService.RegisterTool(name, description, inputSchema, handler, annotations);
 
-    public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(JsonRpcRequestMessage request)
+    public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(
+        JsonRpcRequestMessage request,
+        string? sessionId = null
+    )
     {
         if (!_methodHandlers.TryGetValue(request.Method, out var handler))
         {
@@ -763,7 +738,7 @@ public class McpServer : IMcpServer
             }
 
             // Call the handler with the JSON string
-            var result = await handler(paramsJson);
+            var result = await handler(paramsJson, sessionId);
 
             _logger.LogDebug(
                 "Request {Id} ({Method}) handled successfully",

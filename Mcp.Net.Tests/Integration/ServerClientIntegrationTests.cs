@@ -20,6 +20,7 @@ using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Tests.Integration;
 
@@ -36,7 +37,14 @@ public class ServerClientIntegrationTests
             Capabilities = new ServerCapabilities()
         };
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        var server = new McpServer(serverInfo, connectionManager, serverOptions, NullLoggerFactory.Instance);
+        var accessor = new ToolInvocationContextAccessor();
+        var server = new McpServer(
+            serverInfo,
+            connectionManager,
+            serverOptions,
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
         
         // Register a simple calculator tool
         server.RegisterTool(
@@ -143,7 +151,7 @@ public class ServerClientIntegrationTests
     public async Task SseTransport_ShouldHandleElicitation_And_Completions_EndToEnd()
     {
         await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
-            server =>
+            (server, accessor) =>
             {
                 var elicitationSchema = new ElicitationSchema()
                     .AddProperty(
@@ -174,7 +182,8 @@ public class ServerClientIntegrationTests
 
                         var elicitationService = new ElicitationService(
                             server,
-                            NullLogger<ElicitationService>.Instance
+                            NullLogger<ElicitationService>.Instance,
+                            accessor
                         );
 
                         var result = await elicitationService.RequestAsync(prompt).ConfigureAwait(false);
@@ -270,7 +279,7 @@ public class ServerClientIntegrationTests
         streamClient.BaseAddress = new Uri(serverHost.ServerUrl);
 
         using var client = new TestSseMcpClient(
-            new SseClientTransport(requestClient, streamClient, clientLogger),
+            new SseClientTransport(requestClient, clientLogger, null, null, streamClient),
             clientLogger
         );
 
@@ -352,7 +361,7 @@ public class ServerClientIntegrationTests
     public async Task StdioTransport_ShouldHandleElicitation_And_Completions_EndToEnd()
     {
         await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync(
-            server =>
+            (server, accessor) =>
             {
                 var elicitationSchema = new ElicitationSchema()
                     .AddProperty(
@@ -381,7 +390,8 @@ public class ServerClientIntegrationTests
 
                         var elicitationService = new ElicitationService(
                             server,
-                            NullLogger<ElicitationService>.Instance
+                            NullLogger<ElicitationService>.Instance,
+                            accessor
                         );
 
                         var result = await elicitationService.RequestAsync(prompt).ConfigureAwait(false);

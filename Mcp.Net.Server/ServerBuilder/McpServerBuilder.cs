@@ -29,6 +29,7 @@ public class McpServerBuilder
     private bool _securityConfigured = false;
     private bool _noAuthExplicitlyConfigured = false;
     private IConnectionManager? _connectionManager;
+    private IToolInvocationContextAccessor? _toolInvocationContextAccessor;
 
     /// <summary>
     /// Creates a new server builder for stdio transport.
@@ -59,6 +60,11 @@ public class McpServerBuilder
     {
         var loggerFactory = CreateDefaultLoggerFactory();
         return new McpServerBuilder(new SseServerBuilder(loggerFactory, options));
+    }
+
+    internal void UseToolInvocationContextAccessor(IToolInvocationContextAccessor accessor)
+    {
+        _toolInvocationContextAccessor = accessor ?? throw new ArgumentNullException(nameof(accessor));
     }
 
     /// <summary>
@@ -451,7 +457,13 @@ public class McpServerBuilder
         var capabilities = serverOptions.Capabilities ?? new ServerCapabilities();
         serverOptions.Capabilities = capabilities;
 
-        var toolService = new ToolService(capabilities, loggerFactory.CreateLogger<ToolService>());
+        var invocationAccessor =
+            _toolInvocationContextAccessor ?? new ToolInvocationContextAccessor();
+        var toolService = new ToolService(
+            capabilities,
+            loggerFactory.CreateLogger<ToolService>(),
+            invocationAccessor
+        );
         var resourceService = new ResourceService(loggerFactory.CreateLogger<ResourceService>());
         var promptService = new PromptService(capabilities, loggerFactory.CreateLogger<PromptService>());
         var completionService = new CompletionService(
@@ -467,7 +479,8 @@ public class McpServerBuilder
             toolService,
             resourceService,
             promptService,
-            completionService
+            completionService,
+            invocationAccessor
         );
 
         // NOTE: We don't register tools here anymore.

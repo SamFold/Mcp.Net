@@ -28,6 +28,5 @@ public interface IToolService
     /// <summary>
     /// Executes a tool call request and returns the result.
     /// </summary>
-    Task<ToolCallResult> ExecuteAsync(string toolName, JsonElement? arguments);
+    Task<ToolCallResult> ExecuteAsync(string toolName, JsonElement? arguments, string sessionId);
 }
-

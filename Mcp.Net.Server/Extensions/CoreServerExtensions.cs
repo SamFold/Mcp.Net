@@ -56,10 +56,13 @@ public static class CoreServerExtensions
             return opts.Capabilities;
         });
 
+        services.AddSingleton<IToolInvocationContextAccessor, ToolInvocationContextAccessor>();
+
         services.AddSingleton<IToolService>(sp =>
             new ToolService(
                 sp.GetRequiredService<ServerCapabilities>(),
-                sp.GetRequiredService<ILogger<ToolService>>()
+                sp.GetRequiredService<ILogger<ToolService>>(),
+                sp.GetRequiredService<IToolInvocationContextAccessor>()
             )
         );
 
@@ -92,6 +95,7 @@ public static class CoreServerExtensions
             var resourceService = sp.GetRequiredService<IResourceService>();
             var promptService = sp.GetRequiredService<IPromptService>();
             var completionService = sp.GetRequiredService<ICompletionService>();
+            var invocationAccessor = sp.GetRequiredService<IToolInvocationContextAccessor>();
 
             return new McpServer(
                 new ServerInfo
@@ -110,7 +114,8 @@ public static class CoreServerExtensions
                 toolService,
                 resourceService,
                 promptService,
-                completionService
+                completionService,
+                invocationAccessor
             );
         });
 
@@ -183,18 +188,29 @@ public static class CoreServerExtensions
             }
         }
 
+        services.AddSingleton<IToolInvocationContextAccessor, ToolInvocationContextAccessor>();
+
         // Register the server directly
         services.AddSingleton<McpServer>(sp =>
         {
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var logger = loggerFactory.CreateLogger("McpServerBuilder");
 
+            var accessor = sp.GetRequiredService<IToolInvocationContextAccessor>();
+            builder.UseToolInvocationContextAccessor(accessor);
+
             logger.LogInformation("Building McpServer instance");
             var server = builder.Build();
             return server;
         });
 
-        services.AddSingleton<IElicitationService, ElicitationService>();
+        services.AddSingleton<IElicitationService>(sp =>
+            new ElicitationService(
+                sp.GetRequiredService<McpServer>(),
+                sp.GetRequiredService<ILogger<ElicitationService>>(),
+                sp.GetRequiredService<IToolInvocationContextAccessor>()
+            )
+        );
 
         // Register the options for other services to use
         services.AddSingleton(options);

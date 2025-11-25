@@ -11,6 +11,7 @@ using Mcp.Net.Core.Transport;
 using Moq;
 using Mcp.Net.Server.ConnectionManagers;
 using Microsoft.Extensions.Logging.Abstractions;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -33,7 +34,14 @@ public class McpServerTests
         };
 
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        _server = new McpServer(serverInfo, connectionManager, options, NullLoggerFactory.Instance);
+        var accessor = new ToolInvocationContextAccessor();
+        _server = new McpServer(
+            serverInfo,
+            connectionManager,
+            options,
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
     }
 
     [Fact]
@@ -65,7 +73,7 @@ public class McpServerTests
         var request = new JsonRpcRequestMessage("2.0", "test-id", "initialize", paramsElement);
 
         // Act
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         // Assert
         response.Id.Should().Be("test-id");
@@ -112,7 +120,7 @@ public class McpServerTests
 
         var request = new JsonRpcRequestMessage("2.0", "test-id", "initialize", paramsElement);
 
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         response.Error.Should().BeNull();
         var resultObj = JsonSerializer.SerializeToElement(response.Result);
@@ -137,7 +145,7 @@ public class McpServerTests
 
         var request = new JsonRpcRequestMessage("2.0", "test-id", "initialize", paramsElement);
 
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         response.Result.Should().BeNull();
         response.Error.Should().NotBeNull();
@@ -153,7 +161,7 @@ public class McpServerTests
         var request = new JsonRpcRequestMessage("2.0", "test-id", "unknown_method", null);
 
         // Act
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         // Assert
         response.Id.Should().Be("test-id");
@@ -200,7 +208,7 @@ public class McpServerTests
         );
 
         // Act
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         // Assert
         response.Id.Should().Be("tool-call");
@@ -237,7 +245,7 @@ public class McpServerTests
         var request = new JsonRpcRequestMessage("2.0", "list-tools", "tools/list", null);
 
         // Act
-        var response = await _server.ProcessJsonRpcRequest(request);
+        var response = await _server.ProcessJsonRpcRequest(request, "test-session");
 
         // Assert
         response.Id.Should().Be("list-tools");
@@ -321,7 +329,7 @@ public class McpServerTests
         _server.RegisterResource(resource, contents);
 
         var listRequest = new JsonRpcRequestMessage("2.0", "res-list", "resources/list", null);
-        var listResponse = await _server.ProcessJsonRpcRequest(listRequest);
+        var listResponse = await _server.ProcessJsonRpcRequest(listRequest, "test-session");
         listResponse.Error.Should().BeNull();
 
         var listPayload = JsonSerializer.SerializeToElement(listResponse.Result!);
@@ -339,7 +347,7 @@ public class McpServerTests
             readParams
         );
 
-        var readResponse = await _server.ProcessJsonRpcRequest(readRequest);
+        var readResponse = await _server.ProcessJsonRpcRequest(readRequest, "test-session");
         readResponse.Error.Should().BeNull();
 
         var readPayload = JsonSerializer.SerializeToElement(readResponse.Result!);
@@ -379,7 +387,7 @@ public class McpServerTests
         _server.RegisterPrompt(prompt, MessageFactory);
 
         var listRequest = new JsonRpcRequestMessage("2.0", "prompt-list", "prompts/list", null);
-        var listResponse = await _server.ProcessJsonRpcRequest(listRequest);
+        var listResponse = await _server.ProcessJsonRpcRequest(listRequest, "test-session");
         listResponse.Error.Should().BeNull();
 
         var listPayload = JsonSerializer.SerializeToElement(listResponse.Result!);
@@ -397,7 +405,7 @@ public class McpServerTests
             getParams
         );
 
-        var getResponse = await _server.ProcessJsonRpcRequest(getRequest);
+        var getResponse = await _server.ProcessJsonRpcRequest(getRequest, "test-session");
         getResponse.Error.Should().BeNull();
 
         var promptPayload = JsonSerializer.SerializeToElement(getResponse.Result!);

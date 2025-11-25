@@ -9,6 +9,7 @@ using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Tests.Server.Completions;
 
@@ -22,7 +23,14 @@ public class McpServerCompletionTests
             Capabilities = new ServerCapabilities(),
         };
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        return new McpServer(info, connectionManager, options, NullLoggerFactory.Instance);
+        var accessor = new ToolInvocationContextAccessor();
+        return new McpServer(
+            info,
+            connectionManager,
+            options,
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
     }
 
     [Fact]
@@ -46,7 +54,7 @@ public class McpServerCompletionTests
             }
         );
 
-        var response = await server.ProcessJsonRpcRequest(initializeRequest);
+        var response = await server.ProcessJsonRpcRequest(initializeRequest, "test-session");
         response.Error.Should().BeNull();
         response.Result.Should().NotBeNull();
 
@@ -102,7 +110,7 @@ public class McpServerCompletionTests
             }
         );
 
-        var response = await server.ProcessJsonRpcRequest(completionRequest);
+        var response = await server.ProcessJsonRpcRequest(completionRequest, "test-session");
         response.Error.Should().BeNull();
         response.Result.Should().BeOfType<CompletionCompleteResult>();
 
@@ -141,7 +149,7 @@ public class McpServerCompletionTests
             }
         );
 
-        var response = await server.ProcessJsonRpcRequest(request);
+        var response = await server.ProcessJsonRpcRequest(request, "test-session");
         response.Error.Should().NotBeNull();
         response.Error!.Code.Should().Be((int)ErrorCode.InvalidParams);
     }

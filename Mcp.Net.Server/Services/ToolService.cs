@@ -16,14 +16,21 @@ internal sealed class ToolService : IToolService
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, Tool> _tools = new();
-    private readonly Dictionary<string, Func<JsonElement?, Task<ToolCallResult>>> _handlers = new();
+    private readonly Dictionary<string, Func<JsonElement?, string, Task<ToolCallResult>>> _handlers = new();
     private readonly ServerCapabilities _capabilities;
     private readonly ILogger<ToolService> _logger;
+    private readonly IToolInvocationContextAccessor _contextAccessor;
 
-    public ToolService(ServerCapabilities capabilities, ILogger<ToolService> logger)
+    public ToolService(
+        ServerCapabilities capabilities,
+        ILogger<ToolService> logger,
+        IToolInvocationContextAccessor contextAccessor
+    )
     {
         _capabilities = capabilities ?? throw new ArgumentNullException(nameof(capabilities));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _contextAccessor =
+            contextAccessor ?? throw new ArgumentNullException(nameof(contextAccessor));
     }
 
     public void RegisterTool(
@@ -54,10 +61,11 @@ internal sealed class ToolService : IToolService
             Annotations = annotations != null ? CopyAnnotations(annotations) : null,
         };
 
-        Func<JsonElement?, Task<ToolCallResult>> wrappedHandler = async args =>
+        Func<JsonElement?, string, Task<ToolCallResult>> wrappedHandler = async (args, sessionId) =>
         {
             try
             {
+                using var scope = _contextAccessor.Push(sessionId);
                 _logger.LogInformation("Tool {ToolName} invoked", name);
                 return await handler(args).ConfigureAwait(false);
             }
@@ -97,14 +105,23 @@ internal sealed class ToolService : IToolService
         }
     }
 
-    public async Task<ToolCallResult> ExecuteAsync(string toolName, JsonElement? arguments)
+    public async Task<ToolCallResult> ExecuteAsync(
+        string toolName,
+        JsonElement? arguments,
+        string sessionId
+    )
     {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
+        }
+
         if (string.IsNullOrWhiteSpace(toolName))
         {
             throw new McpException(ErrorCode.InvalidParams, "Tool name cannot be empty");
         }
 
-        Func<JsonElement?, Task<ToolCallResult>> handler;
+        Func<JsonElement?, string, Task<ToolCallResult>> handler;
         lock (_sync)
         {
             if (!_handlers.TryGetValue(toolName, out var resolved) || resolved == null)
@@ -134,7 +151,7 @@ internal sealed class ToolService : IToolService
                 _logger.LogInformation("Executing tool {ToolName} with no parameters", toolName);
             }
 
-            var result = await handler(arguments).ConfigureAwait(false);
+            var result = await handler(arguments, sessionId).ConfigureAwait(false);
 
             if (result.IsError)
             {
