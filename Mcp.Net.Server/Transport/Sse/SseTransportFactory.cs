@@ -18,17 +18,14 @@ public interface ISseTransportFactory
 /// </summary>
 public class SseTransportFactory : ISseTransportFactory
 {
-    private readonly SseTransportHost _connectionManager;
     private readonly ILoggerFactory _loggerFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SseTransportFactory"/> class
     /// </summary>
-    /// <param name="connectionManager">Connection manager for SSE transports</param>
     /// <param name="loggerFactory">Logger factory</param>
-    public SseTransportFactory(SseTransportHost connectionManager, ILoggerFactory loggerFactory)
+    public SseTransportFactory(ILoggerFactory loggerFactory)
     {
-        _connectionManager = connectionManager;
         _loggerFactory = loggerFactory;
     }
 
@@ -46,9 +43,6 @@ public class SseTransportFactory : ISseTransportFactory
             responseWriter,
             _loggerFactory.CreateLogger<SseTransport>()
         );
-
-        // Register with connection manager
-        _connectionManager.RegisterTransportAsync(transport).GetAwaiter().GetResult();
 
         return transport;
     }

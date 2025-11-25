@@ -1,12 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.Interfaces;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Server.Transport.Sse;
 
@@ -46,18 +41,6 @@ public class SseTransportHost
         _logger = loggerFactory.CreateLogger<SseTransportHost>();
         _security = new SseRequestSecurity(allowedOrigins, canonicalOrigin, authHandler);
         _messageProcessor = new SseJsonRpcProcessor(_server);
-    }
-
-    public async Task RegisterTransportAsync(SseTransport transport)
-    {
-        await _connectionManager
-            .RegisterTransportAsync(transport.SessionId, transport)
-            .ConfigureAwait(false);
-
-        _logger.LogInformation(
-            "Registered transport with session ID: {SessionId}",
-            transport.SessionId
-        );
     }
 
     /// <summary>
@@ -120,9 +103,12 @@ public class SseTransportHost
             }
         }
 
-        await RegisterTransportAsync(transport).ConfigureAwait(false);
-
         var sessionId = transport.SessionId;
+        logger.LogInformation("Created SSE transport with session ID {SessionId}", sessionId);
+
+        await _connectionManager
+            .RegisterTransportAsync(sessionId, transport)
+            .ConfigureAwait(false);
         logger.LogInformation("Registered SSE transport with session ID {SessionId}", sessionId);
 
         using (
@@ -138,7 +124,7 @@ public class SseTransportHost
             try
             {
                 await _server.ConnectAsync(transport);
-                logger.LogInformation("Server connected to transport");
+                logger.LogInformation("Server connected to transport {SessionId}", sessionId);
 
                 // Keep the connection alive until client disconnects
                 await Task.Delay(-1, context.RequestAborted);

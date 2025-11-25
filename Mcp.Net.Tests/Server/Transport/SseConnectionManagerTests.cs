@@ -230,7 +230,6 @@ public class SseConnectionManagerTests
         var writer = new TestResponseWriter();
         var transport = new SseTransport(writer, loggerFactory.CreateLogger<SseTransport>());
 
-        await connectionManager.RegisterTransportAsync(transport);
         await server.ConnectAsync(transport);
 
         return (connectionManager, transport, writer);
