@@ -180,3 +180,7 @@ Mcp.Net.Examples.ExternalTools/ElasticsearchHackerNewsTool.cs
 Mcp.Net.Examples.ExternalTools/HackerNewsModels.cs
 Mcp.Net.WebUi/Data/Agents/*
 Mcp.Net.Examples.ExternalTools/GoogleSearchTool.cs
+simple_server_codex_config.toml
+.env
+scripts/fake_mcp_server.py
+scripts/simulate_codex_stdio.py
