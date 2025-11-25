@@ -4,39 +4,41 @@ using System.Text.Json;
 namespace Mcp.Net.Core.JsonRpc;
 
 /// <summary>
-/// Extension methods for JsonElement
+/// Helpers for working with <see cref="JsonElement"/> instances.
 /// </summary>
 public static class JsonElementExtensions
 {
     /// <summary>
-    /// Converts a JsonElement to an object
+    /// Attempts to retrieve a property value using a case-insensitive match.
     /// </summary>
-    /// <param name="element">The JsonElement to convert</param>
-    /// <returns>An object representation of the JsonElement</returns>
-    public static object? ToObject(this JsonElement element)
+    public static bool TryGetPropertyIgnoreCase(
+        this JsonElement element,
+        string propertyName,
+        out JsonElement value
+    )
     {
-        switch (element.ValueKind)
+        if (element.ValueKind == JsonValueKind.Object)
         {
-            case JsonValueKind.Object:
-                return element; // Return the JsonElement itself as an object
-            case JsonValueKind.Array:
-                return element; // Return the JsonElement itself as an array
-            case JsonValueKind.String:
-                return element.GetString();
-            case JsonValueKind.Number:
-                if (element.TryGetInt32(out int intValue))
-                    return intValue;
-                if (element.TryGetInt64(out long longValue))
-                    return longValue;
-                return element.GetDouble();
-            case JsonValueKind.True:
+            if (element.TryGetProperty(propertyName, out value))
+            {
                 return true;
-            case JsonValueKind.False:
-                return false;
-            case JsonValueKind.Null:
-                return null;
-            default:
-                return null;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(
+                        property.Name,
+                        propertyName,
+                        StringComparison.OrdinalIgnoreCase
+                    ))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
         }
+
+        value = default;
+        return false;
     }
 }

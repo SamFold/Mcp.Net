@@ -70,11 +70,11 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Check if it's a JSON-RPC request (has id and method)
-            return root.TryGetProperty("jsonrpc", out _)
-                && root.TryGetProperty("id", out _)
-                && root.TryGetProperty("method", out _)
-                && !root.TryGetProperty("result", out _)
-                && !root.TryGetProperty("error", out _);
+            return root.TryGetPropertyIgnoreCase("jsonrpc", out _)
+                && root.TryGetPropertyIgnoreCase("id", out _)
+                && root.TryGetPropertyIgnoreCase("method", out _)
+                && !root.TryGetPropertyIgnoreCase("result", out _)
+                && !root.TryGetPropertyIgnoreCase("error", out _);
         }
         catch (JsonException)
         {
@@ -91,11 +91,11 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Check if it's a JSON-RPC notification (has method but no id)
-            return root.TryGetProperty("jsonrpc", out _)
-                && root.TryGetProperty("method", out _)
-                && !root.TryGetProperty("id", out _)
-                && !root.TryGetProperty("result", out _)
-                && !root.TryGetProperty("error", out _);
+            return root.TryGetPropertyIgnoreCase("jsonrpc", out _)
+                && root.TryGetPropertyIgnoreCase("method", out _)
+                && !root.TryGetPropertyIgnoreCase("id", out _)
+                && !root.TryGetPropertyIgnoreCase("result", out _)
+                && !root.TryGetPropertyIgnoreCase("error", out _);
         }
         catch (JsonException)
         {
@@ -116,9 +116,12 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Check if it's a JSON-RPC response (has id and either result or error)
-            return root.TryGetProperty("jsonrpc", out _)
-                && root.TryGetProperty("id", out _)
-                && (root.TryGetProperty("result", out _) || root.TryGetProperty("error", out _));
+            return root.TryGetPropertyIgnoreCase("jsonrpc", out _)
+                && root.TryGetPropertyIgnoreCase("id", out _)
+                && (
+                    root.TryGetPropertyIgnoreCase("result", out _)
+                    || root.TryGetPropertyIgnoreCase("error", out _)
+                );
         }
         catch (JsonException)
         {
@@ -142,11 +145,18 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Extract required properties
-            var jsonRpc = root.GetProperty("jsonrpc").GetString() ?? "2.0";
+            if (!root.TryGetPropertyIgnoreCase("jsonrpc", out var jsonRpcElement))
+            {
+                throw new JsonException("Missing jsonrpc property.");
+            }
+            var jsonRpc = jsonRpcElement.GetString() ?? "2.0";
 
             // Handle different ID types (string, number, or null)
             string id;
-            var idElement = root.GetProperty("id");
+            if (!root.TryGetPropertyIgnoreCase("id", out var idElement))
+            {
+                throw new JsonException("Missing id property.");
+            }
             if (idElement.ValueKind == JsonValueKind.String)
             {
                 id = idElement.GetString() ?? "0";
@@ -163,11 +173,15 @@ public class JsonRpcMessageParser : IMessageParser
                 id = "0";
             }
 
-            var method = root.GetProperty("method").GetString() ?? "";
+            if (!root.TryGetPropertyIgnoreCase("method", out var methodElement))
+            {
+                throw new JsonException("Missing method property.");
+            }
+            var method = methodElement.GetString() ?? "";
 
             // Extract params if present
             object? parameters = null;
-            if (root.TryGetProperty("params", out var paramsElement))
+            if (root.TryGetPropertyIgnoreCase("params", out var paramsElement))
             {
                 // Convert JsonElement to appropriate .NET object
                 parameters = JsonSerializer.Deserialize<object>(
@@ -195,11 +209,18 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Extract required properties
-            var jsonRpc = root.GetProperty("jsonrpc").GetString() ?? "2.0";
+            if (!root.TryGetPropertyIgnoreCase("jsonrpc", out var jsonRpcElement))
+            {
+                throw new JsonException("Missing jsonrpc property.");
+            }
+            var jsonRpc = jsonRpcElement.GetString() ?? "2.0";
 
             // Handle different ID types (string, number, or null)
             string id;
-            var idElement = root.GetProperty("id");
+            if (!root.TryGetPropertyIgnoreCase("id", out var idElement))
+            {
+                throw new JsonException("Missing id property.");
+            }
             if (idElement.ValueKind == JsonValueKind.String)
             {
                 id = idElement.GetString() ?? "0";
@@ -220,13 +241,13 @@ public class JsonRpcMessageParser : IMessageParser
             object? result = null;
             JsonRpcError? error = null;
 
-            if (root.TryGetProperty("result", out var resultElement))
+            if (root.TryGetPropertyIgnoreCase("result", out var resultElement))
             {
                 // Convert JsonElement to appropriate .NET object
                 result = JsonSerializer.Deserialize<object>(resultElement.GetRawText(), _options);
             }
 
-            if (root.TryGetProperty("error", out var errorElement))
+            if (root.TryGetPropertyIgnoreCase("error", out var errorElement))
             {
                 error = JsonSerializer.Deserialize<JsonRpcError>(
                     errorElement.GetRawText(),
@@ -253,12 +274,20 @@ public class JsonRpcMessageParser : IMessageParser
             var root = doc.RootElement;
 
             // Extract required properties
-            var jsonRpc = root.GetProperty("jsonrpc").GetString() ?? "2.0";
-            var method = root.GetProperty("method").GetString() ?? "";
+            if (!root.TryGetPropertyIgnoreCase("jsonrpc", out var jsonRpcElement))
+            {
+                throw new JsonException("Missing jsonrpc property.");
+            }
+            var jsonRpc = jsonRpcElement.GetString() ?? "2.0";
+            if (!root.TryGetPropertyIgnoreCase("method", out var methodElement))
+            {
+                throw new JsonException("Missing method property.");
+            }
+            var method = methodElement.GetString() ?? "";
 
             // Extract params if present
             object? parameters = null;
-            if (root.TryGetProperty("params", out var paramsElement))
+            if (root.TryGetPropertyIgnoreCase("params", out var paramsElement))
             {
                 // Convert JsonElement to appropriate .NET object
                 parameters = JsonSerializer.Deserialize<object>(
@@ -282,7 +311,7 @@ public class JsonRpcMessageParser : IMessageParser
 
     private IDictionary<string, object?>? ParseMeta(JsonElement root)
     {
-        if (!root.TryGetProperty("_meta", out var metaElement))
+        if (!root.TryGetPropertyIgnoreCase("_meta", out var metaElement))
         {
             return null;
         }

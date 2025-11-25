@@ -228,7 +228,7 @@ internal sealed class SseJsonRpcProcessor
         var root = document.RootElement;
 
         if (
-            !root.TryGetProperty("jsonrpc", out var jsonRpcVersion)
+            !root.TryGetPropertyIgnoreCase("jsonrpc", out var jsonRpcVersion)
             || jsonRpcVersion.GetString() != "2.0"
         )
         {
@@ -236,13 +236,16 @@ internal sealed class SseJsonRpcProcessor
             return false;
         }
 
-        var hasMethod = root.TryGetProperty("method", out var methodElement);
+        var hasMethod = root.TryGetPropertyIgnoreCase("method", out var methodElement);
         var hasId =
-            root.TryGetProperty("id", out var idElement)
+            root.TryGetPropertyIgnoreCase("id", out var idElement)
             && idElement.ValueKind != JsonValueKind.Null;
         var isResponsePayload =
             !hasMethod
-            && (root.TryGetProperty("result", out _) || root.TryGetProperty("error", out _));
+            && (
+                root.TryGetPropertyIgnoreCase("result", out _)
+                || root.TryGetPropertyIgnoreCase("error", out _)
+            );
 
         var method = hasMethod ? methodElement.GetString() : null;
 
@@ -314,7 +317,7 @@ internal sealed class SseJsonRpcProcessor
             try
             {
                 var doc = JsonDocument.Parse(rawContent);
-                if (doc.RootElement.TryGetProperty("id", out var idElement))
+                if (doc.RootElement.TryGetPropertyIgnoreCase("id", out var idElement))
                 {
                     string idValue =
                         idElement.ValueKind == JsonValueKind.Number
