@@ -12,6 +12,7 @@ using Moq;
 using Mcp.Net.Server.ConnectionManagers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.Services;
+using Mcp.Net.Server.Models;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -225,6 +226,54 @@ public class McpServerTests
         ((TextContent)resultObj.Content.First())
             .Text.Should()
             .Be("Received message: Hello, world!");
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_PassSessionId_ToTool()
+    {
+        var accessor = new ToolInvocationContextAccessor();
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: accessor
+        );
+
+        server.RegisterTool(
+            "echoSession",
+            "Returns the current session id",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            _ =>
+                Task.FromResult(
+                    new ToolCallResult
+                    {
+                        Content = new[] { new TextContent { Text = accessor.SessionId ?? "<none>" } },
+                    }
+                )
+        );
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "call-1",
+            "tools/call",
+            JsonSerializer.SerializeToElement(new { name = "echoSession" })
+        );
+
+        var context = new ServerRequestContext("session-123", "transport-abc", request);
+
+        var response = await server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        var result = JsonSerializer.Deserialize<ToolCallResult>(
+            JsonSerializer.Serialize(response.Result)
+        );
+        result.Should().NotBeNull();
+        result!.Content.Should().ContainSingle()
+            .Which.Should().BeOfType<TextContent>()
+            .Subject.As<TextContent>().Text.Should().Be("session-123");
     }
 
     [Fact]

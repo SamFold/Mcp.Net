@@ -15,6 +15,7 @@ using Mcp.Net.Core.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Logging;
 using Mcp.Net.Server.Services;
+using Mcp.Net.Server.Models;
 using Mcp.Net.Server.Completions;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
@@ -768,5 +769,58 @@ public class McpServer : IMcpServer
             );
             return CreateErrorResponse(request.Id, ErrorCode.InternalError, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Entry point for hosts to process a JSON-RPC request with explicit context.
+    /// </summary>
+    /// <param name="context">Request context containing session, transport, and payload.</param>
+    /// <returns>The JSON-RPC response message.</returns>
+    public Task<JsonRpcResponseMessage> HandleRequestAsync(ServerRequestContext context)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        return ProcessJsonRpcRequest(context.Request, context.SessionId);
+    }
+
+    /// <summary>
+    /// Entry point for hosts to process a JSON-RPC notification.
+    /// </summary>
+    /// <param name="context">Notification context containing session, transport, and payload.</param>
+    public Task HandleNotificationAsync(ServerRequestContext context)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        HandleNotification(
+            new JsonRpcNotificationMessage(context.Request.JsonRpc, context.Request.Method, context.Request.Params)
+        );
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Entry point for hosts to surface client responses to server-initiated requests.
+    /// </summary>
+    /// <param name="sessionId">The session that originated the request.</param>
+    /// <param name="response">The client response.</param>
+    public Task HandleClientResponseAsync(string sessionId, JsonRpcResponseMessage response)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
+        }
+
+        if (response is null)
+        {
+            throw new ArgumentNullException(nameof(response));
+        }
+
+        HandleClientResponse(response);
+        return Task.CompletedTask;
     }
 }
