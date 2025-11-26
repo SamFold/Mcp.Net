@@ -79,18 +79,21 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
     private readonly IHost _host;
     private readonly HttpClient _httpClient;
     private readonly SseTransportConnectionManager _connectionManager;
+    private readonly IConnectionManager _connectionRegistry;
 
     private SseIntegrationTestServer(
         IHost host,
         HttpClient httpClient,
         McpServer server,
-        SseTransportConnectionManager connectionManager
+        SseTransportConnectionManager connectionManager,
+        IConnectionManager connectionRegistry
     )
     {
         _host = host;
         _httpClient = httpClient;
         Server = server;
         _connectionManager = connectionManager;
+        _connectionRegistry = connectionRegistry;
         ServerUrl = new Uri(_httpClient.BaseAddress!, "/mcp").ToString();
     }
 
@@ -99,6 +102,8 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
     public string ServerUrl { get; }
 
     public HttpClient CreateHttpClient() => _httpClient;
+
+    public IConnectionManager ConnectionRegistry => _connectionRegistry;
 
     public static async Task<SseIntegrationTestServer> StartAsync(
         Action<McpServer, IToolInvocationContextAccessor>? configureServer,
@@ -171,8 +176,9 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
         testClient.BaseAddress ??= new Uri("http://localhost");
 
         var transportHost = host.Services.GetRequiredService<SseTransportConnectionManager>();
+        var registry = host.Services.GetRequiredService<IConnectionManager>();
 
-        return new SseIntegrationTestServer(host, testClient, server, transportHost);
+        return new SseIntegrationTestServer(host, testClient, server, transportHost, registry);
     }
 
     public async ValueTask DisposeAsync()

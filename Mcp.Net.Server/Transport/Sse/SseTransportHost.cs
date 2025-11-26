@@ -139,9 +139,23 @@ public class SseTransportHost
             }
             finally
             {
+                // Cancel pending requests for this session when the transport closes.
+                CancelPendingRequests(sessionId);
                 await transport.CloseAsync();
                 logger.LogInformation("SSE transport closed");
             }
+        }
+    }
+
+    private void CancelPendingRequests(string sessionId)
+    {
+        try
+        {
+            _server.HandleTransportClosed(sessionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to cancel pending requests for session {SessionId}", sessionId);
         }
     }
 

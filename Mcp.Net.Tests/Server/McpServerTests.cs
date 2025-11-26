@@ -277,6 +277,35 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task HandleTransportClosed_Should_CancelPendingClientRequests()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance,
+            toolInvocationContextAccessor: new ToolInvocationContextAccessor()
+        )
+        {
+            ClientRequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        var transport = new Mock<IServerTransport>();
+        transport.Setup(t => t.Id()).Returns("session-close");
+        transport.Setup(t => t.SendRequestAsync(It.IsAny<JsonRpcRequestMessage>()))
+            .Returns(Task.CompletedTask);
+
+        await connectionManager.RegisterTransportAsync("session-close", transport.Object);
+
+        var pendingTask = server.SendClientRequestAsync("session-close", "noop", null);
+
+        server.HandleTransportClosed("session-close");
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => pendingTask);
+    }
+
+    [Fact]
     public async Task HandleToolsList_Should_Return_Registered_Tools()
     {
         // Arrange

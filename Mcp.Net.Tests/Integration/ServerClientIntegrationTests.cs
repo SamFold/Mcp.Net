@@ -358,6 +358,61 @@ public class ServerClientIntegrationTests
     }
 
     [Fact]
+    public async Task SseTransport_Should_Handle_Request_Response_And_Cancel_On_Close()
+    {
+        await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
+            (server, accessor) =>
+            {
+                server.RegisterTool(
+                    "echo",
+                    "Echo tool",
+                    JsonSerializer.SerializeToElement(new { type = "object", properties = new { message = new { type = "string" } } }),
+                    args =>
+                    {
+                        var message = args?.GetProperty("message").GetString();
+                        return Task.FromResult(
+                            new ToolCallResult
+                            {
+                                Content = new[] { new TextContent { Text = message ?? string.Empty } },
+                            }
+                        );
+                    }
+                );
+            }
+        );
+
+        using var requestClient = serverHost.CreateHttpClient();
+        requestClient.BaseAddress = new Uri(serverHost.ServerUrl);
+
+        using var streamClient = serverHost.CreateHttpClient();
+        streamClient.BaseAddress = new Uri(serverHost.ServerUrl);
+
+        var clientLogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClient");
+
+        using var client = new TestSseMcpClient(
+            new SseClientTransport(requestClient, clientLogger, null, null, streamClient),
+            clientLogger
+        );
+
+        await client.Initialize();
+
+        // Issue a simple tool call over SSE
+        var callParams = new ToolCallRequest
+        {
+            Name = "echo",
+            Arguments = JsonSerializer.SerializeToElement(new { message = "hi" })
+        };
+
+        var response = await client.CallTool(callParams.Name, callParams.Arguments);
+        response.Should().NotBeNull();
+        response.IsError.Should().BeFalse();
+        response.Content.Should().ContainSingle()
+            .Which.Should().BeOfType<TextContent>()
+            .Subject.As<TextContent>().Text.Should().Be("hi");
+        await serverHost.DisposeAsync();
+    }
+
+    [Fact]
     public async Task StdioTransport_ShouldHandleElicitation_And_Completions_EndToEnd()
     {
         await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync(
@@ -560,6 +615,7 @@ public class ServerClientIntegrationTests
 internal sealed class TestSseMcpClient : McpClient
 {
     private readonly IClientTransport _transport;
+    private string? _sessionId;
 
     public TestSseMcpClient(IClientTransport transport, ILogger logger)
         : base("IntegrationClient", "1.0.0", logger)
@@ -575,6 +631,19 @@ internal sealed class TestSseMcpClient : McpClient
     {
         await _transport.StartAsync().ConfigureAwait(false);
         await InitializeProtocolAsync(_transport).ConfigureAwait(false);
+
+        // Capture the negotiated session id from the transport if available.
+        _sessionId = (_transport as IServerTransport)?.Id();
+    }
+
+    public Task<string> GetSessionIdAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_sessionId))
+        {
+            return Task.FromResult(_sessionId);
+        }
+
+        throw new InvalidOperationException("Session id is not available for this client.");
     }
 
     protected override Task<object> SendRequest(string method, object? parameters = null)

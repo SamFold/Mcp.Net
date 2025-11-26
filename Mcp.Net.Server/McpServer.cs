@@ -486,6 +486,20 @@ public class McpServer : IMcpServer
         CancelPendingRequests(new OperationCanceledException("Transport connection closed."));
     }
 
+    /// <summary>
+    /// Cancels pending client requests for a specific session when its transport closes.
+    /// </summary>
+    /// <param name="sessionId">The session associated with the transport that closed.</param>
+    public void HandleTransportClosed(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
+        }
+
+        CancelPendingRequests(new OperationCanceledException($"Transport {sessionId} closed."));
+    }
+
     private void CancelPendingRequests(Exception? reason)
     {
         foreach (var pending in _pendingClientRequests.ToArray())

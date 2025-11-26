@@ -152,7 +152,20 @@ internal sealed class SseJsonRpcProcessor
                     "JSON-RPC Notification: Method={Method}",
                     payload.Notification!.Method
                 );
-                transport.HandleNotification(payload.Notification!);
+                var notificationContext = new ServerRequestContext(
+                    sessionId,
+                    transport.SessionId,
+                    new JsonRpcRequestMessage(
+                        payload.Notification!.JsonRpc,
+                        string.Empty,
+                        payload.Notification!.Method,
+                        payload.Notification!.Params
+                    ),
+                    context.RequestAborted,
+                    transport.Metadata
+                );
+
+                await _server.HandleNotificationAsync(notificationContext);
                 await WriteAcceptedAsync(
                     context,
                     sessionId,
