@@ -23,9 +23,11 @@ public class SseTransport : TransportBase, IServerTransport
     private int _bytesReceived;
     private int _bytesSent;
 
+#pragma warning disable 0067 // SSE ingress goes through the server entry points instead of transport events
     public event Action<JsonRpcRequestMessage>? OnRequest;
     public event Action<JsonRpcNotificationMessage>? OnNotification;
     public event Action<JsonRpcResponseMessage>? OnResponse;
+#pragma warning restore 0067
 
     /// <summary>
     /// Gets the unique identifier for this transport session.
@@ -311,146 +313,6 @@ public class SseTransport : TransportBase, IServerTransport
         string sseData = string.Format(SSE_DATA_FORMAT, data);
         await ResponseWriter.WriteAsync(sseData, CancellationTokenSource.Token);
         await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
-    }
-
-    private void PublishRequest(JsonRpcRequestMessage request)
-    {
-        Logger.LogDebug("Processing request: Method={Method}, Id={Id}", request.Method, request.Id);
-        OnRequest?.Invoke(request);
-    }
-
-    private void PublishNotification(JsonRpcNotificationMessage notification)
-    {
-        Logger.LogDebug("Processing notification: Method={Method}", notification.Method);
-        OnNotification?.Invoke(notification);
-    }
-
-    private void PublishResponse(JsonRpcResponseMessage response)
-    {
-        Logger.LogDebug(
-            "Processing response: Id={Id}, HasError={HasError}",
-            response.Id,
-            response.Error != null
-        );
-        OnResponse?.Invoke(response);
-    }
-
-    /// <summary>
-    /// Handles an HTTP-based JSON-RPC request message.
-    /// </summary>
-    /// <param name="requestMessage">The JSON-RPC request message</param>
-    public void HandleRequest(JsonRpcRequestMessage requestMessage)
-    {
-        if (IsClosed)
-        {
-            throw new InvalidOperationException("Transport is closed");
-        }
-
-        using (Logger.BeginConnectionScope(SessionId))
-        {
-            try
-            {
-                if (requestMessage != null && !string.IsNullOrEmpty(requestMessage.Method))
-                {
-                    // Update statistics
-                    _messagesReceived++;
-                    _bytesReceived += System
-                        .Text.Json.JsonSerializer.Serialize(requestMessage)
-                        .Length;
-
-                    // Log detailed request info
-                    Logger.LogJsonRpcRequest(requestMessage, SessionId);
-
-                    PublishRequest(requestMessage);
-                }
-                else
-                {
-                    Logger.LogWarning(
-                        "Received invalid JSON-RPC request with missing method or null message from {SessionId}",
-                        SessionId
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogTransportError(
-                    ex,
-                    SessionId,
-                    "HandleRequest",
-                    TRANSPORT_TYPE,
-                    requestMessage?.Id
-                );
-                throw;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Handles a JSON-RPC response received from the client.
-    /// </summary>
-    /// <param name="responseMessage">The JSON-RPC response message.</param>
-    public void HandleResponse(JsonRpcResponseMessage responseMessage)
-    {
-        if (IsClosed)
-        {
-            throw new InvalidOperationException("Transport is closed");
-        }
-
-        using (Logger.BeginConnectionScope(SessionId))
-        {
-            Logger.LogDebug(
-                "Processing client response: Id={Id}, HasError={HasError}",
-                responseMessage.Id,
-                responseMessage.Error != null
-            );
-
-                PublishResponse(responseMessage);
-        }
-    }
-
-    /// <summary>
-    /// Handles an HTTP-based JSON-RPC notification message.
-    /// </summary>
-    /// <param name="notificationMessage">The JSON-RPC notification message</param>
-    public void HandleNotification(JsonRpcNotificationMessage notificationMessage)
-    {
-        if (IsClosed)
-        {
-            throw new InvalidOperationException("Transport is closed");
-        }
-
-        using (Logger.BeginConnectionScope(SessionId))
-        {
-            try
-            {
-                if (
-                    notificationMessage != null
-                    && !string.IsNullOrEmpty(notificationMessage.Method)
-                )
-                {
-                    _messagesReceived++;
-                    _bytesReceived += System
-                        .Text.Json.JsonSerializer.Serialize(notificationMessage)
-                        .Length;
-
-                    Logger.LogJsonRpcNotification(notificationMessage, SessionId);
-
-                    PublishNotification(notificationMessage);
-                }
-                else
-                {
-                    Logger.LogWarning(
-                        "Received invalid JSON-RPC notification with missing method or null message from {SessionId}",
-                        SessionId
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogTransportError(ex, SessionId, "HandleNotification", TRANSPORT_TYPE);
-                throw;
-            }
-        }
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -17,6 +18,7 @@ using Mcp.Net.Core.Transport;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -358,7 +360,7 @@ public class ServerClientIntegrationTests
     }
 
     [Fact]
-    public async Task SseTransport_Should_Handle_Request_Response_And_Cancel_On_Close()
+    public async Task SseTransport_Should_Handle_Request_Response_Without_Event_Wiring()
     {
         await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
             (server, accessor) =>
@@ -395,6 +397,32 @@ public class ServerClientIntegrationTests
         );
 
         await client.Initialize();
+
+        var registry = serverHost.ConnectionRegistry.Should().BeOfType<InMemoryConnectionManager>().Subject;
+        var connectionsField = typeof(InMemoryConnectionManager).GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic);
+        connectionsField.Should().NotBeNull();
+
+        var connections = connectionsField!.GetValue(registry);
+        connections.Should().NotBeNull();
+
+        var keysProperty = connections!.GetType().GetProperty("Keys");
+        keysProperty.Should().NotBeNull();
+
+        var sessionId = ((ICollection<string>)keysProperty!.GetValue(connections)!).Should().ContainSingle().Which;
+
+        var transport = (await registry.GetTransportAsync(sessionId)).Should().BeOfType<SseTransport>().Subject;
+
+        int GetHandlerCount(string fieldName)
+        {
+            var field = typeof(SseTransport).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            field.Should().NotBeNull();
+            var value = field!.GetValue(transport) as Delegate;
+            return value?.GetInvocationList().Length ?? 0;
+        }
+
+        GetHandlerCount("OnRequest").Should().Be(0);
+        GetHandlerCount("OnNotification").Should().Be(0);
+        GetHandlerCount("OnResponse").Should().Be(0);
 
         // Issue a simple tool call over SSE
         var callParams = new ToolCallRequest
