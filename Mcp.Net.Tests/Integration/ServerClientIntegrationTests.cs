@@ -19,6 +19,7 @@ using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Transport.Sse;
+using Mcp.Net.Server.Transport.Stdio;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -438,6 +439,76 @@ public class ServerClientIntegrationTests
             .Which.Should().BeOfType<TextContent>()
             .Subject.As<TextContent>().Text.Should().Be("hi");
         await serverHost.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StdioTransport_Should_Handle_Request_Response_Without_Event_Wiring()
+    {
+        await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync(
+            (server, accessor) =>
+            {
+                server.RegisterTool(
+                    "echo",
+                    "Echo tool",
+                    JsonSerializer.SerializeToElement(new { type = "object", properties = new { message = new { type = "string" } } }),
+                    args =>
+                    {
+                        var message = args?.GetProperty("message").GetString();
+                        return Task.FromResult(
+                            new ToolCallResult
+                            {
+                                Content = new[] { new TextContent { Text = message ?? string.Empty } },
+                            }
+                        );
+                    }
+                );
+            }
+        );
+
+        var registry = stdioServer.ConnectionRegistry.Should().BeOfType<InMemoryConnectionManager>().Subject;
+        var connectionsField = typeof(InMemoryConnectionManager).GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic);
+        connectionsField.Should().NotBeNull();
+
+        var connections = connectionsField!.GetValue(registry);
+        connections.Should().NotBeNull();
+
+        var keysProperty = connections!.GetType().GetProperty("Keys");
+        keysProperty.Should().NotBeNull();
+
+        var sessionId = ((ICollection<string>)keysProperty!.GetValue(connections)!).Should().ContainSingle().Which;
+        var transport = (await registry.GetTransportAsync(sessionId)).Should().BeOfType<StdioTransport>().Subject;
+
+        var requestSeen = false;
+        var notificationSeen = false;
+        var responseSeen = false;
+
+        transport.OnRequest += _ => requestSeen = true;
+        transport.OnNotification += _ => notificationSeen = true;
+        transport.OnResponse += _ => responseSeen = true;
+
+        using var client = new TestStdioMcpClient(
+            new StdioClientTransport(stdioServer.ClientInput, stdioServer.ClientOutput, "", NullLogger<StdioClientTransport>.Instance),
+            NullLoggerFactory.Instance.CreateLogger("StdioIntegrationClient")
+        );
+
+        await client.Initialize();
+
+        var callParams = new ToolCallRequest
+        {
+            Name = "echo",
+            Arguments = JsonSerializer.SerializeToElement(new { message = "hi" })
+        };
+
+        var response = await client.CallTool(callParams.Name, callParams.Arguments);
+        response.Should().NotBeNull();
+        response.IsError.Should().BeFalse();
+        response.Content.Should().ContainSingle()
+            .Which.Should().BeOfType<TextContent>()
+            .Subject.As<TextContent>().Text.Should().Be("hi");
+
+        requestSeen.Should().BeFalse();
+        notificationSeen.Should().BeFalse();
+        responseSeen.Should().BeFalse();
     }
 
     [Fact]

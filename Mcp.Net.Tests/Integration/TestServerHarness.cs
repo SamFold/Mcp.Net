@@ -208,6 +208,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
     private readonly Stream _clientOutput;
     private readonly Pipe _clientToServer;
     private readonly Pipe _serverToClient;
+    private readonly IConnectionManager _connectionManager;
 
     private StdioIntegrationTestServer(
         McpServer server,
@@ -218,7 +219,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         Stream clientInput,
         Stream clientOutput,
         Pipe clientToServer,
-        Pipe serverToClient
+        Pipe serverToClient,
+        IConnectionManager connectionManager
     )
     {
         Server = server;
@@ -230,6 +232,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         _clientOutput = clientOutput;
         _clientToServer = clientToServer;
         _serverToClient = serverToClient;
+        _connectionManager = connectionManager;
     }
 
     public McpServer Server { get; }
@@ -241,6 +244,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
     public Stream ServerInput => _serverInput;
 
     public Stream ServerOutput => _serverOutput;
+
+    public IConnectionManager ConnectionRegistry => _connectionManager;
 
     public static async Task<StdioIntegrationTestServer> StartAsync(
         Action<McpServer, IToolInvocationContextAccessor>? configureServer,
@@ -308,7 +313,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
             clientInput,
             clientOutput,
             clientToServer,
-            serverToClient
+            serverToClient,
+            connectionManager
         );
     }
 

@@ -18,6 +18,7 @@ using Mcp.Net.Server.Services;
 using Mcp.Net.Server.Models;
 using Mcp.Net.Server.Completions;
 using Mcp.Net.Server.Transport.Sse;
+using Mcp.Net.Server.Transport.Stdio;
 using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 
 public class McpServer : IMcpServer
@@ -224,15 +225,26 @@ public class McpServer : IMcpServer
             sessionId
         );
 
-        if (transport is not SseTransport)
+        if (transport is SseTransport)
+        {
+            _logger.LogDebug(
+                "Skipping inbound event wiring for SSE transport {TransportId}",
+                sessionId
+            );
+        }
+        else if (transport is StdioTransport stdioTransport)
+        {
+            stdioTransport.BindServer(this);
+            _logger.LogDebug(
+                "Skipping inbound event wiring for stdio transport {TransportId}",
+                sessionId
+            );
+        }
+        else
         {
             transport.OnRequest += request => HandleRequestWithTransport(transport, request);
             transport.OnNotification += HandleNotification;
             transport.OnResponse += HandleClientResponse;
-        }
-        else
-        {
-            _logger.LogDebug("Skipping inbound event wiring for SSE transport {TransportId}", sessionId);
         }
 
         transport.OnError += HandleTransportError;
