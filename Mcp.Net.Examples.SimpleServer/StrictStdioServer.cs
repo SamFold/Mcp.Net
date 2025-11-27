@@ -132,25 +132,6 @@ internal static class StrictStdioServer
                 // Silently fail - never let logging errors break the protocol
             }
         }
-        string FormatPayload(object? payload)
-        {
-            if (payload == null)
-            {
-                return "<null>";
-            }
-
-            try
-            {
-                string raw = payload is JsonElement element
-                    ? element.GetRawText()
-                    : JsonSerializer.Serialize(payload);
-                return raw.Length > 2000 ? raw.Substring(0, 2000) + "..." : raw;
-            }
-            catch
-            {
-                return "<unserializable>";
-            }
-        }
 
         // Use default log level or parsed one
         LogLevel logLevel = string.IsNullOrEmpty(options.LogLevel)
@@ -325,54 +306,54 @@ internal static class StrictStdioServer
         LogToFile("Creating custom StdioTransport with explicit streams");
         var transport = new LoggingStdioTransport(
             "0",
-            originalStdin,  // Use the captured stdin 
+            originalStdin,  // Use the captured stdin
             originalStdout, // Use the captured stdout
             loggerFactory.CreateLogger<Mcp.Net.Server.Transport.Stdio.StdioTransport>(),
             LogToFile
         );
-        transport.OnRequest += request =>
-        {
-            string payload = FormatPayload(new
-            {
-                request.JsonRpc,
-                request.Id,
-                request.Method,
-                request.Params,
-            });
-            LogToFile($"Transport received request: {payload}");
-        };
-        transport.OnResponse += response =>
-        {
-            string payload = response.Result != null
-                ? FormatPayload(response.Result)
-                : FormatPayload(response.Error);
-            LogToFile($"Transport received response: {response.Id} payload={payload}");
-        };
         transport.OnError += ex => LogToFile($"Transport error: {ex.Message}");
-        transport.OnNotification += notification =>
-        {
-            string payload = notification.Params != null
-                ? FormatPayload(notification.Params)
-                : "<no params>";
-            LogToFile($"Transport received notification: {notification.Method} payload={payload}");
-        };
-        
+
         try
         {
             // Connect directly to the transport instead of using StdioServerBuilder
             LogToFile("Connecting server directly to transport");
             await server.ConnectAsync(transport);
-            LogToFile("Server started successfully");
-            
+            LogToFile("Server connected to transport");
+
+            // Create and start the ingress host to read from stdin and dispatch to server
+            var ingressCts = new CancellationTokenSource();
+            transport.OnClose += () => ingressCts.Cancel();
+            transport.OnError += _ => ingressCts.Cancel();
+
+            var ingressHost = new StdioIngressHost(
+                server,
+                transport,
+                loggerFactory.CreateLogger<StdioIngressHost>()
+            );
+            var ingressTask = ingressHost.RunAsync(ingressCts.Token);
+            LogToFile("StdioIngressHost started");
+
             // Create a task that completes when the transport closes
             var transportTask = new TaskCompletionSource<bool>();
             transport.OnClose += () => transportTask.TrySetResult(true);
-            
+
             // Wait for shutdown
             await Task.WhenAny(
                 Task.Delay(Timeout.Infinite, cancellationSource.Token),
-                transportTask.Task
+                transportTask.Task,
+                ingressTask
             );
+
+            // Cancel the ingress host if we exit for other reasons
+            ingressCts.Cancel();
+            try
+            {
+                await ingressTask;
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown
+            }
         }
         catch (OperationCanceledException)
         {

@@ -6,16 +6,14 @@ using Mcp.Net.Core.Transport;
 namespace Mcp.Net.Tests.TestUtils;
 
 /// <summary>
-/// A test implementation of IServerTransport for unit testing
+/// A test implementation of IServerTransport for unit testing.
+/// Transports are outbound-only; use McpServer.HandleRequestAsync/HandleClientResponseAsync for inbound dispatch.
 /// </summary>
 public class MockTransport : IServerTransport
 {
     private readonly List<JsonRpcResponseMessage> _sentMessages = new();
     private readonly string _id;
 
-    public event Action<JsonRpcRequestMessage>? OnRequest;
-    public event Action<JsonRpcNotificationMessage>? OnNotification;
-    public event Action<JsonRpcResponseMessage>? OnResponse;
     public event Action<Exception>? OnError;
     public event Action? OnClose;
 
@@ -59,21 +57,6 @@ public class MockTransport : IServerTransport
         IsClosed = true;
         OnClose?.Invoke();
         return Task.CompletedTask;
-    }
-
-    public void SimulateRequest(JsonRpcRequestMessage request)
-    {
-        OnRequest?.Invoke(request);
-    }
-
-    public void SimulateNotification(JsonRpcNotificationMessage notification)
-    {
-        OnNotification?.Invoke(notification);
-    }
-
-    public void SimulateResponse(JsonRpcResponseMessage response)
-    {
-        OnResponse?.Invoke(response);
     }
 
     public void SimulateError(Exception exception)

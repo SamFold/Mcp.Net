@@ -70,6 +70,9 @@ public class ElicitationServiceTests
 
         var requestTask = service.RequestAsync(prompt);
 
+        // Allow the request to be sent
+        await Task.Delay(10);
+
         transport.SentRequests.Should().ContainSingle();
         var request = transport.SentRequests[0];
         request.Method.Should().Be("elicitation/create");
@@ -80,7 +83,9 @@ public class ElicitationServiceTests
             content = new { name = "Rogue Trader" },
         };
 
-        transport.SimulateResponse(
+        // Route client response through the server entry point (new architecture)
+        await server.HandleClientResponseAsync(
+            transport.Id(),
             new JsonRpcResponseMessage("2.0", request.Id, responsePayload, null)
         );
 
@@ -106,9 +111,15 @@ public class ElicitationServiceTests
         var prompt = CreatePrompt();
 
         var requestTask = service.RequestAsync(prompt);
+
+        // Allow the request to be sent
+        await Task.Delay(10);
+
         var request = transport.SentRequests.Single();
 
-        transport.SimulateResponse(
+        // Route client response through the server entry point (new architecture)
+        await server.HandleClientResponseAsync(
+            transport.Id(),
             new JsonRpcResponseMessage("2.0", request.Id, new { action = "decline" }, null)
         );
 
@@ -133,6 +144,10 @@ public class ElicitationServiceTests
         var prompt = CreatePrompt();
 
         var requestTask = service.RequestAsync(prompt);
+
+        // Allow the request to be sent
+        await Task.Delay(10);
+
         var request = transport.SentRequests.Single();
 
         var error = new JsonRpcError
@@ -141,7 +156,9 @@ public class ElicitationServiceTests
             Message = "Missing schema",
         };
 
-        transport.SimulateResponse(
+        // Route client response through the server entry point (new architecture)
+        await server.HandleClientResponseAsync(
+            transport.Id(),
             new JsonRpcResponseMessage("2.0", request.Id, null, error)
         );
 

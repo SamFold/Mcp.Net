@@ -39,6 +39,14 @@ public class StdioServerBuilder : IMcpServerBuilder, ITransportBuilder
         
         var transport = BuildTransport();
         await server.ConnectAsync(transport);
+
+        var cts = new CancellationTokenSource();
+        transport.OnClose += () => cts.Cancel();
+        transport.OnError += _ => cts.Cancel();
+
+        var ingressLogger = _loggerFactory.CreateLogger<Transport.Stdio.StdioIngressHost>();
+        var ingressHost = new Transport.Stdio.StdioIngressHost(server, (Transport.Stdio.StdioTransport)transport, ingressLogger);
+        var ingressTask = ingressHost.RunAsync(cts.Token);
         
         _logger.LogInformation("Server started with stdio transport");
         
@@ -47,30 +55,22 @@ public class StdioServerBuilder : IMcpServerBuilder, ITransportBuilder
         transport.OnClose += () => tcs.TrySetResult(true);
         
         // Wait for the transport to close
-        await tcs.Task;
+        await Task.WhenAny(tcs.Task, ingressTask);
+        cts.Cancel();
+        await ingressTask;
     }
 
     /// <inheritdoc />
     public IServerTransport BuildTransport()
     {
         _logger.LogDebug("Building stdio transport");
-        
+
         var transport = new StdioTransport(
             (Interlocked.Increment(ref _count) - 1).ToString(),
             Console.OpenStandardInput(),
             Console.OpenStandardOutput(),
             _loggerFactory.CreateLogger<StdioTransport>()
         );
-
-        // Configure transport event handlers
-        transport.OnRequest += request =>
-        {
-            _logger.LogDebug(
-                "JSON-RPC Request: Method={Method}, Id={Id}",
-                request.Method,
-                request.Id ?? "null"
-            );
-        };
 
         transport.OnError += ex =>
         {

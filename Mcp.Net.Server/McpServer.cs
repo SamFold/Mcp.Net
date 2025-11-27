@@ -221,31 +221,9 @@ public class McpServer : IMcpServer
         }
 
         _logger.LogInformation(
-            "Rigging up event handlers for Transport Id = {TransportId}",
+            "Transport {TransportId} will rely on host-dispatched ingress; no event wiring configured",
             sessionId
         );
-
-        if (transport is SseTransport)
-        {
-            _logger.LogDebug(
-                "Skipping inbound event wiring for SSE transport {TransportId}",
-                sessionId
-            );
-        }
-        else if (transport is StdioTransport stdioTransport)
-        {
-            stdioTransport.BindServer(this);
-            _logger.LogDebug(
-                "Skipping inbound event wiring for stdio transport {TransportId}",
-                sessionId
-            );
-        }
-        else
-        {
-            transport.OnRequest += request => HandleRequestWithTransport(transport, request);
-            transport.OnNotification += HandleNotification;
-            transport.OnResponse += HandleClientResponse;
-        }
 
         transport.OnError += HandleTransportError;
         transport.OnClose += HandleTransportClose;
@@ -257,43 +235,6 @@ public class McpServer : IMcpServer
             .ConfigureAwait(false);
 
         await transport.StartAsync();
-    }
-
-    private async void HandleRequestWithTransport(
-        IServerTransport transport,
-        JsonRpcRequestMessage request
-    )
-    {
-        using (_logger.BeginRequestScope(request.Id, request.Method))
-        {
-            var sessionId = transport.Id();
-            if (string.IsNullOrWhiteSpace(sessionId))
-            {
-                throw new InvalidOperationException(
-                    "Transport must provide a non-empty identifier."
-                );
-            }
-
-            _logger.LogDebug(
-                "Received request: ID={RequestId}, Method={Method} on Transport={TransportId}",
-                request.Id,
-                request.Method,
-                sessionId
-            );
-            try
-            {
-                await ProcessRequestAsync(transport, request, sessionId).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Unhandled exception processing request: ID={RequestId}, Method={Method}",
-                    request.Id,
-                    request.Method
-                );
-            }
-        }
     }
 
     private void HandleNotification(JsonRpcNotificationMessage notification)

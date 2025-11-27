@@ -208,6 +208,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
     private readonly Stream _clientOutput;
     private readonly Pipe _clientToServer;
     private readonly Pipe _serverToClient;
+    private readonly CancellationTokenSource _ingressCts;
+    private readonly Task _ingressTask;
     private readonly IConnectionManager _connectionManager;
 
     private StdioIntegrationTestServer(
@@ -220,7 +222,9 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         Stream clientOutput,
         Pipe clientToServer,
         Pipe serverToClient,
-        IConnectionManager connectionManager
+        IConnectionManager connectionManager,
+        CancellationTokenSource ingressCts,
+        Task ingressTask
     )
     {
         Server = server;
@@ -233,6 +237,8 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         _clientToServer = clientToServer;
         _serverToClient = serverToClient;
         _connectionManager = connectionManager;
+        _ingressCts = ingressCts;
+        _ingressTask = ingressTask;
     }
 
     public McpServer Server { get; }
@@ -304,6 +310,17 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
 
         await server.ConnectAsync(stdioTransport).ConfigureAwait(false);
 
+        var ingressCts = new CancellationTokenSource();
+        stdioTransport.OnClose += () => ingressCts.Cancel();
+        stdioTransport.OnError += _ => ingressCts.Cancel();
+
+        var ingressHost = new StdioIngressHost(
+            server,
+            stdioTransport,
+            loggerFactory.CreateLogger<StdioIngressHost>()
+        );
+        var ingressTask = ingressHost.RunAsync(ingressCts.Token);
+
         return new StdioIntegrationTestServer(
             server,
             loggerFactory,
@@ -314,7 +331,9 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
             clientOutput,
             clientToServer,
             serverToClient,
-            connectionManager
+            connectionManager,
+            ingressCts,
+            ingressTask
         );
     }
 
@@ -331,6 +350,16 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         await _clientToServer.Reader.CompleteAsync().ConfigureAwait(false);
         await _serverToClient.Writer.CompleteAsync().ConfigureAwait(false);
         await _serverToClient.Reader.CompleteAsync().ConfigureAwait(false);
+
+        _ingressCts.Cancel();
+        try
+        {
+            await _ingressTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore ingress failures during teardown to avoid masking test failures.
+        }
 
         _loggerFactory.Dispose();
     }

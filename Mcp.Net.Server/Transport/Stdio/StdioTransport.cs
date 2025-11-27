@@ -1,58 +1,47 @@
-using System.Buffers;
+using System.IO;
 using System.IO.Pipelines;
 using System.Text;
-using System.Text.Json;
-using Mcp.Net.Server;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Mcp.Net.Server.Models;
 
 namespace Mcp.Net.Server.Transport.Stdio;
 
 /// <summary>
-/// Transport implementation for standard input/output streams
-/// using high-performance System.IO.Pipelines
+/// Outbound-only stdio transport; ingress is handled by a host-level reader.
 /// </summary>
 public class StdioTransport : ServerMessageTransportBase
 {
-    private readonly PipeReader _reader;
+    private readonly Stream _inputStream;
     private readonly PipeWriter _writer;
-    private Task? _readTask;
-    private Func<ServerRequestContext, Task<JsonRpcResponseMessage>>? _requestHandler;
-    private Func<ServerRequestContext, Task>? _notificationHandler;
-    private Func<string, JsonRpcResponseMessage, Task>? _clientResponseHandler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StdioTransport"/> class
+    /// Initializes a new instance of the <see cref="StdioTransport"/> class.
     /// </summary>
     public StdioTransport(string id, Stream? input = null, Stream? output = null)
         : base(new JsonRpcMessageParser(), NullLogger<StdioTransport>.Instance, id)
     {
-        var inputStream = input ?? Console.OpenStandardInput();
-        var outputStream = output ?? Console.OpenStandardOutput();
-
-        _reader = PipeReader.Create(inputStream);
-        _writer = PipeWriter.Create(outputStream);
+        _inputStream = input ?? Console.OpenStandardInput();
+        _writer = PipeWriter.Create(output ?? Console.OpenStandardOutput());
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StdioTransport"/> class with a logger
+    /// Initializes a new instance of the <see cref="StdioTransport"/> class with a logger.
     /// </summary>
     public StdioTransport(string id, Stream input, Stream output, ILogger<StdioTransport> logger)
         : base(new JsonRpcMessageParser(), logger, id)
     {
-        _reader = PipeReader.Create(input);
-        _writer = PipeWriter.Create(output);
+        _inputStream = input ?? throw new ArgumentNullException(nameof(input));
+        _writer = PipeWriter.Create(output ?? throw new ArgumentNullException(nameof(output)));
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="StdioTransport"/> class with full dependency injection
+    /// Initializes a new instance of the <see cref="StdioTransport"/> class with full dependency injection.
     /// </summary>
     public StdioTransport(
-        string id, 
+        string id,
         Stream input,
         Stream output,
         IMessageParser parser,
@@ -60,8 +49,8 @@ public class StdioTransport : ServerMessageTransportBase
     )
         : base(parser, logger, id)
     {
-        _reader = PipeReader.Create(input);
-        _writer = PipeWriter.Create(output);
+        _inputStream = input ?? throw new ArgumentNullException(nameof(input));
+        _writer = PipeWriter.Create(output ?? throw new ArgumentNullException(nameof(output)));
     }
 
     /// <summary>
@@ -69,259 +58,24 @@ public class StdioTransport : ServerMessageTransportBase
     /// </summary>
     public Dictionary<string, string> Metadata { get; } = new();
 
-    private bool HasServerDispatch =>
-        _requestHandler != null
-        && _notificationHandler != null
-        && _clientResponseHandler != null;
-
-    internal void BindServer(McpServer server)
-    {
-        if (server == null)
-        {
-            throw new ArgumentNullException(nameof(server));
-        }
-
-        _requestHandler = server.HandleRequestAsync;
-        _notificationHandler = server.HandleNotificationAsync;
-        _clientResponseHandler = (sessionId, response) =>
-            server.HandleClientResponseAsync(sessionId, response);
-    }
+    /// <summary>
+    /// Exposes the input stream so hosts can process ingress.
+    /// </summary>
+    internal Stream InputStream => _inputStream;
 
     /// <inheritdoc />
-    /// <remarks>Stdio initialisation simply kicks off the background read loop; the transport is fully duplex once this returns.</remarks>
     public override Task StartAsync()
     {
         if (IsStarted)
         {
             throw new InvalidOperationException(
-                "StdioTransport already started! If using Server class, note that connect() calls start() automatically."
+                "StdioTransport already started! If using Server class, note that ConnectAsync calls StartAsync automatically."
             );
         }
 
         IsStarted = true;
-        _readTask = ProcessMessagesAsync();
-        Logger.LogDebug("StdioTransport started");
+        Logger.LogDebug("StdioTransport started (outbound only)");
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Continuously reads newline-delimited JSON-RPC messages from the input pipe.
-    /// </summary>
-    private async Task ProcessMessagesAsync()
-    {
-        try
-        {
-            while (!CancellationTokenSource.IsCancellationRequested)
-            {
-                ReadResult result = await _reader.ReadAsync(CancellationTokenSource.Token);
-                ReadOnlySequence<byte> buffer = result.Buffer;
-
-                SequencePosition consumed = buffer.Start;
-                SequencePosition examined = buffer.End;
-
-                try
-                {
-                    while (TryReadLine(ref buffer, out var lineSequence))
-                    {
-                        consumed = buffer.Start;
-                        if (lineSequence.Length == 0)
-                        {
-                            continue;
-                        }
-
-                        string message = Encoding.UTF8.GetString(lineSequence.ToArray());
-                        await ProcessLineAsync(message).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    _reader.AdvanceTo(consumed, examined);
-                }
-
-                if (result.IsCompleted)
-                {
-                    if (buffer.Length > 0)
-                    {
-                        Logger.LogWarning(
-                            "Terminating stdio transport with {ByteCount} unprocessed bytes (missing newline)",
-                            buffer.Length
-                        );
-                    }
-
-                    Logger.LogInformation("End of input stream detected, closing stdio transport");
-                    break;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            Logger.LogDebug("StdioTransport read operation cancelled");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error reading from stdio");
-            RaiseOnError(ex);
-        }
-        finally
-        {
-            await _reader.CompleteAsync();
-            Logger.LogInformation("Stdio read loop terminated");
-        }
-    }
-
-    private void DispatchRequest(JsonRpcRequestMessage requestMessage)
-    {
-        var context = new ServerRequestContext(
-            Id(),
-            Id(),
-            requestMessage,
-            CancellationTokenSource.Token,
-            Metadata
-        );
-
-        _ = HandleRequestAsync(context);
-    }
-
-    private void DispatchNotification(JsonRpcNotificationMessage notificationMessage)
-    {
-        var context = new ServerRequestContext(
-            Id(),
-            Id(),
-            new JsonRpcRequestMessage(
-                notificationMessage.JsonRpc,
-                string.Empty,
-                notificationMessage.Method,
-                notificationMessage.Params
-            ),
-            CancellationTokenSource.Token,
-            Metadata
-        );
-
-        _ = HandleNotificationAsync(context);
-    }
-
-    private async Task HandleRequestAsync(ServerRequestContext context)
-    {
-        try
-        {
-            var response = await _requestHandler!(context).ConfigureAwait(false);
-            await SendAsync(response).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(
-                ex,
-                "Error handling request {Method} on stdio transport {TransportId}",
-                context.Request.Method,
-                Id()
-            );
-            RaiseOnError(ex);
-        }
-    }
-
-    private async Task HandleNotificationAsync(ServerRequestContext context)
-    {
-        try
-        {
-            await _notificationHandler!(context).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(
-                ex,
-                "Error handling notification {Method} on stdio transport {TransportId}",
-                context.Request.Method,
-                Id()
-            );
-            RaiseOnError(ex);
-        }
-    }
-
-    private async Task ProcessLineAsync(string message)
-    {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return;
-        }
-
-        // Trim a trailing carriage-return so both LF and CRLF are accepted
-        if (message[^1] == '\r')
-        {
-            message = message[..^1];
-        }
-
-        if (!HasServerDispatch)
-        {
-            ProcessJsonRpcMessage(message);
-            return;
-        }
-
-        await DispatchMessageAsync(message).ConfigureAwait(false);
-    }
-
-    private async Task DispatchMessageAsync(string message)
-    {
-        try
-        {
-            if (MessageParser.IsJsonRpcRequest(message))
-            {
-                var requestMessage = MessageParser.DeserializeRequest(message);
-                DispatchRequest(requestMessage);
-                return;
-            }
-
-            if (MessageParser.IsJsonRpcNotification(message))
-            {
-                var notificationMessage = MessageParser.DeserializeNotification(message);
-                DispatchNotification(notificationMessage);
-                return;
-            }
-
-            if (MessageParser.IsJsonRpcResponse(message))
-            {
-                var responseMessage = MessageParser.DeserializeResponse(message);
-                await _clientResponseHandler!(Id(), responseMessage).ConfigureAwait(false);
-                return;
-            }
-
-            Logger.LogWarning(
-                "Received message that is neither a request nor notification: {Message}",
-                message.Length > 100 ? message.Substring(0, 97) + "..." : message
-            );
-        }
-        catch (JsonException ex)
-        {
-            string truncatedMessage =
-                message.Length > 100 ? message.Substring(0, 97) + "..." : message;
-            Logger.LogError(ex, "Invalid JSON message: {TruncatedMessage}", truncatedMessage);
-            RaiseOnError(new Exception($"Invalid JSON message: {ex.Message}", ex));
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error processing message");
-            RaiseOnError(ex);
-        }
-    }
-
-    /// <summary>
-    /// Attempts to slice the buffer up to the next newline character.
-    /// </summary>
-    private static bool TryReadLine(
-        ref ReadOnlySequence<byte> buffer,
-        out ReadOnlySequence<byte> line
-    )
-    {
-        SequencePosition? position = buffer.PositionOf((byte)'\n');
-        if (position == null)
-        {
-            line = default;
-            return false;
-        }
-
-        line = buffer.Slice(0, position.Value);
-        var next = buffer.GetPosition(1, position.Value);
-        buffer = buffer.Slice(next);
-        return true;
     }
 
     /// <inheritdoc />
@@ -342,12 +96,60 @@ public class StdioTransport : ServerMessageTransportBase
             );
 
             string json = SerializeMessage(message);
-            byte[] data = Encoding.UTF8.GetBytes(json + "\n");
-            await WriteRawAsync(data);
+            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error sending message");
+            Logger.LogError(ex, "Error sending response message");
+            RaiseOnError(ex);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public override async Task SendRequestAsync(JsonRpcRequestMessage message)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        try
+        {
+            Logger.LogDebug(
+                "Sending request: Method={Method}, Id={Id}",
+                message.Method,
+                message.Id
+            );
+
+            string json = SerializeMessage(message);
+            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error sending request message");
+            RaiseOnError(ex);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public override async Task SendNotificationAsync(JsonRpcNotificationMessage message)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        try
+        {
+            Logger.LogDebug("Sending notification: Method={Method}", message.Method);
+            string json = SerializeMessage(message);
+            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error sending notification message");
             RaiseOnError(ex);
             throw;
         }

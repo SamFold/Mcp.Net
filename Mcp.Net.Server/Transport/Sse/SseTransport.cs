@@ -23,11 +23,6 @@ public class SseTransport : TransportBase, IServerTransport
     private int _bytesReceived;
     private int _bytesSent;
 
-#pragma warning disable 0067 // SSE ingress goes through the server entry points instead of transport events
-    public event Action<JsonRpcRequestMessage>? OnRequest;
-    public event Action<JsonRpcNotificationMessage>? OnNotification;
-    public event Action<JsonRpcResponseMessage>? OnResponse;
-#pragma warning restore 0067
 
     /// <summary>
     /// Gets the unique identifier for this transport session.

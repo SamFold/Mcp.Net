@@ -20,6 +20,7 @@ using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Server.Transport.Stdio;
+using Mcp.Net.Server.Models;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -80,7 +81,18 @@ public class ServerClientIntegrationTests
         // Create mock transport
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
-        
+        async Task Dispatch(JsonRpcRequestMessage request)
+        {
+            var context = new ServerRequestContext(
+                transport.Id(),
+                transport.Id(),
+                request,
+                CancellationToken.None
+            );
+            var response = await server.HandleRequestAsync(context);
+            await transport.SendAsync(response);
+        }
+
         // Act - Initialize
         var paramsElement = JsonSerializer.SerializeToElement(new
         {
@@ -88,14 +100,14 @@ public class ServerClientIntegrationTests
             capabilities = new { },
             protocolVersion = "2024-11-05"
         });
-        
-        transport.SimulateRequest(new JsonRpcRequestMessage(
+
+        await Dispatch(new JsonRpcRequestMessage(
             "2.0",
             "init-1",
             "initialize",
             paramsElement
         ));
-        
+
         // Check initialization response
         transport.SentMessages.Should().HaveCount(1);
         var initResponse = transport.SentMessages[0];
@@ -103,7 +115,7 @@ public class ServerClientIntegrationTests
         initResponse.Error.Should().BeNull();
         
         // Now list tools
-        transport.SimulateRequest(new JsonRpcRequestMessage(
+        await Dispatch(new JsonRpcRequestMessage(
             "2.0",
             "list-1",
             "tools/list",
@@ -128,7 +140,7 @@ public class ServerClientIntegrationTests
             arguments = new { a = 5, b = 7 }
         });
         
-        transport.SimulateRequest(new JsonRpcRequestMessage(
+        await Dispatch(new JsonRpcRequestMessage(
             "2.0",
             "call-1",
             "tools/call",
@@ -413,17 +425,9 @@ public class ServerClientIntegrationTests
 
         var transport = (await registry.GetTransportAsync(sessionId)).Should().BeOfType<SseTransport>().Subject;
 
-        int GetHandlerCount(string fieldName)
-        {
-            var field = typeof(SseTransport).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
-            field.Should().NotBeNull();
-            var value = field!.GetValue(transport) as Delegate;
-            return value?.GetInvocationList().Length ?? 0;
-        }
-
-        GetHandlerCount("OnRequest").Should().Be(0);
-        GetHandlerCount("OnNotification").Should().Be(0);
-        GetHandlerCount("OnResponse").Should().Be(0);
+        // Transport is now outbound-only; inbound events have been removed.
+        // Verify that the transport is registered and functional.
+        transport.Should().NotBeNull();
 
         // Issue a simple tool call over SSE
         var callParams = new ToolCallRequest
@@ -478,13 +482,9 @@ public class ServerClientIntegrationTests
         var sessionId = ((ICollection<string>)keysProperty!.GetValue(connections)!).Should().ContainSingle().Which;
         var transport = (await registry.GetTransportAsync(sessionId)).Should().BeOfType<StdioTransport>().Subject;
 
-        var requestSeen = false;
-        var notificationSeen = false;
-        var responseSeen = false;
-
-        transport.OnRequest += _ => requestSeen = true;
-        transport.OnNotification += _ => notificationSeen = true;
-        transport.OnResponse += _ => responseSeen = true;
+        // Transport is now outbound-only; inbound dispatch goes through StdioIngressHost.
+        // Verify that the transport is registered and functional.
+        transport.Should().NotBeNull();
 
         using var client = new TestStdioMcpClient(
             new StdioClientTransport(stdioServer.ClientInput, stdioServer.ClientOutput, "", NullLogger<StdioClientTransport>.Instance),
@@ -505,10 +505,6 @@ public class ServerClientIntegrationTests
         response.Content.Should().ContainSingle()
             .Which.Should().BeOfType<TextContent>()
             .Subject.As<TextContent>().Text.Should().Be("hi");
-
-        requestSeen.Should().BeFalse();
-        notificationSeen.Should().BeFalse();
-        responseSeen.Should().BeFalse();
     }
 
     [Fact]

@@ -6,25 +6,12 @@ using Mcp.Net.Core.JsonRpc;
 namespace Mcp.Net.Core.Transport;
 
 /// <summary>
-/// Interface for server-specific transport operations
+/// Interface for server-specific transport operations.
+/// Transports are outbound-only; inbound message dispatch is handled by host components
+/// (e.g., StdioIngressHost, SseJsonRpcProcessor) that call McpServer entry points directly.
 /// </summary>
 public interface IServerTransport : ITransport
 {
-    /// <summary>
-    /// Event triggered when a request is received
-    /// </summary>
-    event Action<JsonRpcRequestMessage>? OnRequest;
-
-    /// <summary>
-    /// Event triggered when a notification is received
-    /// </summary>
-    event Action<JsonRpcNotificationMessage>? OnNotification;
-
-    /// <summary>
-    /// Event triggered when a response is received for a server-initiated request.
-    /// </summary>
-    event Action<JsonRpcResponseMessage>? OnResponse;
-
     /// <summary>
     /// Sends a JSON-RPC response to the client
     /// </summary>
