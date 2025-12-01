@@ -36,6 +36,8 @@ public class ToolRegistry
         );
         _invocationFactory = new ToolInvocationFactory(
             _serviceProvider,
+            _serviceProvider.GetRequiredService<McpServer>(),
+            loggerFactory,
             loggerFactory.CreateLogger<ToolInvocationFactory>()
         );
     }

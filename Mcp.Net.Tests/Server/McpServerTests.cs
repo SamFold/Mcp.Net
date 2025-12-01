@@ -35,13 +35,11 @@ public class McpServerTests
         };
 
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        var accessor = new ToolInvocationContextAccessor();
         _server = new McpServer(
             serverInfo,
             connectionManager,
             options,
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: accessor
+            NullLoggerFactory.Instance
         );
     }
 
@@ -194,7 +192,7 @@ public class McpServerTests
         });
 
         // Register the tool
-        _server.RegisterTool(toolName, toolDescription, inputSchema, toolHandler);
+        _server.RegisterTool(toolName, toolDescription, inputSchema, (args, _) => toolHandler(args));
 
         // Create a tool call request
         var callParamsElement = JsonSerializer.SerializeToElement(
@@ -231,26 +229,24 @@ public class McpServerTests
     [Fact]
     public async Task HandleRequestAsync_Should_PassSessionId_ToTool()
     {
-        var accessor = new ToolInvocationContextAccessor();
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
 
         var server = new McpServer(
             new ServerInfo { Name = "Test", Version = "1.0" },
             connectionManager,
             new ServerOptions { Capabilities = new ServerCapabilities() },
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: accessor
+            NullLoggerFactory.Instance
         );
 
         server.RegisterTool(
             "echoSession",
             "Returns the current session id",
             JsonSerializer.SerializeToElement(new { type = "object" }),
-            _ =>
+            (_, sessionId) =>
                 Task.FromResult(
                     new ToolCallResult
                     {
-                        Content = new[] { new TextContent { Text = accessor.SessionId ?? "<none>" } },
+                        Content = new[] { new TextContent { Text = sessionId ?? "<none>" } },
                     }
                 )
         );
@@ -284,8 +280,7 @@ public class McpServerTests
             new ServerInfo { Name = "Test", Version = "1.0" },
             connectionManager,
             new ServerOptions { Capabilities = new ServerCapabilities() },
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: new ToolInvocationContextAccessor()
+            NullLoggerFactory.Instance
         )
         {
             ClientRequestTimeout = Timeout.InfiniteTimeSpan,
@@ -317,7 +312,7 @@ public class McpServerTests
             toolName,
             toolDescription,
             inputSchema,
-            _ => Task.FromResult(new ToolCallResult())
+            (_, _) => Task.FromResult(new ToolCallResult())
         );
 
         var request = new JsonRpcRequestMessage("2.0", "list-tools", "tools/list", null);
@@ -357,7 +352,7 @@ public class McpServerTests
             "annotated_tool",
             "Annotated",
             JsonSerializer.SerializeToElement(new { type = "object" }),
-            _ => Task.FromResult(new ToolCallResult()),
+            (_, _) => Task.FromResult(new ToolCallResult()),
             annotations
         );
 

@@ -15,33 +15,46 @@ namespace Mcp.Net.Server.Tools;
 internal sealed class ToolInvocationFactory
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly McpServer _server;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<ToolInvocationFactory> _logger;
 
     public ToolInvocationFactory(
         IServiceProvider serviceProvider,
+        McpServer server,
+        ILoggerFactory loggerFactory,
         ILogger<ToolInvocationFactory> logger
     )
     {
         _serviceProvider =
             serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _server = server ?? throw new ArgumentNullException(nameof(server));
+        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
     }
 
     /// <summary>
     /// Produces a delegate capable of executing the tool described by <paramref name="descriptor"/>.
     /// </summary>
     /// <param name="descriptor">Descriptor that contains the tool metadata and invocation information.</param>
-    /// <returns>Delegate that accepts optional JSON arguments and yields a <see cref="ToolCallResult"/>.</returns>
-    public Func<JsonElement?, Task<ToolCallResult>> CreateHandler(ToolDescriptor descriptor)
+    /// <returns>Delegate that accepts optional JSON arguments and a session id, yielding a <see cref="ToolCallResult"/>.</returns>
+    public Func<JsonElement?, string, Task<ToolCallResult>> CreateHandler(ToolDescriptor descriptor)
     {
-        return async arguments =>
+        return async (arguments, sessionId) =>
         {
             _logger.LogInformation("Tool {ToolName} invoked", descriptor.Name);
 
             try
             {
-                var instance = ActivatorUtilities.CreateInstance(
+                var scopedProvider = new ToolInvocationServiceProvider(
                     _serviceProvider,
+                    _server,
+                    sessionId,
+                    _loggerFactory
+                );
+
+                var instance = ActivatorUtilities.CreateInstance(
+                    scopedProvider,
                     descriptor.DeclaringType
                 );
                 var methodParams = descriptor.Method.GetParameters();

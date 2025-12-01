@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -31,24 +32,24 @@ public class ToolRegistryParameterBindingTests
         };
 
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        var accessor = new ToolInvocationContextAccessor();
         return new McpServer(
             info,
             connectionManager,
             options,
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: accessor
+            NullLoggerFactory.Instance
         );
     }
 
     [Fact]
     public async Task ToolRegistry_BindsCamelCaseParameterWithoutLowercasing()
     {
-        var services = new ServiceCollection().BuildServiceProvider();
+        var server = CreateServer();
+        var services = new ServiceCollection()
+            .AddSingleton(server)
+            .AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance)
+            .BuildServiceProvider();
         var registry = CreateRegistry(services);
         registry.AddAssembly(typeof(CaseSensitiveTool).Assembly);
-
-        var server = CreateServer();
         registry.RegisterToolsWithServer(server);
 
         var request = new JsonRpcRequestMessage(
@@ -71,11 +72,13 @@ public class ToolRegistryParameterBindingTests
     [Fact]
     public async Task ToolRegistry_BindsPascalCaseParameterNames()
     {
-        var services = new ServiceCollection().BuildServiceProvider();
+        var server = CreateServer();
+        var services = new ServiceCollection()
+            .AddSingleton(server)
+            .AddSingleton<ILoggerFactory>(_ => NullLoggerFactory.Instance)
+            .BuildServiceProvider();
         var registry = CreateRegistry(services);
         registry.AddAssembly(typeof(PascalCaseTool).Assembly);
-
-        var server = CreateServer();
         registry.RegisterToolsWithServer(server);
 
         var request = new JsonRpcRequestMessage(

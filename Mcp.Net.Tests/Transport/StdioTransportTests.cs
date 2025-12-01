@@ -27,7 +27,7 @@ public class StdioTransportTests
             "echo",
             "Echo tool",
             JsonSerializer.SerializeToElement(new { type = "object", properties = new { message = new { type = "string" } } }),
-            args =>
+            (args, _) =>
             {
                 var message = args?.GetProperty("message").GetString();
                 return Task.FromResult(new ToolCallResult
@@ -70,7 +70,7 @@ public class StdioTransportTests
             "noop",
             "No-op tool",
             JsonSerializer.SerializeToElement(new { }),
-            _ => Task.FromResult(new ToolCallResult { Content = Array.Empty<ContentBase>() })
+            (_, _) => Task.FromResult(new ToolCallResult { Content = Array.Empty<ContentBase>() })
         );
 
         var hostTask = host.RunAsync(cts.Token);
@@ -104,7 +104,7 @@ public class StdioTransportTests
             "noop",
             "No-op tool",
             JsonSerializer.SerializeToElement(new { }),
-            _ => Task.FromResult(new ToolCallResult { Content = Array.Empty<ContentBase>() })
+            (_, _) => Task.FromResult(new ToolCallResult { Content = Array.Empty<ContentBase>() })
         );
 
         var hostTask = host.RunAsync(cts.Token);

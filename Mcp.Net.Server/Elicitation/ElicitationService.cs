@@ -19,12 +19,10 @@ public interface IElicitationService
     /// Sends an elicitation prompt to the connected client and awaits the user's response.
     /// </summary>
     /// <param name="prompt">Prompt description and schema.</param>
-    /// <param name="sessionId">Optional session identifier that should receive the elicitation.</param>
     /// <param name="cancellationToken">Cancellation token to abort the request.</param>
     /// <returns>The elicitation result from the client.</returns>
     Task<ElicitationResult> RequestAsync(
         ElicitationPrompt prompt,
-        string? sessionId = null,
         CancellationToken cancellationToken = default
     );
 }
@@ -36,19 +34,20 @@ public sealed class ElicitationService : IElicitationService
 {
     private readonly McpServer _server;
     private readonly ILogger<ElicitationService> _logger;
-    private readonly IToolInvocationContextAccessor _contextAccessor;
+    private readonly string _sessionId;
     private readonly JsonSerializerOptions _serializerOptions;
 
     public ElicitationService(
         McpServer server,
-        ILogger<ElicitationService> logger,
-        IToolInvocationContextAccessor contextAccessor
+        string sessionId,
+        ILogger<ElicitationService> logger
     )
     {
         _server = server ?? throw new ArgumentNullException(nameof(server));
+        _sessionId = string.IsNullOrWhiteSpace(sessionId)
+            ? throw new ArgumentException("Session id must be provided.", nameof(sessionId))
+            : sessionId;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _contextAccessor =
-            contextAccessor ?? throw new ArgumentNullException(nameof(contextAccessor));
         _serializerOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -57,7 +56,6 @@ public sealed class ElicitationService : IElicitationService
 
     public async Task<ElicitationResult> RequestAsync(
         ElicitationPrompt prompt,
-        string? sessionId = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -73,22 +71,14 @@ public sealed class ElicitationService : IElicitationService
 
         _logger.LogInformation("Requesting elicitation: {Message}", prompt.Message);
 
-        var effectiveSessionId = sessionId ?? _contextAccessor.SessionId;
-        if (string.IsNullOrWhiteSpace(effectiveSessionId))
-        {
-            throw new InvalidOperationException(
-                "No active session provided for elicitation. Pass a session id explicitly or invoke the service within a tool invocation context."
-            );
-        }
-
         var payload = new ElicitationCreateParams
         {
             Message = prompt.Message,
             RequestedSchema = prompt.RequestedSchema,
         };
 
-        JsonRpcResponseMessage response = await _server
-            .SendClientRequestAsync(effectiveSessionId, "elicitation/create", payload, cancellationToken)
+        var response = await _server
+            .SendClientRequestAsync(_sessionId, "elicitation/create", payload, cancellationToken)
             .ConfigureAwait(false);
 
         var resultElement = NormalizeResultElement(response.Result);

@@ -19,25 +19,21 @@ internal sealed class ToolService : IToolService
     private readonly Dictionary<string, Func<JsonElement?, string, Task<ToolCallResult>>> _handlers = new();
     private readonly ServerCapabilities _capabilities;
     private readonly ILogger<ToolService> _logger;
-    private readonly IToolInvocationContextAccessor _contextAccessor;
 
     public ToolService(
         ServerCapabilities capabilities,
-        ILogger<ToolService> logger,
-        IToolInvocationContextAccessor contextAccessor
+        ILogger<ToolService> logger
     )
     {
         _capabilities = capabilities ?? throw new ArgumentNullException(nameof(capabilities));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _contextAccessor =
-            contextAccessor ?? throw new ArgumentNullException(nameof(contextAccessor));
     }
 
     public void RegisterTool(
         string name,
         string? description,
         JsonElement inputSchema,
-        Func<JsonElement?, Task<ToolCallResult>> handler,
+        Func<JsonElement?, string, Task<ToolCallResult>> handler,
         IDictionary<string, object?>? annotations = null
     )
     {
@@ -65,9 +61,8 @@ internal sealed class ToolService : IToolService
         {
             try
             {
-                using var scope = _contextAccessor.Push(sessionId);
                 _logger.LogInformation("Tool {ToolName} invoked", name);
-                return await handler(args).ConfigureAwait(false);
+                return await handler(args, sessionId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

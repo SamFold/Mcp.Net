@@ -41,13 +41,11 @@ public class ServerClientIntegrationTests
             Capabilities = new ServerCapabilities()
         };
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        var accessor = new ToolInvocationContextAccessor();
         var server = new McpServer(
             serverInfo,
             connectionManager,
             serverOptions,
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: accessor
+            NullLoggerFactory.Instance
         );
         
         // Register a simple calculator tool
@@ -64,7 +62,7 @@ public class ServerClientIntegrationTests
                 },
                 required = new[] { "a", "b" }
             }),
-            (args) =>
+            (args, _) =>
             {
                 var a = args!.Value.GetProperty("a").GetDouble();
                 var b = args.Value.GetProperty("b").GetDouble();
@@ -166,7 +164,7 @@ public class ServerClientIntegrationTests
     public async Task SseTransport_ShouldHandleElicitation_And_Completions_EndToEnd()
     {
         await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
-            (server, accessor) =>
+            server =>
             {
                 var elicitationSchema = new ElicitationSchema()
                     .AddProperty(
@@ -188,7 +186,7 @@ public class ServerClientIntegrationTests
                     "integration.elicitation",
                     "Demonstrates server-initiated elicitation",
                     toolInputSchema,
-                    async _ =>
+                    async (_, sessionId) =>
                     {
                         var prompt = new ElicitationPrompt(
                             "Please provide the display alias",
@@ -197,8 +195,8 @@ public class ServerClientIntegrationTests
 
                         var elicitationService = new ElicitationService(
                             server,
-                            NullLogger<ElicitationService>.Instance,
-                            accessor
+                            sessionId,
+                            NullLogger<ElicitationService>.Instance
                         );
 
                         var result = await elicitationService.RequestAsync(prompt).ConfigureAwait(false);
@@ -376,13 +374,13 @@ public class ServerClientIntegrationTests
     public async Task SseTransport_Should_Handle_Request_Response_Without_Event_Wiring()
     {
         await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
-            (server, accessor) =>
+            server =>
             {
                 server.RegisterTool(
                     "echo",
                     "Echo tool",
                     JsonSerializer.SerializeToElement(new { type = "object", properties = new { message = new { type = "string" } } }),
-                    args =>
+                    (args, _) =>
                     {
                         var message = args?.GetProperty("message").GetString();
                         return Task.FromResult(
@@ -449,13 +447,13 @@ public class ServerClientIntegrationTests
     public async Task StdioTransport_Should_Handle_Request_Response_Without_Event_Wiring()
     {
         await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync(
-            (server, accessor) =>
+            server =>
             {
                 server.RegisterTool(
                     "echo",
                     "Echo tool",
                     JsonSerializer.SerializeToElement(new { type = "object", properties = new { message = new { type = "string" } } }),
-                    args =>
+                    (args, _) =>
                     {
                         var message = args?.GetProperty("message").GetString();
                         return Task.FromResult(
@@ -511,7 +509,7 @@ public class ServerClientIntegrationTests
     public async Task StdioTransport_ShouldHandleElicitation_And_Completions_EndToEnd()
     {
         await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync(
-            (server, accessor) =>
+            server =>
             {
                 var elicitationSchema = new ElicitationSchema()
                     .AddProperty(
@@ -531,7 +529,7 @@ public class ServerClientIntegrationTests
                         type = "object",
                         properties = new { },
                     }),
-                    async _ =>
+                    async (_, sessionId) =>
                     {
                         var prompt = new ElicitationPrompt(
                             "Please provide the display alias",
@@ -540,8 +538,8 @@ public class ServerClientIntegrationTests
 
                         var elicitationService = new ElicitationService(
                             server,
-                            NullLogger<ElicitationService>.Instance,
-                            accessor
+                            sessionId,
+                            NullLogger<ElicitationService>.Instance
                         );
 
                         var result = await elicitationService.RequestAsync(prompt).ConfigureAwait(false);

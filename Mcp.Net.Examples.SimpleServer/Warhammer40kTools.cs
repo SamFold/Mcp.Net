@@ -6,14 +6,15 @@ using System.Threading.Tasks;
 using Mcp.Net.Core.Attributes;
 using Mcp.Net.Core.Models.Elicitation;
 using Mcp.Net.Server.Elicitation;
+using Mcp.Net.Server.Tools;
 
 namespace Mcp.Net.Examples.SimpleServer
 {
     /// <summary>
     /// Provides simple Warhammer 40k themed example tools for the MCP protocol.
     /// </summary>
-    public class Warhammer40kTools
-    {
+public class Warhammer40kTools
+{
         private static readonly Random _random = new Random();
         private static readonly string[] _firstNames =
         {
@@ -300,7 +301,7 @@ namespace Mcp.Net.Examples.SimpleServer
         /// </summary>
         /// <param name="includeTitle">Whether to include a title prefix.</param>
         /// <returns>Information about the generated Inquisitor.</returns>
-        private readonly IElicitationService _elicitationService;
+    private readonly IElicitationService _elicitationService;
 
         public Warhammer40kTools(IElicitationService elicitationService)
         {

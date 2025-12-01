@@ -5,6 +5,10 @@ using Mcp.Net.Core.Attributes;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Server.Tools;
+using Mcp.Net.Server;
+using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Services;
+using Mcp.Net.Core.Models.Capabilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,14 +31,19 @@ public class ToolInvocationFactoryTests
     public async Task CreateHandler_UsesDefaultParameterValuesWhenMissing()
     {
         var descriptor = GetDescriptor("default.value");
-        var services = new ServiceCollection().BuildServiceProvider();
+        var services = new ServiceCollection()
+            .AddSingleton(new McpServer(new ServerInfo { Name = "Test", Version = "1.0" }, new InMemoryConnectionManager(NullLoggerFactory.Instance), new ServerOptions(), NullLoggerFactory.Instance))
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .BuildServiceProvider();
         var factory = new ToolInvocationFactory(
             services,
+            services.GetRequiredService<McpServer>(),
+            services.GetRequiredService<ILoggerFactory>(),
             NullLoggerFactory.Instance.CreateLogger<ToolInvocationFactory>()
         );
 
         var handler = factory.CreateHandler(descriptor);
-        var result = await handler(JsonSerializer.SerializeToElement(new { }));
+        var result = await handler(JsonSerializer.SerializeToElement(new { }), "session-1");
 
         Assert.False(result.IsError);
         var text = Assert.IsType<TextContent>(Assert.Single(result.Content));
@@ -45,15 +54,20 @@ public class ToolInvocationFactoryTests
     public async Task CreateHandler_NormalizesTaskResults()
     {
         var descriptor = GetDescriptor("task.value");
-        var services = new ServiceCollection().BuildServiceProvider();
+        var services = new ServiceCollection()
+            .AddSingleton(new McpServer(new ServerInfo { Name = "Test", Version = "1.0" }, new InMemoryConnectionManager(NullLoggerFactory.Instance), new ServerOptions(), NullLoggerFactory.Instance))
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .BuildServiceProvider();
         var factory = new ToolInvocationFactory(
             services,
+            services.GetRequiredService<McpServer>(),
+            services.GetRequiredService<ILoggerFactory>(),
             NullLoggerFactory.Instance.CreateLogger<ToolInvocationFactory>()
         );
 
         var handler = factory.CreateHandler(descriptor);
         var arguments = JsonSerializer.SerializeToElement(new { message = "hello world" });
-        var result = await handler(arguments);
+        var result = await handler(arguments, "session-1");
 
         Assert.False(result.IsError);
         var text = Assert.IsType<TextContent>(Assert.Single(result.Content));

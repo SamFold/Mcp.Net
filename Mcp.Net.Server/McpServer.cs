@@ -38,7 +38,6 @@ public class McpServer : IMcpServer
     private readonly IResourceService _resourceService;
     private readonly IPromptService _promptService;
     private readonly ICompletionService _completionService;
-    private readonly IToolInvocationContextAccessor _toolInvocationContextAccessor;
     private TimeSpan _clientRequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ServerInfo _serverInfo;
@@ -54,8 +53,7 @@ public class McpServer : IMcpServer
         IToolService? toolService = null,
         IResourceService? resourceService = null,
         IPromptService? promptService = null,
-        ICompletionService? completionService = null,
-        IToolInvocationContextAccessor? toolInvocationContextAccessor = null
+        ICompletionService? completionService = null
     )
         : this(
             serverInfo,
@@ -76,8 +74,7 @@ public class McpServer : IMcpServer
         IToolService? toolService = null,
         IResourceService? resourceService = null,
         IPromptService? promptService = null,
-        ICompletionService? completionService = null,
-        IToolInvocationContextAccessor? toolInvocationContextAccessor = null
+        ICompletionService? completionService = null
     )
     {
         _serverInfo = serverInfo;
@@ -86,15 +83,11 @@ public class McpServer : IMcpServer
         _capabilities = options?.Capabilities ?? new ServerCapabilities();
         _logger = loggerFactory.CreateLogger<McpServer>();
         _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
-        _toolInvocationContextAccessor =
-            toolInvocationContextAccessor ?? new ToolInvocationContextAccessor();
-
         _toolService =
             toolService
             ?? new ToolService(
                 _capabilities,
-                loggerFactory.CreateLogger<ToolService>(),
-                _toolInvocationContextAccessor
+                loggerFactory.CreateLogger<ToolService>()
             );
         _resourceService =
             resourceService
@@ -688,7 +681,7 @@ public class McpServer : IMcpServer
         string name,
         string? description,
         JsonElement inputSchema,
-        Func<JsonElement?, Task<ToolCallResult>> handler,
+        Func<JsonElement?, string, Task<ToolCallResult>> handler,
         IDictionary<string, object?>? annotations = null
     ) => _toolService.RegisterTool(name, description, inputSchema, handler, annotations);
 

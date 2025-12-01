@@ -31,7 +31,7 @@ public interface IMcpServer
         string name,
         string? description,
         JsonElement inputSchema,
-        Func<JsonElement?, Task<ToolCallResult>> handler,
+        Func<JsonElement?, string, Task<ToolCallResult>> handler,
         IDictionary<string, object?>? annotations = null
     );
 

@@ -238,15 +238,9 @@ internal static class StrictStdioServer
             logging.SetMinimumLevel(LogLevel.Error); // Set very high threshold
         });
 
-        services.AddSingleton<IToolInvocationContextAccessor, ToolInvocationContextAccessor>();
         services.AddSingleton<CSharpCodeExecutionService>();
         services.AddSingleton(server);
-        services.AddSingleton<IElicitationService>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<ElicitationService>>();
-            var accessor = sp.GetRequiredService<IToolInvocationContextAccessor>();
-            return new ElicitationService(server, logger, accessor);
-        });
+        // ElicitationService is provided per-tool invocation via ToolInvocationServiceProvider.
 
         // Set up logging options
         var loggingOptions = new LoggingOptions

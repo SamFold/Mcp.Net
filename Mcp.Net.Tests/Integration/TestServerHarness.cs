@@ -26,19 +26,18 @@ namespace Mcp.Net.Tests.Integration;
 internal static class IntegrationTestServerFactory
 {
     public static Task<SseIntegrationTestServer> StartSseServerAsync(
-        Action<McpServer, IToolInvocationContextAccessor>? configureServer = null,
+        Action<McpServer>? configureServer = null,
         CancellationToken cancellationToken = default
     ) => SseIntegrationTestServer.StartAsync(configureServer, cancellationToken);
 
     public static Task<StdioIntegrationTestServer> StartStdioServerAsync(
-        Action<McpServer, IToolInvocationContextAccessor>? configureServer = null,
+        Action<McpServer>? configureServer = null,
         CancellationToken cancellationToken = default
     ) => StdioIntegrationTestServer.StartAsync(configureServer, cancellationToken);
 
     internal static (
         McpServer Server,
-        IConnectionManager ConnectionManager,
-        IToolInvocationContextAccessor Accessor
+        IConnectionManager ConnectionManager
     ) CreateServer(
         ILoggerFactory loggerFactory
     )
@@ -55,8 +54,6 @@ internal static class IntegrationTestServerFactory
 
         var connectionManager = new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(30));
 
-        var accessor = new ToolInvocationContextAccessor();
-
         var server = new McpServer(
             new ServerInfo
             {
@@ -66,11 +63,10 @@ internal static class IntegrationTestServerFactory
             },
             connectionManager,
             serverOptions,
-            loggerFactory,
-            toolInvocationContextAccessor: accessor
+            loggerFactory
         );
 
-        return (server, connectionManager, accessor);
+        return (server, connectionManager);
     }
 }
 
@@ -106,7 +102,7 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
     public IConnectionManager ConnectionRegistry => _connectionRegistry;
 
     public static async Task<SseIntegrationTestServer> StartAsync(
-        Action<McpServer, IToolInvocationContextAccessor>? configureServer,
+        Action<McpServer>? configureServer,
         CancellationToken cancellationToken
     )
     {
@@ -116,8 +112,8 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
             builder.SetMinimumLevel(LogLevel.Debug);
         });
 
-        var (server, connectionManager, accessor) = IntegrationTestServerFactory.CreateServer(loggerFactory);
-        configureServer?.Invoke(server, accessor);
+        var (server, connectionManager) = IntegrationTestServerFactory.CreateServer(loggerFactory);
+        configureServer?.Invoke(server);
 
         var hostBuilder = new HostBuilder()
             .ConfigureWebHost(webBuilder =>
@@ -132,14 +128,12 @@ internal sealed class SseIntegrationTestServer : IAsyncDisposable
                 webBuilder.ConfigureServices(services =>
                 {
                     services.AddSingleton(loggerFactory);
-                    services.AddSingleton<IToolInvocationContextAccessor>(accessor);
 
                     var authOptions = new AuthOptions().WithNoAuth();
                     services.AddSingleton(authOptions);
 
                     services.AddSingleton<McpServer>(server);
                     services.AddSingleton<IConnectionManager>(connectionManager);
-                    services.AddSingleton<IToolInvocationContextAccessor>(accessor);
 
                     services.AddSingleton<SseTransportConnectionManager>(sp =>
                         new SseTransportConnectionManager(
@@ -254,7 +248,7 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
     public IConnectionManager ConnectionRegistry => _connectionManager;
 
     public static async Task<StdioIntegrationTestServer> StartAsync(
-        Action<McpServer, IToolInvocationContextAccessor>? configureServer,
+        Action<McpServer>? configureServer,
         CancellationToken cancellationToken
     )
     {
@@ -275,7 +269,6 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
         };
 
         var connectionManager = new InMemoryConnectionManager(loggerFactory, TimeSpan.FromMinutes(30));
-        var accessor = new ToolInvocationContextAccessor();
 
         var server = new McpServer(
             new ServerInfo
@@ -286,11 +279,10 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
             },
             connectionManager,
             serverOptions,
-            loggerFactory,
-            toolInvocationContextAccessor: accessor
+            loggerFactory
         );
 
-        configureServer?.Invoke(server, accessor);
+        configureServer?.Invoke(server);
 
         var clientToServer = new Pipe();
         var serverToClient = new Pipe();

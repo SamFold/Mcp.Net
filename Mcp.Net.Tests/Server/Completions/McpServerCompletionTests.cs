@@ -23,13 +23,11 @@ public class McpServerCompletionTests
             Capabilities = new ServerCapabilities(),
         };
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
-        var accessor = new ToolInvocationContextAccessor();
         return new McpServer(
             info,
             connectionManager,
             options,
-            NullLoggerFactory.Instance,
-            toolInvocationContextAccessor: accessor
+            NullLoggerFactory.Instance
         );
     }
 
