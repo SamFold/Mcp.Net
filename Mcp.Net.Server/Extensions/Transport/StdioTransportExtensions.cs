@@ -72,13 +72,14 @@ public static class StdioTransportExtensions
         // Create options from the builder
         var options = new StdioServerOptions
         {
-            Name = "MCP Server", // Default name
-            Version = "1.0.0", // Default version
-            Instructions = null,
+            Name = builder.ConfiguredName,
+            Title = builder.ConfiguredTitle ?? builder.ConfiguredName,
+            Version = builder.ConfiguredVersion,
+            Instructions = builder.ConfiguredInstructions,
             LogLevel = builder.LogLevel,
             LogFilePath = builder.LogFilePath,
             UseConsoleLogging = builder.UseConsoleLogging,
-            Capabilities = null,
+            Capabilities = builder.ConfiguredCapabilities,
         };
 
         return services.AddMcpStdioTransport(options);

@@ -22,33 +22,34 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
 - Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
 - Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
-- The full suite is green (`290/290`).
+- The full suite is green (`291/291`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
 - `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration.
+- `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions instead of falling back to defaults.
+- The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
 
 ## Goal
-- Start the next remaining `Mcp.Net.Server` review slice: builder/DI inconsistencies.
+- Start the next remaining `Mcp.Net.Server` review slice: SSE vs stdio parity for server-initiated flows.
 
 ## Scope
 - In scope:
-  - review remaining builder and DI registration paths for constructibility and consistency
-  - identify the smallest concrete inconsistency to pin with a regression test
-  - fix one commit-sized builder/DI issue with tests first
+  - review whether server-initiated requests and notifications behave consistently across SSE and stdio transports
+  - identify one concrete parity gap
+  - pin it with a failing regression first
+  - fix one commit-sized parity issue
 - Out of scope:
-  - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Pin the next builder/DI inconsistency: `AddMcpStdioTransport(McpServerBuilder)` still constructs default stdio options instead of preserving builder-configured server metadata.
+1. Review SSE vs stdio behavior for server-initiated flows such as elicitation, logging, and other outbound client requests.
 2. Add the failing regression test first.
-3. Preserve builder-provided server identity and instructions in the stdio builder registration path.
+3. Implement the smallest fix for the first verified parity gap.
 4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - SSE vs stdio parity
    - logging/debuggability and hidden mutable state
 
 ## Open decisions

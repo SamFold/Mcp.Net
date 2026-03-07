@@ -251,6 +251,32 @@ public class McpServerRegistrationExtensionsTests
             .Be("Use the configured instructions.");
     }
 
+    [Fact]
+    public void AddMcpStdioTransport_WithBuilder_ShouldPreserveBuilderConfiguredServerOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+
+        var builder = Mcp.Net.Server.ServerBuilder.McpServerBuilder.ForStdio();
+        builder
+            .WithName("Builder Stdio Server")
+            .WithTitle("Builder Stdio Title")
+            .WithVersion("7.8.9")
+            .WithInstructions("Use stdio builder instructions.")
+            .WithNoAuth();
+
+        services.AddMcpStdioTransport(builder);
+
+        using var provider = services.BuildServiceProvider();
+
+        var resolvedOptions = provider.GetRequiredService<IOptions<StdioServerOptions>>().Value;
+
+        resolvedOptions.Name.Should().Be("Builder Stdio Server");
+        resolvedOptions.Title.Should().Be("Builder Stdio Title");
+        resolvedOptions.Version.Should().Be("7.8.9");
+        resolvedOptions.Instructions.Should().Be("Use stdio builder instructions.");
+    }
+
     private static JsonRpcRequestMessage CreateInitializeRequest(string requestId)
     {
         var paramsElement = System.Text.Json.JsonSerializer.SerializeToElement(

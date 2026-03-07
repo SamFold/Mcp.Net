@@ -7,11 +7,11 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Remaining builder/DI inconsistencies
-2. SSE vs stdio parity for server-initiated flows
-3. Logging/debuggability and hidden mutable state review
+1. SSE vs stdio parity for server-initiated flows
+2. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
+- `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions during DI registration
 - `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`
 - `AddMcpSseTransport(SseServerOptions)` now preserves routing and security settings instead of dropping them during DI registration
@@ -41,4 +41,5 @@ Update it when priorities, milestones, or major decisions change.
 ## Notes
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
-- The next active bug class is still remaining builder/DI inconsistencies, with the next concrete target being the stdio builder registration path.
+- The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
+- The next active review area is SSE vs stdio parity for server-initiated flows.
