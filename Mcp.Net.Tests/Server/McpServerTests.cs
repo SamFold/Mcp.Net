@@ -424,6 +424,110 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task HandleRequestAsync_Should_Expose_RequestMetadata_And_SessionContext_ToResourceReader()
+    {
+        var resource = new Resource
+        {
+            Uri = "mcp://test/context-resource",
+            Name = "Context Resource",
+        };
+
+        HandlerRequestContext? observedContext = null;
+        _server.RegisterResource(
+            resource,
+            (requestContext, _) =>
+            {
+                observedContext = requestContext;
+                return Task.FromResult(Array.Empty<ResourceContent>());
+            }
+        );
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["UserId"] = "user-123",
+            ["TraceId"] = "trace-resource",
+        };
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "resource-read-metadata",
+            "resources/read",
+            JsonSerializer.SerializeToElement(new { uri = resource.Uri })
+        );
+
+        var context = new ServerRequestContext(
+            "session-resource-metadata",
+            "transport-resource-metadata",
+            request,
+            CancellationToken.None,
+            metadata
+        );
+
+        var response = await _server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        Assert.NotNull(observedContext);
+        observedContext!.SessionId.Should().Be("session-resource-metadata");
+        observedContext.TransportId.Should().Be("transport-resource-metadata");
+        observedContext.Metadata.Should().Contain(new KeyValuePair<string, string>("UserId", "user-123"));
+        observedContext.Metadata.Should().Contain(
+            new KeyValuePair<string, string>("TraceId", "trace-resource")
+        );
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_Expose_RequestMetadata_And_SessionContext_ToPromptFactory()
+    {
+        var prompt = new Prompt
+        {
+            Name = "context-prompt",
+            Description = "Prompt used to verify request metadata propagation",
+        };
+
+        HandlerRequestContext? observedContext = null;
+        _server.RegisterPrompt(
+            prompt,
+            (requestContext, _) =>
+            {
+                observedContext = requestContext;
+                return Task.FromResult(Array.Empty<object>());
+            }
+        );
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["UserId"] = "user-456",
+            ["TraceId"] = "trace-prompt",
+        };
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "prompt-get-metadata",
+            "prompts/get",
+            JsonSerializer.SerializeToElement(new { name = prompt.Name })
+        );
+
+        var context = new ServerRequestContext(
+            "session-prompt-metadata",
+            "transport-prompt-metadata",
+            request,
+            CancellationToken.None,
+            metadata
+        );
+
+        var response = await _server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        Assert.NotNull(observedContext);
+        observedContext!.SessionId.Should().Be("session-prompt-metadata");
+        observedContext.TransportId.Should().Be("transport-prompt-metadata");
+        observedContext.Metadata.Should().Contain(new KeyValuePair<string, string>("UserId", "user-456"));
+        observedContext.Metadata.Should().Contain(
+            new KeyValuePair<string, string>("TraceId", "trace-prompt")
+        );
+    }
+
+    [Fact]
     public async Task HandleRequestAsync_Should_Propagate_RequestCancellation_FromResourceReader()
     {
         var resource = new Resource

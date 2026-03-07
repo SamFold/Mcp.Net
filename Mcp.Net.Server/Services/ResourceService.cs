@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Core.Models.Resources;
+using Mcp.Net.Server.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Server.Services;
@@ -18,7 +19,7 @@ internal sealed class ResourceService : IResourceService
 
     private sealed record ResourceRegistration(
         Resource Resource,
-        Func<CancellationToken, Task<ResourceContent[]>> Reader
+        Func<HandlerRequestContext?, CancellationToken, Task<ResourceContent[]>> Reader
     );
 
     public ResourceService(ILogger<ResourceService> logger)
@@ -28,7 +29,7 @@ internal sealed class ResourceService : IResourceService
 
     public void RegisterResource(
         Resource resource,
-        Func<CancellationToken, Task<ResourceContent[]>> reader,
+        Func<HandlerRequestContext?, CancellationToken, Task<ResourceContent[]>> reader,
         bool overwrite = false
     )
     {
@@ -70,6 +71,15 @@ internal sealed class ResourceService : IResourceService
         _logger.LogInformation("Registered resource: {Uri}", resource.Uri);
     }
 
+    public void RegisterResource(
+        Resource resource,
+        Func<CancellationToken, Task<ResourceContent[]>> reader,
+        bool overwrite = false
+    )
+    {
+        RegisterResource(resource, (_, cancellationToken) => reader(cancellationToken), overwrite);
+    }
+
     public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false)
     {
         if (contents == null)
@@ -77,7 +87,7 @@ internal sealed class ResourceService : IResourceService
             throw new ArgumentNullException(nameof(contents));
         }
 
-        RegisterResource(resource, _ => Task.FromResult(contents), overwrite);
+        RegisterResource(resource, (_, _) => Task.FromResult(contents), overwrite);
     }
 
     public bool UnregisterResource(string uri)
@@ -118,7 +128,8 @@ internal sealed class ResourceService : IResourceService
 
     public async Task<ResourceContent[]> ReadResourceAsync(
         string uri,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        HandlerRequestContext? requestContext = null
     )
     {
         if (string.IsNullOrWhiteSpace(uri))
@@ -138,7 +149,8 @@ internal sealed class ResourceService : IResourceService
 
         try
         {
-            var contents = await registration.Reader(cancellationToken).ConfigureAwait(false);
+            var contents = await registration.Reader(requestContext, cancellationToken)
+                .ConfigureAwait(false);
             return contents ?? Array.Empty<ResourceContent>();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

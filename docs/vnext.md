@@ -21,32 +21,30 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - `HandleRequestAsync` now preserves request cancellation through resource, prompt, and completion execution.
 - True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
 - Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
-- The full suite is green (`285/285`).
-- Latest remaining review finding in the notification/completion/resource-refresh area:
-  - prompt/resource handlers still do not expose request metadata/session context at the final handler boundary
+- Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
+- The full suite is green (`287/287`).
+- The notification/completion/resource-refresh review items are now closed.
 
 ## Goal
-- Expose request metadata/session context to prompt and resource handlers now that completion already has the shared request-context seam.
+- Start the next remaining `Mcp.Net.Server` review slice: builder/DI inconsistencies.
 
 ## Scope
 - In scope:
-  - define the smallest safe delegate surface for prompt and resource handlers to access request metadata
-  - keep `HandleRequestAsync` as the authoritative context-aware request path
-  - add regression coverage for one concrete prompt or resource path first
+  - review remaining builder and DI registration paths for constructibility and consistency
+  - identify the smallest concrete inconsistency to pin with a regression test
+  - fix one commit-sized builder/DI issue with tests first
 - Out of scope:
-  - further notification naming changes
   - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review the remaining prompt/resource registration surfaces and choose the smaller context-aware delegate seam.
+1. Review the remaining builder and DI surfaces and choose the smallest verified inconsistency.
 2. Add the failing regression test first.
-3. Implement the smallest fix that exposes request metadata/context through that path.
+3. Implement the smallest fix for that constructibility or registration issue.
 4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - remaining builder/DI inconsistencies
    - SSE vs stdio parity
    - logging/debuggability and hidden mutable state
 

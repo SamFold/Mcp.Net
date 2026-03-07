@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Core.Models.Prompts;
+using Mcp.Net.Server.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Server.Services;
@@ -20,7 +21,7 @@ internal sealed class PromptService : IPromptService
 
     private sealed record PromptRegistration(
         Prompt Prompt,
-        Func<CancellationToken, Task<object[]>> MessagesFactory
+        Func<HandlerRequestContext?, CancellationToken, Task<object[]>> MessagesFactory
     );
 
     public PromptService(ServerCapabilities capabilities, ILogger<PromptService> logger)
@@ -31,7 +32,7 @@ internal sealed class PromptService : IPromptService
 
     public void RegisterPrompt(
         Prompt prompt,
-        Func<CancellationToken, Task<object[]>> messagesFactory,
+        Func<HandlerRequestContext?, CancellationToken, Task<object[]>> messagesFactory,
         bool overwrite = false
     )
     {
@@ -75,6 +76,15 @@ internal sealed class PromptService : IPromptService
         _logger.LogInformation("Registered prompt: {PromptName}", prompt.Name);
     }
 
+    public void RegisterPrompt(
+        Prompt prompt,
+        Func<CancellationToken, Task<object[]>> messagesFactory,
+        bool overwrite = false
+    )
+    {
+        RegisterPrompt(prompt, (_, cancellationToken) => messagesFactory(cancellationToken), overwrite);
+    }
+
     public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false)
     {
         if (messages == null)
@@ -82,7 +92,7 @@ internal sealed class PromptService : IPromptService
             throw new ArgumentNullException(nameof(messages));
         }
 
-        RegisterPrompt(prompt, _ => Task.FromResult(messages), overwrite);
+        RegisterPrompt(prompt, (_, _) => Task.FromResult(messages), overwrite);
     }
 
     public bool UnregisterPrompt(string name)
@@ -123,7 +133,8 @@ internal sealed class PromptService : IPromptService
 
     public async Task<object[]> GetPromptMessagesAsync(
         string name,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        HandlerRequestContext? requestContext = null
     )
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -143,7 +154,7 @@ internal sealed class PromptService : IPromptService
 
         try
         {
-            var messages = await registration.MessagesFactory(cancellationToken)
+            var messages = await registration.MessagesFactory(requestContext, cancellationToken)
                 .ConfigureAwait(false);
             return messages ?? Array.Empty<object>();
         }

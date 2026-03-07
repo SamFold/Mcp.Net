@@ -7,10 +7,9 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Expose request metadata/session context to prompt/resource handlers
-2. Remaining builder/DI inconsistencies
-3. SSE vs stdio parity for server-initiated flows
-4. Logging/debuggability and hidden mutable state review
+1. Remaining builder/DI inconsistencies
+2. SSE vs stdio parity for server-initiated flows
+3. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
 - Hosted SSE builder path now honors configured MCP and health endpoints
@@ -20,6 +19,7 @@ Update it when priorities, milestones, or major decisions change.
 - `HandleRequestAsync` now preserves cancellation tokens through resource, prompt, and completion execution
 - True non-tool request cancellation now propagates as cancellation instead of being normalized to `InternalError`
 - Completion handlers now receive a request-context snapshot with session, transport, and metadata
+- Prompt and resource handlers now receive a request-context snapshot with session, transport, and metadata
 
 ## Server stability themes
 - Keep all session-scoped state isolated by connection/session
@@ -38,4 +38,4 @@ Update it when priorities, milestones, or major decisions change.
 ## Notes
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
-- The next active bug class is missing request metadata/session-context exposure in prompt/resource handling.
+- The next active bug class is remaining builder/DI inconsistencies.

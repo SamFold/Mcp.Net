@@ -137,6 +137,16 @@ public class McpServer : IMcpServer
     /// <param name="overwrite">When true, replaces an existing resource with the same URI.</param>
     public void RegisterResource(
         Resource resource,
+        Func<HandlerRequestContext?, CancellationToken, Task<ResourceContent[]>> reader,
+        bool overwrite = false
+    )
+    {
+        _resourceService.RegisterResource(resource, reader, overwrite);
+        NotifyListChangedIfSupported(ResourcesListChangedNotificationMethod, _capabilities.Resources);
+    }
+
+    public void RegisterResource(
+        Resource resource,
         Func<CancellationToken, Task<ResourceContent[]>> reader,
         bool overwrite = false
     )
@@ -168,6 +178,16 @@ public class McpServer : IMcpServer
     /// <param name="prompt">Prompt metadata.</param>
     /// <param name="messageFactory">Delegate that builds the prompt messages when requested.</param>
     /// <param name="overwrite">When true, replaces an existing prompt with the same name.</param>
+    public void RegisterPrompt(
+        Prompt prompt,
+        Func<HandlerRequestContext?, CancellationToken, Task<object[]>> messageFactory,
+        bool overwrite = false
+    )
+    {
+        _promptService.RegisterPrompt(prompt, messageFactory, overwrite);
+        NotifyListChangedIfSupported(PromptsListChangedNotificationMethod, _capabilities.Prompts);
+    }
+
     public void RegisterPrompt(
         Prompt prompt,
         Func<CancellationToken, Task<object[]>> messageFactory,
@@ -697,7 +717,11 @@ public class McpServer : IMcpServer
     {
         _logger.LogDebug("Handling resources/read request");
         var contents = await _resourceService
-            .ReadResourceAsync(request.Uri ?? string.Empty, context?.CancellationToken ?? default)
+            .ReadResourceAsync(
+                request.Uri ?? string.Empty,
+                context?.CancellationToken ?? default,
+                CreateHandlerRequestContext(context)
+            )
             .ConfigureAwait(false);
         _logger.LogInformation("Resource read requested for URI: {Uri}", request.Uri);
         return new ResourceReadResponse { Contents = contents };
@@ -717,7 +741,11 @@ public class McpServer : IMcpServer
     {
         _logger.LogDebug("Handling prompts/get request");
         var messages = await _promptService
-            .GetPromptMessagesAsync(request.Name ?? string.Empty, context?.CancellationToken ?? default)
+            .GetPromptMessagesAsync(
+                request.Name ?? string.Empty,
+                context?.CancellationToken ?? default,
+                CreateHandlerRequestContext(context)
+            )
             .ConfigureAwait(false);
         _logger.LogInformation("Prompt requested: {Name}", request.Name);
         return new PromptsGetResponse { Messages = messages };
