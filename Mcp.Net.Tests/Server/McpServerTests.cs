@@ -676,6 +676,72 @@ public class McpServerTests
         promptPayload.GetProperty("messages").GetArrayLength().Should().Be(1);
     }
 
+    [Fact]
+    public async Task RegisteringServerPrimitives_AfterInitialize_Should_Notify_Connected_Client_With_ListChangedNotifications()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions
+            {
+                Capabilities = new ServerCapabilities
+                {
+                    Tools = new { listChanged = true },
+                    Prompts = new { listChanged = true },
+                    Resources = new { listChanged = true },
+                },
+            },
+            NullLoggerFactory.Instance
+        );
+
+        var transport = new MockTransport("session-list-changed");
+        await server.ConnectAsync(transport);
+
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-list-changed", McpServer.LatestProtocolVersion),
+            transport.Id()
+        );
+
+        initializeResponse.Error.Should().BeNull();
+
+        server.RegisterTool(
+            "dynamic.tool",
+            "Tool registered after initialization",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            (_, _) => Task.FromResult(new ToolCallResult())
+        );
+
+        server.RegisterPrompt(
+            new Prompt
+            {
+                Name = "dynamic.prompt",
+                Description = "Prompt registered after initialization",
+            },
+            _ => Task.FromResult(Array.Empty<object>())
+        );
+
+        server.RegisterResource(
+            new Resource
+            {
+                Uri = "mcp://dynamic/resource",
+                Name = "Dynamic Resource",
+            },
+            Array.Empty<ResourceContent>()
+        );
+
+        await WaitForNotificationCountAsync(transport, expectedCount: 3, timeout: TimeSpan.FromMilliseconds(300));
+
+        transport.SentNotifications
+            .Select(notification => notification.Method)
+            .Should()
+            .Equal(
+                "notifications/tools/list_changed",
+                "notifications/prompts/list_changed",
+                "notifications/resources/list_changed"
+            );
+    }
+
     private static JsonRpcRequestMessage CreateInitializeRequest(
         string requestId,
         string protocolVersion
@@ -693,4 +759,25 @@ public class McpServerTests
                 }
             )
         );
+
+    private static async Task WaitForNotificationCountAsync(
+        MockTransport transport,
+        int expectedCount,
+        TimeSpan timeout
+    )
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (transport.SentNotifications.Count >= expectedCount)
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        transport.SentNotifications.Count.Should().BeGreaterThanOrEqualTo(expectedCount);
+    }
 }
