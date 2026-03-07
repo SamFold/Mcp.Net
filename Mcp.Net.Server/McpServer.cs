@@ -24,6 +24,9 @@ using static Mcp.Net.Core.JsonRpc.JsonRpcMessageExtensions;
 public class McpServer : IMcpServer
 {
     public const string LatestProtocolVersion = "2025-06-18";
+    private const string ToolsListChangedNotificationMethod = "notifications/tools/list_changed";
+    private const string PromptsListChangedNotificationMethod = "notifications/prompts/list_changed";
+    private const string ResourcesListChangedNotificationMethod = "notifications/resources/list_changed";
 
     private static readonly IReadOnlyList<string> s_supportedProtocolVersions = new[]
     {
@@ -136,12 +139,28 @@ public class McpServer : IMcpServer
         Resource resource,
         Func<CancellationToken, Task<ResourceContent[]>> reader,
         bool overwrite = false
-    ) => _resourceService.RegisterResource(resource, reader, overwrite);
+    )
+    {
+        _resourceService.RegisterResource(resource, reader, overwrite);
+        NotifyListChangedIfSupported(ResourcesListChangedNotificationMethod, _capabilities.Resources);
+    }
 
-    public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false) =>
+    public void RegisterResource(Resource resource, ResourceContent[] contents, bool overwrite = false)
+    {
         _resourceService.RegisterResource(resource, contents, overwrite);
+        NotifyListChangedIfSupported(ResourcesListChangedNotificationMethod, _capabilities.Resources);
+    }
 
-    public bool UnregisterResource(string uri) => _resourceService.UnregisterResource(uri);
+    public bool UnregisterResource(string uri)
+    {
+        var removed = _resourceService.UnregisterResource(uri);
+        if (removed)
+        {
+            NotifyListChangedIfSupported(ResourcesListChangedNotificationMethod, _capabilities.Resources);
+        }
+
+        return removed;
+    }
 
     /// <summary>
     /// Registers a prompt that the server can advertise to clients.
@@ -153,10 +172,17 @@ public class McpServer : IMcpServer
         Prompt prompt,
         Func<CancellationToken, Task<object[]>> messageFactory,
         bool overwrite = false
-    ) => _promptService.RegisterPrompt(prompt, messageFactory, overwrite);
+    )
+    {
+        _promptService.RegisterPrompt(prompt, messageFactory, overwrite);
+        NotifyListChangedIfSupported(PromptsListChangedNotificationMethod, _capabilities.Prompts);
+    }
 
-    public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false) =>
+    public void RegisterPrompt(Prompt prompt, object[] messages, bool overwrite = false)
+    {
         _promptService.RegisterPrompt(prompt, messages, overwrite);
+        NotifyListChangedIfSupported(PromptsListChangedNotificationMethod, _capabilities.Prompts);
+    }
 
     /// <summary>
     /// Registers a completion handler scoped to a specific prompt.
@@ -179,7 +205,16 @@ public class McpServer : IMcpServer
     /// <summary>
     /// Removes a previously registered prompt.
     /// </summary>
-    public bool UnregisterPrompt(string name) => _promptService.UnregisterPrompt(name);
+    public bool UnregisterPrompt(string name)
+    {
+        var removed = _promptService.UnregisterPrompt(name);
+        if (removed)
+        {
+            NotifyListChangedIfSupported(PromptsListChangedNotificationMethod, _capabilities.Prompts);
+        }
+
+        return removed;
+    }
 
     public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
 
@@ -770,7 +805,11 @@ public class McpServer : IMcpServer
         JsonElement inputSchema,
         Func<JsonElement?, string, Task<ToolCallResult>> handler,
         IDictionary<string, object?>? annotations = null
-    ) => _toolService.RegisterTool(name, description, inputSchema, handler, annotations);
+    )
+    {
+        _toolService.RegisterTool(name, description, inputSchema, handler, annotations);
+        NotifyListChangedIfSupported(ToolsListChangedNotificationMethod, _capabilities.Tools);
+    }
 
     public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(
         JsonRpcRequestMessage request,
@@ -922,5 +961,96 @@ public class McpServer : IMcpServer
         }
 
         _negotiatedProtocolVersionsBySession.TryRemove(sessionId, out _);
+    }
+
+    private void NotifyListChangedIfSupported(string method, object? capability)
+    {
+        if (!SupportsListChangedNotifications(capability))
+        {
+            return;
+        }
+
+        try
+        {
+            BroadcastNotificationToInitializedSessionsAsync(method).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to broadcast list_changed notification {Method}",
+                method
+            );
+        }
+    }
+
+    private async Task BroadcastNotificationToInitializedSessionsAsync(string method)
+    {
+        var sessionIds = _negotiatedProtocolVersionsBySession.Keys.ToArray();
+        if (sessionIds.Length == 0)
+        {
+            return;
+        }
+
+        var notification = new JsonRpcNotificationMessage("2.0", method, null);
+
+        foreach (var sessionId in sessionIds)
+        {
+            try
+            {
+                var transport = await ResolveTransportAsync(sessionId).ConfigureAwait(false);
+                await transport.SendNotificationAsync(notification).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to send list_changed notification {Method} to session {SessionId}",
+                    method,
+                    sessionId
+                );
+            }
+        }
+    }
+
+    private static bool SupportsListChangedNotifications(object? capability)
+    {
+        if (capability == null)
+        {
+            return false;
+        }
+
+        JsonElement capabilityElement;
+        if (capability is JsonElement jsonElement)
+        {
+            capabilityElement = jsonElement;
+        }
+        else
+        {
+            capabilityElement = JsonSerializer.SerializeToElement(capability);
+        }
+
+        if (capabilityElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        foreach (var property in capabilityElement.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, "listChanged", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.String when bool.TryParse(property.Value.GetString(), out var parsed) => parsed,
+                _ => false,
+            };
+        }
+
+        return false;
     }
 }

@@ -29,7 +29,7 @@ public sealed class ToolRegistry : IToolRegistry
     private ToolRegistrySnapshot _snapshot = ToolRegistrySnapshot.Empty;
 
     /// <summary>
-    /// Raised when the registry replaces its inventory (typically after a <c>tools/list_changed</c> notification).
+    /// Raised when the registry replaces its inventory (typically after a <c>notifications/tools/list_changed</c> notification).
     /// </summary>
     public event EventHandler<IReadOnlyList<Tool>>? ToolsUpdated;
 

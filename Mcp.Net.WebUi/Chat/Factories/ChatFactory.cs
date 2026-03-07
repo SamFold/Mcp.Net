@@ -397,7 +397,10 @@ public class ChatFactory : IChatFactory
     {
         Action<JsonRpcNotificationMessage> handler = notification =>
         {
-            if (notification.Method == "tools/list_changed")
+            if (
+                notification.Method == "notifications/tools/list_changed"
+                || notification.Method == "tools/list_changed"
+            )
             {
                 _ = Task.Run(
                     async () =>
@@ -410,7 +413,7 @@ public class ChatFactory : IChatFactory
                         {
                             _logger.LogError(
                                 ex,
-                                "Failed to refresh tools after tools/list_changed for session {SessionId}",
+                                "Failed to refresh tools after notifications/tools/list_changed for session {SessionId}",
                                 sessionId
                             );
                         }

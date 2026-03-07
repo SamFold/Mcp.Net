@@ -7,16 +7,16 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Add server-driven `list_changed` notifications for tool/prompt/resource mutations
-2. Align refresh listeners with spec notification names and cover the end-to-end refresh flow
-3. Preserve cancellation and request metadata through prompt/resource/completion handlers
-4. Remaining builder/DI inconsistencies
-5. SSE vs stdio parity for server-initiated flows
-6. Logging/debuggability and hidden mutable state review
+1. Preserve cancellation and request metadata through prompt/resource/completion handlers
+2. Remaining builder/DI inconsistencies
+3. SSE vs stdio parity for server-initiated flows
+4. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
 - Hosted SSE builder path now honors configured MCP and health endpoints
 - Hosted SSE requests now reuse middleware-authenticated request state instead of authenticating twice
+- Server-driven `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations
+- LLM and WebUI refresh listeners now accept the spec notification names and refresh-path coverage is in place
 
 ## Server stability themes
 - Keep all session-scoped state isolated by connection/session
@@ -35,4 +35,4 @@ Update it when priorities, milestones, or major decisions change.
 ## Notes
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
-- A targeted failing regression now pins the missing post-initialize `list_changed` notification path.
+- The next active bug class is lost cancellation and metadata in prompt/resource/completion handling.

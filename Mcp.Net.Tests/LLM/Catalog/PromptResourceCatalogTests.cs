@@ -58,7 +58,9 @@ public class PromptResourceCatalogTests
         var catalog = new PromptResourceCatalog(clientMock.Object, NullLogger<PromptResourceCatalog>.Instance);
         await catalog.InitializeAsync();
 
-        catalog.HandleNotification(new JsonRpcNotificationMessage("2.0", "prompts/list_changed", null));
+        catalog.HandleNotification(
+            new JsonRpcNotificationMessage("2.0", "notifications/prompts/list_changed", null)
+        );
 
         await refreshTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
         callCount.Should().BeGreaterThanOrEqualTo(2);
@@ -110,7 +112,9 @@ public class PromptResourceCatalogTests
         var catalog = new PromptResourceCatalog(clientMock.Object, NullLogger<PromptResourceCatalog>.Instance);
         await catalog.InitializeAsync();
 
-        catalog.HandleNotification(new JsonRpcNotificationMessage("2.0", "resources/list_changed", null));
+        catalog.HandleNotification(
+            new JsonRpcNotificationMessage("2.0", "notifications/resources/list_changed", null)
+        );
 
         await refreshTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
         resourceCalls.Should().BeGreaterThanOrEqualTo(2);

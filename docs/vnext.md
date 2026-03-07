@@ -16,35 +16,32 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - reliable transport close cleanup on shutdown errors
 - Hosted SSE builder path and health-path wiring now honor configured values and are covered by regression tests.
 - Hosted SSE requests now reuse middleware-authenticated request state instead of running the auth handler twice.
-- Latest review findings in the notification/completion/resource-refresh area:
-  - server-side tool/prompt/resource mutations do not notify connected clients
+- Spec-aligned `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations.
+- LLM and WebUI refresh listeners now accept the spec notification names and the full suite is green (`278/278`).
+- Latest remaining review finding in the notification/completion/resource-refresh area:
   - prompt/resource/completion handlers lose cancellation and request metadata
-  - current refresh listeners use non-spec notification names
-- A targeted failing regression now exists for the missing server-side `list_changed` notification path.
-- Next slice is to implement the minimal notification path and make that regression pass.
 
 ## Goal
-- Add spec-aligned `notifications/.../list_changed` broadcasts for tool, prompt, and resource mutations so connected clients refresh without reconnecting.
+- Preserve cancellation and request metadata through prompt, resource, and completion handler execution.
 
 ## Scope
 - In scope:
-  - server-side tool/prompt/resource mutation notifications
-  - spec-aligned `notifications/tools|prompts|resources/list_changed` naming
-  - integration/regression coverage for post-initialize refresh behavior
+  - keep `ServerRequestContext.CancellationToken` alive through prompt/resource/completion paths
+  - preserve request metadata/session context until the non-tool handlers run
+  - add regression coverage for cancellation or metadata loss in one concrete path first
 - Out of scope:
-  - prompt/resource/completion cancellation plumbing
-  - metadata propagation into non-tool handlers
+  - further notification naming changes
   - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Implement the minimal server-side notification path for active sessions.
-2. Update listeners/tests to the spec `notifications/.../list_changed` names if needed to make the end-to-end refresh path work.
-3. Run the targeted refresh-routing tests, then the relevant broader suite.
+1. Review the prompt/resource/completion call path and identify the first concrete cancellation or metadata regression to pin.
+2. Add the failing regression test first.
+3. Implement the smallest fix that preserves request context through that path.
+4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - preserve cancellation and metadata through prompt/resource/completion handlers
    - remaining builder/DI inconsistencies
    - SSE vs stdio parity
    - logging/debuggability and hidden mutable state
@@ -60,5 +57,5 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 ## Verification checklist
 - Keep the targeted regression failing until the production fix is in place.
 - After implementation, run the targeted regression test.
-- Run the relevant broader `Mcp.Net.Server`, integration, or client refresh test group.
-- If notification naming or routing changes affect multiple layers, run the full `Mcp.Net.Tests` suite before finishing.
+- Run the relevant broader `Mcp.Net.Server` and integration test group.
+- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling behavior.

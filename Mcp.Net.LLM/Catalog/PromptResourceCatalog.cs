@@ -14,7 +14,7 @@ namespace Mcp.Net.LLM.Catalog;
 
 /// <summary>
 /// Tracks prompts and resources exposed by the connected MCP server, keeping the cached copies in
-/// sync with <c>list_changed</c> notifications so UI layers always have fresh metadata.
+/// sync with <c>notifications/*/list_changed</c> notifications so UI layers always have fresh metadata.
 /// </summary>
 public sealed class PromptResourceCatalog : IPromptResourceCatalog
 {
@@ -163,9 +163,11 @@ public sealed class PromptResourceCatalog : IPromptResourceCatalog
 
         switch (notification.Method)
         {
+            case "notifications/prompts/list_changed":
             case "prompts/list_changed":
                 FireAndForgetRefresh(RefreshPromptsAsync, "prompt list changed");
                 break;
+            case "notifications/resources/list_changed":
             case "resources/list_changed":
                 FireAndForgetRefresh(RefreshResourcesAsync, "resource list changed");
                 break;
