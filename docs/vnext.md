@@ -31,7 +31,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Hosted SSE connections now follow a single authoritative registration path through `McpServer.ConnectAsync`, so the same transport is no longer registered twice on initial connect.
 - `ConnectAsync` now rolls back startup-failed transports, so a `StartAsync` failure no longer leaves a registered-but-dead transport in the connection manager.
 - Reconnect replacement now only swaps the active transport after the new transport has started, so a failed replacement startup no longer evicts a healthy existing session transport.
-- The full suite is green (`305/305`).
+- Server-driven `list_changed` notifications now wait for real per-session lifecycle readiness (`notifications/initialized`) instead of treating protocol negotiation as sufficient.
+- The full suite is green (`306/306`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -53,13 +54,14 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - broad non-review refactors
 
 ## Current slice
-1. Continue the logging/debuggability and hidden mutable state review in the server stack.
-2. Identify the next concrete correctness or observability gap.
-3. Add a failing regression first where practical.
-4. Implement the smallest fix and rerun targeted then broader tests.
+1. Resume the remaining `Mcp.Net.Server` logging/debuggability and hidden mutable state review.
+2. Identify the next concrete issue with a real state or observability consequence.
+3. Add a failing regression first when feasible.
+4. Keep the next fix commit-sized and rerun targeted then broader tests.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
+   - continue the logging/debuggability and hidden mutable state review after the lifecycle-readiness fix
    - decide whether to implement the MCP logging primitive after the review closes
 
 ## Open decisions

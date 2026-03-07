@@ -43,6 +43,8 @@ public class McpServer : IMcpServer
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ClientCapabilities> _clientCapabilitiesBySession =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _readySessions =
+        new(StringComparer.Ordinal);
     private readonly IConnectionManager _connectionManager;
     private readonly IToolService _toolService;
     private readonly IResourceService _resourceService;
@@ -352,14 +354,45 @@ public class McpServer : IMcpServer
         }
     }
 
-    private void HandleNotification(JsonRpcNotificationMessage notification)
+    private void HandleNotification(JsonRpcNotificationMessage notification, string? sessionId)
     {
         using (
             _logger.BeginScope(new Dictionary<string, object> { ["Method"] = notification.Method })
         )
         {
             _logger.LogDebug("Received notification for method {Method}", notification.Method);
-            // Process notifications if needed
+
+            if (
+                string.Equals(
+                    notification.Method,
+                    "notifications/initialized",
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                if (string.IsNullOrWhiteSpace(sessionId))
+                {
+                    _logger.LogWarning(
+                        "Received notifications/initialized without session context."
+                    );
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(GetNegotiatedProtocolVersion(sessionId)))
+                {
+                    _logger.LogWarning(
+                        "Received notifications/initialized for session {SessionId} before initialize completed.",
+                        sessionId
+                    );
+                    return;
+                }
+
+                SetSessionReady(sessionId);
+                _logger.LogInformation(
+                    "Session {SessionId} completed lifecycle initialization.",
+                    sessionId
+                );
+            }
         }
     }
 
@@ -635,6 +668,7 @@ public class McpServer : IMcpServer
         _logger.LogInformation("Transport connection closed for session {SessionId}", sessionId);
         ClearNegotiatedProtocolVersion(sessionId);
         ClearClientCapabilities(sessionId);
+        ClearSessionReady(sessionId);
         CancelPendingRequests(
             sessionId,
             new OperationCanceledException($"Transport {sessionId} closed.")
@@ -719,6 +753,7 @@ public class McpServer : IMcpServer
         {
             SetNegotiatedProtocolVersion(sessionId, negotiatedVersion);
             SetClientCapabilities(sessionId, request.Capabilities);
+            ClearSessionReady(sessionId);
         }
         else
         {
@@ -1054,7 +1089,12 @@ public class McpServer : IMcpServer
         }
 
         HandleNotification(
-            new JsonRpcNotificationMessage(context.Request.JsonRpc, context.Request.Method, context.Request.Params)
+            new JsonRpcNotificationMessage(
+                context.Request.JsonRpc,
+                context.Request.Method,
+                context.Request.Params
+            ),
+            context.SessionId
         );
         return Task.CompletedTask;
     }
@@ -1142,6 +1182,23 @@ public class McpServer : IMcpServer
         _clientCapabilitiesBySession.TryRemove(sessionId, out _);
     }
 
+    private void SetSessionReady(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        _readySessions[sessionId] = 0;
+    }
+
+    private void ClearSessionReady(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        _readySessions.TryRemove(sessionId, out _);
+    }
+
     private void NotifyListChangedIfSupported(string method, object? capability)
     {
         if (!SupportsListChangedNotifications(capability))
@@ -1165,7 +1222,7 @@ public class McpServer : IMcpServer
 
     private async Task BroadcastNotificationToInitializedSessionsAsync(string method)
     {
-        var sessionIds = _negotiatedProtocolVersionsBySession.Keys.ToArray();
+        var sessionIds = _readySessions.Keys.ToArray();
         if (sessionIds.Length == 0)
         {
             return;

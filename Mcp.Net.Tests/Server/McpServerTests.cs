@@ -1090,6 +1090,9 @@ public class McpServerTests
         );
 
         initializeResponse.Error.Should().BeNull();
+        await server.HandleNotificationAsync(
+            CreateNotificationContext(transport.Id(), "notifications/initialized")
+        );
 
         server.RegisterTool(
             "dynamic.tool",
@@ -1128,6 +1131,81 @@ public class McpServerTests
             );
     }
 
+    [Fact]
+    public async Task RegisteringServerPrimitives_BeforeNotificationsInitialized_Should_NotNotify_Until_ClientIsReady()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions
+            {
+                Capabilities = new ServerCapabilities
+                {
+                    Tools = new { listChanged = true },
+                    Prompts = new { listChanged = true },
+                    Resources = new { listChanged = true },
+                },
+            },
+            NullLoggerFactory.Instance
+        );
+
+        var transport = new MockTransport("session-readiness");
+        await server.ConnectAsync(transport);
+
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-readiness", McpServer.LatestProtocolVersion),
+            transport.Id()
+        );
+
+        initializeResponse.Error.Should().BeNull();
+
+        server.RegisterTool(
+            "pre-ready.tool",
+            "Tool registered before notifications/initialized",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            (_, _) => Task.FromResult(new ToolCallResult())
+        );
+
+        server.RegisterPrompt(
+            new Prompt
+            {
+                Name = "pre-ready.prompt",
+                Description = "Prompt registered before notifications/initialized",
+            },
+            _ => Task.FromResult(Array.Empty<object>())
+        );
+
+        server.RegisterResource(
+            new Resource
+            {
+                Uri = "mcp://pre-ready/resource",
+                Name = "Pre-ready Resource",
+            },
+            Array.Empty<ResourceContent>()
+        );
+
+        transport.SentNotifications.Should().BeEmpty(
+            "list_changed notifications should not be sent before the client finishes the lifecycle handshake"
+        );
+
+        await server.HandleNotificationAsync(
+            CreateNotificationContext(transport.Id(), "notifications/initialized")
+        );
+
+        server.RegisterTool(
+            "post-ready.tool",
+            "Tool registered after notifications/initialized",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            (_, _) => Task.FromResult(new ToolCallResult())
+        );
+
+        transport.SentNotifications
+            .Select(notification => notification.Method)
+            .Should()
+            .Equal("notifications/tools/list_changed");
+    }
+
     private static JsonRpcRequestMessage CreateInitializeRequest(
         string requestId,
         string protocolVersion
@@ -1144,6 +1222,17 @@ public class McpServerTests
                     protocolVersion,
                 }
             )
+        );
+
+    private static ServerRequestContext CreateNotificationContext(
+        string sessionId,
+        string method,
+        object? parameters = null
+    ) =>
+        new(
+            sessionId,
+            sessionId,
+            new JsonRpcRequestMessage("2.0", "notification", method, parameters)
         );
 
     private static async Task WaitForNotificationCountAsync(
