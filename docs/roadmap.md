@@ -12,6 +12,7 @@ Update it when priorities, milestones, or major decisions change.
 3. MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- Hosted SSE connections now use a single authoritative registration path, removing duplicate transport registration and duplicate close-subscription state on initial connect
 - Transport errors now converge on the close path, so fatal send failures clear session-scoped negotiated state and remove the broken transport instead of leaving stale active-session state behind
 - `initialize` now suppresses the unimplemented `logging` capability even when callers set `ServerCapabilities.Logging`, so capability advertisement stays truthful
 - SSE and stdio server transports now serialize outbound writes per connection so overlapping responses, requests, and notifications cannot enter the shared writer concurrently
@@ -56,3 +57,4 @@ Update it when priorities, milestones, or major decisions change.
 - The next active review area is logging/debuggability and hidden mutable state.
 - The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
 - The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.
+- The hosted SSE duplicate-registration hidden-state gap is now closed by removing the redundant host-side registration before `McpServer.ConnectAsync`.

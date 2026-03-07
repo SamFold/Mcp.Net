@@ -11,6 +11,7 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Transport.Sse;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -390,6 +391,54 @@ public class SseConnectionManagerTests
         registeredTransport.Should().BeNull();
     }
 
+    [Fact]
+    public async Task HandleSseConnectionAsync_Should_Register_New_Transport_Only_Once()
+    {
+        var loggerFactory = LoggerFactory.Create(builder => { });
+        var innerConnectionManager = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
+        var countingConnectionManager = new CountingConnectionManager(innerConnectionManager);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            countingConnectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            loggerFactory
+        );
+        var connectionManager = new SseTransportHost(
+            server,
+            loggerFactory,
+            countingConnectionManager,
+            authHandler: null,
+            new[] { DefaultOrigin },
+            DefaultOrigin
+        );
+
+        var context = CreateGetContext("user-1");
+        using var lifetime = new CancellationTokenSource();
+        context.RequestAborted = lifetime.Token;
+
+        var connectionTask = connectionManager.HandleSseConnectionAsync(context);
+
+        try
+        {
+            var sessionId = await WaitForSessionIdAsync(context);
+
+            await WaitForAsync(
+                () => Task.FromResult(countingConnectionManager.RegisterCallsBySession(sessionId) >= 1),
+                TimeSpan.FromMilliseconds(500)
+            );
+
+            countingConnectionManager.RegisterCallsBySession(sessionId).Should().Be(1);
+        }
+        finally
+        {
+            lifetime.Cancel();
+            await connectionTask;
+        }
+    }
+
     private static async Task<(
         SseTransportHost Manager,
         SseTransport Transport,
@@ -542,6 +591,23 @@ public class SseConnectionManagerTests
         throw new TimeoutException($"Timed out waiting for transport '{sessionId}'.");
     }
 
+    private static async Task WaitForAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        (await condition()).Should().BeTrue();
+    }
+
     private sealed class TestResponseWriter : IResponseWriter
     {
         private readonly List<string> _payloads = new();
@@ -612,6 +678,42 @@ public class SseConnectionManagerTests
         {
             IsCompleted = true;
             throw new InvalidOperationException("Simulated response completion failure.");
+        }
+    }
+
+    private sealed class CountingConnectionManager : IConnectionManager
+    {
+        private readonly IConnectionManager _inner;
+        private readonly Dictionary<string, int> _registerCallsBySession = new(StringComparer.Ordinal);
+        private readonly object _sync = new();
+
+        public CountingConnectionManager(IConnectionManager inner)
+        {
+            _inner = inner;
+        }
+
+        public Task<ITransport?> GetTransportAsync(string sessionId) => _inner.GetTransportAsync(sessionId);
+
+        public Task RegisterTransportAsync(string sessionId, ITransport transport)
+        {
+            lock (_sync)
+            {
+                _registerCallsBySession[sessionId] = RegisterCallsBySession(sessionId) + 1;
+            }
+
+            return _inner.RegisterTransportAsync(sessionId, transport);
+        }
+
+        public Task<bool> RemoveTransportAsync(string sessionId) => _inner.RemoveTransportAsync(sessionId);
+
+        public Task CloseAllConnectionsAsync() => _inner.CloseAllConnectionsAsync();
+
+        public int RegisterCallsBySession(string sessionId)
+        {
+            lock (_sync)
+            {
+                return _registerCallsBySession.TryGetValue(sessionId, out var count) ? count : 0;
+            }
         }
     }
 

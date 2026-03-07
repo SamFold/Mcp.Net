@@ -28,7 +28,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - SSE and stdio server transports now serialize outbound writes per connection, so overlapping responses, requests, and notifications cannot enter the shared writer concurrently.
 - `initialize` now suppresses the unimplemented `logging` capability even if callers set `ServerCapabilities.Logging`, keeping capability advertisement truthful.
 - Transport errors now converge on the close path, so fatal send failures no longer leave a broken session registered with negotiated protocol state still present.
-- The full suite is green (`302/302`).
+- Hosted SSE connections now follow a single authoritative registration path through `McpServer.ConnectAsync`, so the same transport is no longer registered twice on initial connect.
+- The full suite is green (`303/303`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.

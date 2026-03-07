@@ -106,11 +106,6 @@ public class SseTransportHost
         var sessionId = transport.SessionId;
         logger.LogInformation("Created SSE transport with session ID {SessionId}", sessionId);
 
-        await _connectionManager
-            .RegisterTransportAsync(sessionId, transport)
-            .ConfigureAwait(false);
-        logger.LogInformation("Registered SSE transport with session ID {SessionId}", sessionId);
-
         using (
             logger.BeginScope(
                 new Dictionary<string, object>
