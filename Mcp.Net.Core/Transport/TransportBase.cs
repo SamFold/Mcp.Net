@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
@@ -62,11 +63,50 @@ namespace Mcp.Net.Core.Transport
 
             Logger.LogInformation("Closing transport");
             IsClosed = true;
-            CancellationTokenSource.Cancel();
+            ExceptionDispatchInfo? closeFailure = null;
 
-            await OnClosingAsync();
+            try
+            {
+                CancellationTokenSource.Cancel();
+            }
+            catch (Exception ex)
+            {
+                closeFailure = ExceptionDispatchInfo.Capture(ex);
+            }
 
-            OnClose?.Invoke();
+            try
+            {
+                await OnClosingAsync();
+            }
+            catch (Exception ex)
+            {
+                if (closeFailure == null)
+                {
+                    closeFailure = ExceptionDispatchInfo.Capture(ex);
+                }
+                else
+                {
+                    Logger.LogError(ex, "Error during transport-specific shutdown after close had already failed");
+                }
+            }
+
+            try
+            {
+                OnClose?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                if (closeFailure == null)
+                {
+                    closeFailure = ExceptionDispatchInfo.Capture(ex);
+                }
+                else
+                {
+                    Logger.LogError(ex, "Error invoking transport close callbacks");
+                }
+            }
+
+            closeFailure?.Throw();
         }
 
         /// <summary>

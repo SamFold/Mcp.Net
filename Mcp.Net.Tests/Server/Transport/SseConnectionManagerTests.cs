@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
+using FluentAssertions.Execution;
 using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
@@ -351,6 +352,44 @@ public class SseConnectionManagerTests
         responseBody.Should().Contain(McpServer.LatestProtocolVersion);
     }
 
+    [Fact]
+    public async Task CloseAsync_Should_Remove_Transport_And_Cancel_Pending_Request_When_Response_Completion_Fails()
+    {
+        var loggerFactory = LoggerFactory.Create(builder => { });
+        var transportRegistry = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            transportRegistry,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            loggerFactory
+        )
+        {
+            ClientRequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        var writer = new ThrowingCompleteResponseWriter();
+        var transport = new SseTransport(writer, loggerFactory.CreateLogger<SseTransport>());
+
+        await server.ConnectAsync(transport);
+
+        var pendingRequest = server.SendClientRequestAsync(transport.SessionId, "noop", null);
+
+        var closeException = await Assert.ThrowsAsync<InvalidOperationException>(() => transport.CloseAsync());
+        closeException.Message.Should().Be("Simulated response completion failure.");
+
+        var pendingException = await Record.ExceptionAsync(() =>
+            pendingRequest.WaitAsync(TimeSpan.FromMilliseconds(200))
+        );
+        var registeredTransport = await transportRegistry.GetTransportAsync(transport.SessionId);
+
+        using var scope = new AssertionScope();
+        pendingException.Should().BeOfType<OperationCanceledException>();
+        registeredTransport.Should().BeNull();
+    }
+
     private static async Task<(
         SseTransportHost Manager,
         SseTransport Transport,
@@ -543,6 +582,36 @@ public class SseConnectionManagerTests
         {
             _payloads.Add(content);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingCompleteResponseWriter : IResponseWriter
+    {
+        private readonly List<string> _payloads = new();
+
+        public bool IsCompleted { get; private set; }
+
+        public string Id { get; } = Guid.NewGuid().ToString();
+
+        public string? RemoteIpAddress => null;
+
+        public Task WriteAsync(string content, CancellationToken cancellationToken = default)
+        {
+            _payloads.Add(content);
+            return Task.CompletedTask;
+        }
+
+        public Task FlushAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void SetHeader(string name, string value) { }
+
+        public IEnumerable<KeyValuePair<string, string>> GetRequestHeaders() =>
+            Array.Empty<KeyValuePair<string, string>>();
+
+        public Task CompleteAsync()
+        {
+            IsCompleted = true;
+            throw new InvalidOperationException("Simulated response completion failure.");
         }
     }
 
