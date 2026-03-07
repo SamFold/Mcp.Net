@@ -8,6 +8,7 @@ using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Server;
+using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Transport.Sse;
 using Microsoft.AspNetCore.Http;
@@ -198,6 +199,66 @@ public class SseConnectionManagerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_Should_Reject_Post_For_Different_Authenticated_User_Than_Session_Owner()
+    {
+        var loggerFactory = LoggerFactory.Create(builder => { });
+        var transportRegistry = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            transportRegistry,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            loggerFactory
+        );
+        var authHandler = new HeaderUserAuthHandler();
+        var connectionManager = new SseTransportHost(
+            server,
+            loggerFactory,
+            transportRegistry,
+            authHandler,
+            new[] { DefaultOrigin },
+            DefaultOrigin
+        );
+
+        var sseContext = CreateGetContext("owner-user");
+        using var sseLifetime = new CancellationTokenSource();
+        sseContext.RequestAborted = sseLifetime.Token;
+
+        var connectionTask = connectionManager.HandleSseConnectionAsync(sseContext);
+
+        try
+        {
+            var sessionId = await WaitForSessionIdAsync(sseContext);
+            var transport = await WaitForTransportAsync(transportRegistry, sessionId);
+            transport.Should().BeOfType<SseTransport>();
+            ((SseTransport)transport).Metadata["UserId"].Should().Be("owner-user");
+
+            var hijackRequest = new JsonRpcRequestMessage("2.0", "list-hijack", "tools/list", null);
+            var postContext = CreatePostContext(sessionId, hijackRequest);
+            postContext.Request.Headers["X-Test-User"] = "other-user";
+
+            await connectionManager.HandleMessageAsync(postContext);
+
+            postContext.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+            postContext.Response.Body.Position = 0;
+            using var reader = new StreamReader(
+                postContext.Response.Body,
+                Encoding.UTF8,
+                leaveOpen: true
+            );
+            var responseBody = await reader.ReadToEndAsync();
+            responseBody.Should().Contain("session");
+        }
+        finally
+        {
+            sseLifetime.Cancel();
+            await connectionTask;
+        }
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_Should_Validate_Protocol_Header_Per_Session()
     {
         var loggerFactory = LoggerFactory.Create(builder => { });
@@ -331,6 +392,11 @@ public class SseConnectionManagerTests
     private static DefaultHttpContext CreatePostContext(
         SseTransport transport,
         JsonRpcRequestMessage request
+    ) => CreatePostContext(transport.SessionId, request);
+
+    private static DefaultHttpContext CreatePostContext(
+        string sessionId,
+        JsonRpcRequestMessage request
     )
     {
         var context = new DefaultHttpContext();
@@ -338,7 +404,7 @@ public class SseConnectionManagerTests
         context.Request.Scheme = "http";
         context.Request.Host = HostString.FromUriComponent(DefaultOrigin);
         context.Request.Headers["Origin"] = DefaultOrigin;
-        context.Request.Headers["Mcp-Session-Id"] = transport.SessionId;
+        context.Request.Headers["Mcp-Session-Id"] = sessionId;
         context.Response.Body = new MemoryStream();
 
         var requestJson = JsonSerializer.Serialize(request);
@@ -390,6 +456,53 @@ public class SseConnectionManagerTests
             .Be(expectedProtocolVersion);
     }
 
+    private static DefaultHttpContext CreateGetContext(string userId)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Scheme = "http";
+        context.Request.Host = HostString.FromUriComponent(DefaultOrigin);
+        context.Request.Headers["Origin"] = DefaultOrigin;
+        context.Request.Headers["X-Test-User"] = userId;
+        context.Response.Body = new MemoryStream();
+        return context;
+    }
+
+    private static async Task<string> WaitForSessionIdAsync(DefaultHttpContext context)
+    {
+        for (int attempt = 0; attempt < 50; attempt++)
+        {
+            var sessionId = context.Response.Headers["Mcp-Session-Id"].ToString();
+            if (!string.IsNullOrWhiteSpace(sessionId))
+            {
+                return sessionId;
+            }
+
+            await Task.Delay(10);
+        }
+
+        throw new TimeoutException("Timed out waiting for SSE session identifier.");
+    }
+
+    private static async Task<ITransport> WaitForTransportAsync(
+        InMemoryConnectionManager transportRegistry,
+        string sessionId
+    )
+    {
+        for (int attempt = 0; attempt < 50; attempt++)
+        {
+            var transport = await transportRegistry.GetTransportAsync(sessionId);
+            if (transport != null)
+            {
+                return transport;
+            }
+
+            await Task.Delay(10);
+        }
+
+        throw new TimeoutException($"Timed out waiting for transport '{sessionId}'.");
+    }
+
     private sealed class TestResponseWriter : IResponseWriter
     {
         private readonly List<string> _payloads = new();
@@ -430,6 +543,37 @@ public class SseConnectionManagerTests
         {
             _payloads.Add(content);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HeaderUserAuthHandler : IAuthHandler
+    {
+        public string SchemeName => "Test";
+
+        public Task<AuthResult> AuthenticateAsync(HttpContext context)
+        {
+            var userId = context.Request.Headers["X-Test-User"].ToString();
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return Task.FromResult(
+                    AuthResult.Fail(
+                        "Missing test user header.",
+                        StatusCodes.Status401Unauthorized,
+                        "invalid_token",
+                        "Missing X-Test-User header."
+                    )
+                );
+            }
+
+            return Task.FromResult(
+                AuthResult.Success(
+                    userId,
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["sub"] = userId,
+                    }
+                )
+            );
         }
     }
 }

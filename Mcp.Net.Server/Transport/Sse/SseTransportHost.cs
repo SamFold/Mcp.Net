@@ -185,10 +185,17 @@ public class SseTransportHost
             return;
         }
 
+        var authResult = authOutcome.Result;
+
         using (logger.BeginScope(new Dictionary<string, object> { ["SessionId"] = sessionId }))
         {
             var transport = await ResolveTransportAsync(context, sessionId, logger);
             if (transport == null)
+            {
+                return;
+            }
+
+            if (!await ValidateSessionOwnershipAsync(context, transport, authResult, logger))
             {
                 return;
             }
@@ -264,6 +271,47 @@ public class SseTransportHost
         context.Response.StatusCode = StatusCodes.Status404NotFound;
         await context.Response.WriteAsJsonAsync(new { error = "Session not found" });
         return null;
+    }
+
+    private static async Task<bool> ValidateSessionOwnershipAsync(
+        HttpContext context,
+        SseTransport transport,
+        AuthResult? authResult,
+        ILogger logger
+    )
+    {
+        if (
+            authResult == null
+            || string.IsNullOrWhiteSpace(authResult.UserId)
+            || !transport.Metadata.TryGetValue("UserId", out var sessionUserId)
+            || string.IsNullOrWhiteSpace(sessionUserId)
+        )
+        {
+            return true;
+        }
+
+        if (string.Equals(sessionUserId, authResult.UserId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        logger.LogWarning(
+            "Rejecting message for session {SessionId} because authenticated user {AuthenticatedUserId} does not match session owner {SessionUserId}.",
+            transport.SessionId,
+            authResult.UserId,
+            sessionUserId
+        );
+
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await context.Response.WriteAsJsonAsync(
+            new
+            {
+                error = "session_access_denied",
+                message = "Authenticated user does not own the requested session.",
+            }
+        );
+
+        return false;
     }
 
     /// <summary>
