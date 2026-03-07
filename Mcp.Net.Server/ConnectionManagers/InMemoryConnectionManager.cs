@@ -78,6 +78,16 @@ public class InMemoryConnectionManager : IConnectionManager
     public Task RegisterTransportAsync(string sessionId, ITransport transport)
     {
         var connectionInfo = new ConnectionInfo(transport);
+        if (_connections.TryGetValue(sessionId, out var existingConnection))
+        {
+            _logger.LogInformation(
+                "Replacing existing transport for session ID: {SessionId}. Old transport: {OldTransportId}, new transport: {NewTransportId}",
+                sessionId,
+                existingConnection.Transport.Id(),
+                transport.Id()
+            );
+        }
+
         _connections[sessionId] = connectionInfo;
 
         _logger.LogInformation("Registered transport with session ID: {SessionId}", sessionId);
@@ -85,11 +95,7 @@ public class InMemoryConnectionManager : IConnectionManager
         // Remove the transport when it closes
         transport.OnClose += () =>
         {
-            _logger.LogInformation(
-                "Transport closed, removing from connection manager: {SessionId}",
-                sessionId
-            );
-            _ = RemoveTransportAsync(sessionId);
+            _ = RemoveTransportAsync(sessionId, transport);
         };
 
         return Task.CompletedTask;
@@ -103,6 +109,39 @@ public class InMemoryConnectionManager : IConnectionManager
         if (result)
         {
             _logger.LogDebug("Removed transport with session ID: {SessionId}", sessionId);
+        }
+
+        return Task.FromResult(result);
+    }
+
+    internal Task<bool> RemoveTransportAsync(string sessionId, ITransport transport)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentNullException.ThrowIfNull(transport);
+
+        if (
+            !_connections.TryGetValue(sessionId, out var currentConnection)
+            || !ReferenceEquals(currentConnection.Transport, transport)
+        )
+        {
+            _logger.LogDebug(
+                "Skipping transport removal for session ID {SessionId} because a different transport is registered.",
+                sessionId
+            );
+            return Task.FromResult(false);
+        }
+
+        bool result = _connections.TryRemove(
+            new KeyValuePair<string, ConnectionInfo>(sessionId, currentConnection)
+        );
+
+        if (result)
+        {
+            _logger.LogDebug(
+                "Removed transport with session ID: {SessionId} and transport ID: {TransportId}",
+                sessionId,
+                transport.Id()
+            );
         }
 
         return Task.FromResult(result);
@@ -161,17 +200,28 @@ public class InMemoryConnectionManager : IConnectionManager
             foreach (var conn in staleConnections)
             {
                 _logger.LogInformation("Removing stale connection: {SessionId}", conn.Key);
-                if (_connections.TryRemove(conn.Key, out var info))
+                if (
+                    RemoveTransportAsync(conn.Key, conn.Value.Transport)
+                        .GetAwaiter()
+                        .GetResult()
+                )
                 {
                     try
                     {
                         // Close the transport
-                        info.Transport.CloseAsync().Wait(TimeSpan.FromSeconds(5));
+                        conn.Value.Transport.CloseAsync().Wait(TimeSpan.FromSeconds(5));
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Error closing stale connection");
                     }
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Skipped stale cleanup for session {SessionId} because the transport was replaced.",
+                        conn.Key
+                    );
                 }
             }
 
