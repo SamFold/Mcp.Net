@@ -13,6 +13,7 @@ using Mcp.Net.Server.ConnectionManagers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.Services;
 using Mcp.Net.Server.Models;
+using Mcp.Net.Tests.TestUtils;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -298,6 +299,126 @@ public class McpServerTests
         server.HandleTransportClosed("session-close");
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => pendingTask);
+    }
+
+    [Fact]
+    public async Task HandleTransportClosed_Should_OnlyCancelPendingRequests_For_Session()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        )
+        {
+            ClientRequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        var sessionA = new MockTransport("session-a");
+        var sessionB = new MockTransport("session-b");
+
+        await connectionManager.RegisterTransportAsync(sessionA.Id(), sessionA);
+        await connectionManager.RegisterTransportAsync(sessionB.Id(), sessionB);
+
+        var pendingA = server.SendClientRequestAsync(sessionA.Id(), "noop", null);
+        var pendingB = server.SendClientRequestAsync(sessionB.Id(), "noop", null);
+
+        sessionA.SentRequests.Should().ContainSingle();
+        sessionB.SentRequests.Should().ContainSingle();
+
+        server.HandleTransportClosed(sessionA.Id());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => pendingA);
+
+        var responseB = new JsonRpcResponseMessage(
+            "2.0",
+            sessionB.SentRequests.Single().Id,
+            new { ok = true },
+            null
+        );
+
+        await server.HandleClientResponseAsync(sessionB.Id(), responseB);
+
+        var resultB = await pendingB;
+        resultB.Error.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task HandleClientResponseAsync_Should_NotComplete_Request_From_Different_Session()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        );
+
+        var sessionA = new MockTransport("session-a");
+        var sessionB = new MockTransport("session-b");
+
+        await connectionManager.RegisterTransportAsync(sessionA.Id(), sessionA);
+        await connectionManager.RegisterTransportAsync(sessionB.Id(), sessionB);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        var pending = server.SendClientRequestAsync(sessionA.Id(), "noop", null, cts.Token);
+
+        sessionA.SentRequests.Should().ContainSingle();
+
+        var response = new JsonRpcResponseMessage(
+            "2.0",
+            sessionA.SentRequests.Single().Id,
+            new { ok = true },
+            null
+        );
+
+        await server.HandleClientResponseAsync(sessionB.Id(), response);
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => pending);
+    }
+
+    [Fact]
+    public async Task HandleTransportError_Should_OnlyCancelPendingRequests_For_Session()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        )
+        {
+            ClientRequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        var sessionA = new MockTransport("session-a");
+        var sessionB = new MockTransport("session-b");
+
+        await server.ConnectAsync(sessionA);
+        await server.ConnectAsync(sessionB);
+
+        var pendingA = server.SendClientRequestAsync(sessionA.Id(), "noop", null);
+        var pendingB = server.SendClientRequestAsync(sessionB.Id(), "noop", null);
+
+        sessionA.SentRequests.Should().ContainSingle();
+        sessionB.SentRequests.Should().ContainSingle();
+
+        sessionA.SimulateError(new InvalidOperationException("boom"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pendingA);
+
+        var responseB = new JsonRpcResponseMessage(
+            "2.0",
+            sessionB.SentRequests.Single().Id,
+            new { ok = true },
+            null
+        );
+
+        await server.HandleClientResponseAsync(sessionB.Id(), responseB);
+
+        var resultB = await pendingB;
+        resultB.Error.Should().BeNull();
     }
 
     [Fact]

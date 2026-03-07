@@ -32,7 +32,10 @@ public class McpServer : IMcpServer
     };
 
     private readonly Dictionary<string, Func<string, string?, Task<object>>> _methodHandlers = new();
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>> _pendingClientRequests = new();
+    private readonly ConcurrentDictionary<
+        string,
+        ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>>
+    > _pendingClientRequestsBySession = new(StringComparer.Ordinal);
     private readonly IConnectionManager _connectionManager;
     private readonly IToolService _toolService;
     private readonly IResourceService _resourceService;
@@ -220,8 +223,8 @@ public class McpServer : IMcpServer
             sessionId
         );
 
-        transport.OnError += HandleTransportError;
-        transport.OnClose += HandleTransportClose;
+        transport.OnError += ex => HandleTransportError(sessionId, ex);
+        transport.OnClose += () => HandleTransportClose(sessionId);
 
         _logger.LogInformation("MCP server connecting to transport");
 
@@ -243,7 +246,7 @@ public class McpServer : IMcpServer
         }
     }
 
-    private void HandleClientResponse(JsonRpcResponseMessage response)
+    private void HandleClientResponse(string sessionId, JsonRpcResponseMessage response)
     {
         if (response == null)
         {
@@ -252,38 +255,46 @@ public class McpServer : IMcpServer
 
         using (_logger.BeginRequestScope(response.Id, "clientResponse"))
         {
-            if (_pendingClientRequests.TryRemove(response.Id, out var pendingRequest))
+            if (
+                !_pendingClientRequestsBySession.TryGetValue(sessionId, out var pendingBySession)
+                || !pendingBySession.TryRemove(response.Id, out var pendingRequest)
+            )
             {
-                if (response.Error != null)
-                {
-                    var message = string.IsNullOrWhiteSpace(response.Error.Message)
-                        ? "Client returned an error response."
-                        : response.Error.Message;
+                _logger.LogWarning(
+                    "Received response for unknown or completed client request: {RequestId} (Session {SessionId})",
+                    response.Id,
+                    sessionId
+                );
+                return;
+            }
 
-                    var errorCode = Enum.IsDefined(typeof(ErrorCode), response.Error.Code)
-                        ? (ErrorCode)response.Error.Code
-                        : ErrorCode.InternalError;
+            if (response.Error != null)
+            {
+                var message = string.IsNullOrWhiteSpace(response.Error.Message)
+                    ? "Client returned an error response."
+                    : response.Error.Message;
 
-                    _logger.LogWarning(
-                        "Client request {RequestId} failed: {Message}",
-                        response.Id,
-                        message
-                    );
+                var errorCode = Enum.IsDefined(typeof(ErrorCode), response.Error.Code)
+                    ? (ErrorCode)response.Error.Code
+                    : ErrorCode.InternalError;
 
-                    var exception = new McpException(errorCode, message, response.Error.Data);
-                    pendingRequest.TrySetException(exception);
-                }
-                else
-                {
-                    pendingRequest.TrySetResult(response);
-                }
+                _logger.LogWarning(
+                    "Client request {RequestId} failed: {Message}",
+                    response.Id,
+                    message
+                );
+
+                var exception = new McpException(errorCode, message, response.Error.Data);
+                pendingRequest.TrySetException(exception);
             }
             else
             {
-                _logger.LogWarning(
-                    "Received response for unknown or completed client request: {RequestId}",
-                    response.Id
-                );
+                pendingRequest.TrySetResult(response);
+            }
+
+            if (pendingBySession.IsEmpty)
+            {
+                _pendingClientRequestsBySession.TryRemove(sessionId, out _);
             }
         }
     }
@@ -372,7 +383,14 @@ public class McpServer : IMcpServer
             TaskCreationOptions.RunContinuationsAsynchronously
         );
 
-        if (!_pendingClientRequests.TryAdd(requestId, tcs))
+        var pendingBySession = _pendingClientRequestsBySession.GetOrAdd(
+            sessionId,
+            _ => new ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>>(
+                StringComparer.Ordinal
+            )
+        );
+
+        if (!pendingBySession.TryAdd(requestId, tcs))
         {
             throw new InvalidOperationException(
                 $"Failed to register pending client request with id '{requestId}'."
@@ -392,9 +410,14 @@ public class McpServer : IMcpServer
         }
         catch (Exception ex)
         {
-            if (_pendingClientRequests.TryRemove(requestId, out var pending))
+            if (pendingBySession.TryRemove(requestId, out var pending))
             {
                 pending.TrySetException(ex);
+            }
+
+            if (pendingBySession.IsEmpty)
+            {
+                _pendingClientRequestsBySession.TryRemove(sessionId, out _);
             }
 
             throw;
@@ -408,7 +431,7 @@ public class McpServer : IMcpServer
 
         using var registration = linkedCts.Token.Register(() =>
         {
-            if (_pendingClientRequests.TryRemove(requestId, out var pending))
+            if (pendingBySession.TryRemove(requestId, out var pending))
             {
                 if (!cancellationToken.IsCancellationRequested && _clientRequestTimeout != Timeout.InfiniteTimeSpan)
                 {
@@ -425,21 +448,29 @@ public class McpServer : IMcpServer
                     );
                 }
             }
+
+            if (pendingBySession.IsEmpty)
+            {
+                _pendingClientRequestsBySession.TryRemove(sessionId, out _);
+            }
         });
 
         return await tcs.Task.ConfigureAwait(false);
     }
 
-    private void HandleTransportError(Exception ex)
+    private void HandleTransportError(string sessionId, Exception ex)
     {
         _logger.LogError(ex, "Transport error");
-        CancelPendingRequests(ex);
+        CancelPendingRequests(sessionId, ex);
     }
 
-    private void HandleTransportClose()
+    private void HandleTransportClose(string sessionId)
     {
         _logger.LogInformation("Transport connection closed");
-        CancelPendingRequests(new OperationCanceledException("Transport connection closed."));
+        CancelPendingRequests(
+            sessionId,
+            new OperationCanceledException($"Transport {sessionId} closed.")
+        );
     }
 
     /// <summary>
@@ -453,14 +484,22 @@ public class McpServer : IMcpServer
             throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
         }
 
-        CancelPendingRequests(new OperationCanceledException($"Transport {sessionId} closed."));
+        CancelPendingRequests(
+            sessionId,
+            new OperationCanceledException($"Transport {sessionId} closed.")
+        );
     }
 
-    private void CancelPendingRequests(Exception? reason)
+    private void CancelPendingRequests(string sessionId, Exception? reason)
     {
-        foreach (var pending in _pendingClientRequests.ToArray())
+        if (!_pendingClientRequestsBySession.TryRemove(sessionId, out var pendingBySession))
         {
-            if (_pendingClientRequests.TryRemove(pending.Key, out var tcs))
+            return;
+        }
+
+        foreach (var pending in pendingBySession.ToArray())
+        {
+            if (pendingBySession.TryRemove(pending.Key, out var tcs))
             {
                 if (reason != null)
                 {
@@ -790,7 +829,7 @@ public class McpServer : IMcpServer
             throw new ArgumentNullException(nameof(response));
         }
 
-        HandleClientResponse(response);
+        HandleClientResponse(sessionId, response);
         return Task.CompletedTask;
     }
 }
