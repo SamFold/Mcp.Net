@@ -94,15 +94,30 @@ public static class SseTransportExtensions
         return services.AddMcpSseTransport(opt =>
         {
             opt.Name = options.Name;
+            opt.Title = options.Title;
             opt.Version = options.Version;
             opt.Instructions = options.Instructions;
+            opt.Logging = CloneLoggingOptions(options.Logging);
+            opt.Authentication = CloneAuthOptions(options.Authentication);
+            opt.ToolRegistration = CloneToolRegistrationOptions(options.ToolRegistration);
             opt.Hostname = options.Hostname;
             opt.Port = options.Port;
+            opt.Scheme = options.Scheme;
+            opt.SsePath = options.SsePath;
+            opt.HealthCheckPath = options.HealthCheckPath;
+            opt.EnableCors = options.EnableCors;
+            opt.AllowedOrigins = options.AllowedOrigins?.ToArray();
+            opt.CanonicalOrigin = options.CanonicalOrigin;
             opt.ConnectionTimeout = options.ConnectionTimeout;
+            opt.ConnectionTimeoutMinutes = options.ConnectionTimeoutMinutes;
+            opt.Args = options.Args.ToArray();
+            opt.CustomSettings = new Dictionary<string, string>(options.CustomSettings);
             opt.LogLevel = options.LogLevel;
             opt.LogFilePath = options.LogFilePath;
             opt.UseConsoleLogging = options.UseConsoleLogging;
             opt.Capabilities = options.Capabilities;
+            opt.ToolAssemblyPaths = new List<string>(options.ToolAssemblyPaths);
+            opt.NoAuthExplicitlyConfigured = options.NoAuthExplicitlyConfigured;
         });
     }
 
@@ -131,5 +146,49 @@ public static class SseTransportExtensions
         };
 
         return services.AddMcpSseTransport(options);
+    }
+
+    private static Options.LoggingOptions CloneLoggingOptions(Options.LoggingOptions source)
+    {
+        return new Options.LoggingOptions
+        {
+            MinimumLogLevel = source.MinimumLogLevel,
+            UseConsoleLogging = source.UseConsoleLogging,
+            UseStdio = source.UseStdio,
+            LogFilePath = source.LogFilePath,
+            PrettyConsoleOutput = source.PrettyConsoleOutput,
+            FileRollingInterval = source.FileRollingInterval,
+            FileSizeLimitBytes = source.FileSizeLimitBytes,
+            RetainedFileCountLimit = source.RetainedFileCountLimit,
+            ComponentLogLevels = new Dictionary<string, Microsoft.Extensions.Logging.LogLevel>(
+                source.ComponentLogLevels
+            ),
+        };
+    }
+
+    private static AuthOptions CloneAuthOptions(AuthOptions source)
+    {
+        return new AuthOptions
+        {
+            Enabled = source.Enabled,
+            SchemeName = source.SchemeName,
+            SecuredPaths = new List<string>(source.SecuredPaths),
+            EnableLogging = source.EnableLogging,
+            NoAuthExplicitlyConfigured = source.NoAuthExplicitlyConfigured,
+            AuthHandler = source.AuthHandler,
+        };
+    }
+
+    private static Options.ToolRegistrationOptions CloneToolRegistrationOptions(
+        Options.ToolRegistrationOptions source
+    )
+    {
+        return new Options.ToolRegistrationOptions
+        {
+            IncludeEntryAssembly = source.IncludeEntryAssembly,
+            Assemblies = new List<System.Reflection.Assembly>(source.Assemblies),
+            ValidateToolMethods = source.ValidateToolMethods,
+            EnableDetailedLogging = source.EnableDetailedLogging,
+        };
     }
 }

@@ -6,10 +6,12 @@ using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.Extensions.Transport;
 using Mcp.Net.Server.Interfaces;
+using Mcp.Net.Server.Options;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Mcp.Net.Tests.Server;
 
@@ -108,5 +110,48 @@ public class McpServerRegistrationExtensionsTests
         result.Action.Should().Be(ElicitationAction.Accept);
         result.Content.Should().NotBeNull();
         result.Content!.Value.GetProperty("name").GetString().Should().Be("Istvaan");
+    }
+
+    [Fact]
+    public void AddMcpSseTransport_WithOptionsInstance_ShouldPreserveRoutingAndSecuritySettings()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+        services.AddMcpCore(options =>
+        {
+            options.Name = "Options Test Server";
+            options.Version = "1.0.0";
+        });
+
+        var transportOptions = new SseServerOptions
+        {
+            Name = "Options Test Server",
+            Version = "1.0.0",
+            Scheme = "https",
+            Hostname = "api.example.test",
+            Port = 9443,
+            SsePath = "/custom-mcp",
+            HealthCheckPath = "/custom-health",
+            EnableCors = false,
+            AllowedOrigins = new[] { "https://client.example.test" },
+            ConnectionTimeout = TimeSpan.FromMinutes(5),
+            Args = new[] { "--flag" },
+        };
+
+        services.AddMcpSseTransport(transportOptions);
+
+        using var provider = services.BuildServiceProvider();
+
+        var resolvedOptions = provider.GetRequiredService<IOptions<SseServerOptions>>().Value;
+
+        resolvedOptions.Scheme.Should().Be("https");
+        resolvedOptions.Hostname.Should().Be("api.example.test");
+        resolvedOptions.Port.Should().Be(9443);
+        resolvedOptions.SsePath.Should().Be("/custom-mcp");
+        resolvedOptions.HealthCheckPath.Should().Be("/custom-health");
+        resolvedOptions.EnableCors.Should().BeFalse();
+        resolvedOptions.AllowedOrigins.Should().Equal("https://client.example.test");
+        resolvedOptions.ConnectionTimeout.Should().Be(TimeSpan.FromMinutes(5));
+        resolvedOptions.Args.Should().Equal("--flag");
     }
 }

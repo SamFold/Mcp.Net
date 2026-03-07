@@ -22,8 +22,9 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
 - Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
 - Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
-- The full suite is green (`287/287`).
+- The full suite is green (`288/288`).
 - The notification/completion/resource-refresh review items are now closed.
+- The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 
 ## Goal
 - Start the next remaining `Mcp.Net.Server` review slice: builder/DI inconsistencies.
@@ -38,9 +39,9 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review the remaining builder and DI surfaces and choose the smallest verified inconsistency.
+1. Pin the next builder/DI inconsistency: `AddMcpCore(McpServerBuilder)` currently registers default `McpServerOptions` values instead of the builder-configured server identity and instructions.
 2. Add the failing regression test first.
-3. Implement the smallest fix for that constructibility or registration issue.
+3. Preserve builder-provided name/title/version/instructions in the registered `McpServerOptions`.
 4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices

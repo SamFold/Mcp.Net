@@ -12,6 +12,7 @@ Update it when priorities, milestones, or major decisions change.
 3. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
+- `AddMcpSseTransport(SseServerOptions)` now preserves routing and security settings instead of dropping them during DI registration
 - Hosted SSE builder path now honors configured MCP and health endpoints
 - Hosted SSE requests now reuse middleware-authenticated request state instead of authenticating twice
 - Server-driven `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations
@@ -38,4 +39,4 @@ Update it when priorities, milestones, or major decisions change.
 ## Notes
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
-- The next active bug class is remaining builder/DI inconsistencies.
+- The next active bug class is still remaining builder/DI inconsistencies, with the next concrete target being builder-provided `McpServerOptions` values that are not preserved by `AddMcpCore(McpServerBuilder)`.
