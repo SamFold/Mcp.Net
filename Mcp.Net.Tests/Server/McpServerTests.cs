@@ -155,6 +155,76 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task ProcessJsonRpcRequest_Initialize_Should_Track_Negotiated_Protocol_Per_Session()
+    {
+        var latestRequest = new JsonRpcRequestMessage(
+            "2.0",
+            "init-a",
+            "initialize",
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Client A", Version = "1.0" },
+                    capabilities = new object(),
+                    protocolVersion = McpServer.LatestProtocolVersion,
+                }
+            )
+        );
+        var legacyRequest = new JsonRpcRequestMessage(
+            "2.0",
+            "init-b",
+            "initialize",
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Client B", Version = "1.0" },
+                    capabilities = new object(),
+                    protocolVersion = "2024-11-05",
+                }
+            )
+        );
+
+        await _server.ProcessJsonRpcRequest(latestRequest, "session-a");
+        await _server.ProcessJsonRpcRequest(legacyRequest, "session-b");
+
+        _server.GetNegotiatedProtocolVersion("session-a").Should().Be(McpServer.LatestProtocolVersion);
+        _server.GetNegotiatedProtocolVersion("session-b").Should().Be("2024-11-05");
+        _server.NegotiatedProtocolVersion.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ConnectAsync_Should_Ignore_Close_From_Replaced_Transport_When_Tracking_ProtocolVersion()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        );
+
+        var originalTransport = new MockTransport("session-reconnect");
+        var replacementTransport = new MockTransport("session-reconnect");
+
+        await server.ConnectAsync(originalTransport);
+        await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-original", McpServer.LatestProtocolVersion),
+            "session-reconnect"
+        );
+
+        await server.ConnectAsync(replacementTransport);
+        await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-replacement", "2024-11-05"),
+            "session-reconnect"
+        );
+
+        originalTransport.SimulateClose();
+        await Task.Delay(50);
+
+        server.GetNegotiatedProtocolVersion("session-reconnect").Should().Be("2024-11-05");
+    }
+
+    [Fact]
     public async Task ProcessJsonRpcRequest_Should_Return_Error_For_Unknown_Method()
     {
         // Arrange
@@ -605,4 +675,22 @@ public class McpServerTests
         var promptPayload = JsonSerializer.SerializeToElement(getResponse.Result!);
         promptPayload.GetProperty("messages").GetArrayLength().Should().Be(1);
     }
+
+    private static JsonRpcRequestMessage CreateInitializeRequest(
+        string requestId,
+        string protocolVersion
+    ) =>
+        new(
+            "2.0",
+            requestId,
+            "initialize",
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                    capabilities = new object(),
+                    protocolVersion,
+                }
+            )
+        );
 }

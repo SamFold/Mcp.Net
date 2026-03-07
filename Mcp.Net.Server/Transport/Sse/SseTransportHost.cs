@@ -140,18 +140,18 @@ public class SseTransportHost
             finally
             {
                 // Cancel pending requests for this session when the transport closes.
-                CancelPendingRequests(sessionId);
+                await CancelPendingRequestsAsync(sessionId, transport);
                 await transport.CloseAsync();
                 logger.LogInformation("SSE transport closed");
             }
         }
     }
 
-    private void CancelPendingRequests(string sessionId)
+    private async Task CancelPendingRequestsAsync(string sessionId, SseTransport transport)
     {
         try
         {
-            _server.HandleTransportClosed(sessionId);
+            await _server.HandleTransportClosedAsync(sessionId, transport).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

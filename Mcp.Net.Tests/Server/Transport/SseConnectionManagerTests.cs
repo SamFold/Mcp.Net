@@ -197,6 +197,99 @@ public class SseConnectionManagerTests
         responseBody.Should().Contain("invalid_origin");
     }
 
+    [Fact]
+    public async Task HandleMessageAsync_Should_Validate_Protocol_Header_Per_Session()
+    {
+        var loggerFactory = LoggerFactory.Create(builder => { });
+        var transportRegistry = new InMemoryConnectionManager(
+            loggerFactory,
+            TimeSpan.FromMinutes(30)
+        );
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            transportRegistry,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            loggerFactory
+        );
+        var connectionManager = new SseTransportHost(
+            server,
+            loggerFactory,
+            transportRegistry,
+            authHandler: null,
+            new[] { DefaultOrigin },
+            DefaultOrigin
+        );
+
+        var writerA = new TestResponseWriter();
+        var writerB = new TestResponseWriter();
+        var transportA = new SseTransport(writerA, loggerFactory.CreateLogger<SseTransport>());
+        var transportB = new SseTransport(writerB, loggerFactory.CreateLogger<SseTransport>());
+
+        await server.ConnectAsync(transportA);
+        await server.ConnectAsync(transportB);
+
+        await SendInitializeAsync(
+            connectionManager,
+            transportA,
+            includeProtocolHeader: false,
+            requestedProtocolVersion: McpServer.LatestProtocolVersion
+        );
+        await SendInitializeAsync(
+            connectionManager,
+            transportB,
+            includeProtocolHeader: false,
+            requestedProtocolVersion: "2024-11-05"
+        );
+
+        var sessionARequest = CreatePostContext(
+            transportA,
+            new JsonRpcRequestMessage("2.0", "list-a", "tools/list", null)
+        );
+        sessionARequest.Request.Headers["MCP-Protocol-Version"] = McpServer.LatestProtocolVersion;
+
+        await connectionManager.HandleMessageAsync(sessionARequest);
+
+        sessionARequest.Response.StatusCode.Should().Be(202);
+        sessionARequest
+            .Response.Headers["MCP-Protocol-Version"]
+            .ToString()
+            .Should()
+            .Be(McpServer.LatestProtocolVersion);
+
+        var sessionBRequest = CreatePostContext(
+            transportB,
+            new JsonRpcRequestMessage("2.0", "list-b", "tools/list", null)
+        );
+        sessionBRequest.Request.Headers["MCP-Protocol-Version"] = "2024-11-05";
+
+        await connectionManager.HandleMessageAsync(sessionBRequest);
+
+        sessionBRequest.Response.StatusCode.Should().Be(202);
+        sessionBRequest
+            .Response.Headers["MCP-Protocol-Version"]
+            .ToString()
+            .Should()
+            .Be("2024-11-05");
+
+        var mismatchedRequest = CreatePostContext(
+            transportA,
+            new JsonRpcRequestMessage("2.0", "list-a-mismatch", "tools/list", null)
+        );
+        mismatchedRequest.Request.Headers["MCP-Protocol-Version"] = "2024-11-05";
+
+        await connectionManager.HandleMessageAsync(mismatchedRequest);
+
+        mismatchedRequest.Response.StatusCode.Should().Be(400);
+        mismatchedRequest.Response.Body.Position = 0;
+        using var reader = new StreamReader(
+            mismatchedRequest.Response.Body,
+            Encoding.UTF8,
+            leaveOpen: true
+        );
+        var responseBody = await reader.ReadToEndAsync();
+        responseBody.Should().Contain(McpServer.LatestProtocolVersion);
+    }
+
     private static async Task<(
         SseTransportHost Manager,
         SseTransport Transport,
@@ -258,9 +351,13 @@ public class SseConnectionManagerTests
     private static async Task SendInitializeAsync(
         SseTransportHost connectionManager,
         SseTransport transport,
-        bool includeProtocolHeader
+        bool includeProtocolHeader,
+        string requestedProtocolVersion = McpServer.LatestProtocolVersion,
+        string? expectedProtocolVersion = null
     )
     {
+        expectedProtocolVersion ??= requestedProtocolVersion;
+
         var initializeContext = CreatePostContext(
             transport,
             new JsonRpcRequestMessage(
@@ -270,7 +367,7 @@ public class SseConnectionManagerTests
                 JsonSerializer.SerializeToElement(
                     new
                     {
-                        protocolVersion = McpServer.LatestProtocolVersion,
+                        protocolVersion = requestedProtocolVersion,
                         capabilities = new { },
                         clientInfo = new { name = "client", version = "1.0" },
                     }
@@ -290,7 +387,7 @@ public class SseConnectionManagerTests
             .Response.Headers["MCP-Protocol-Version"]
             .ToString()
             .Should()
-            .Be(McpServer.LatestProtocolVersion);
+            .Be(expectedProtocolVersion);
     }
 
     private sealed class TestResponseWriter : IResponseWriter

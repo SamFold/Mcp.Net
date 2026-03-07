@@ -36,6 +36,8 @@ public class McpServer : IMcpServer
         string,
         ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>>
     > _pendingClientRequestsBySession = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _negotiatedProtocolVersionsBySession =
+        new(StringComparer.Ordinal);
     private readonly IConnectionManager _connectionManager;
     private readonly IToolService _toolService;
     private readonly IResourceService _resourceService;
@@ -47,7 +49,6 @@ public class McpServer : IMcpServer
     private readonly ServerCapabilities _capabilities;
     private readonly string? _instructions;
     private readonly ILogger<McpServer> _logger;
-    private string? _negotiatedProtocolVersion;
 
     public McpServer(
         ServerInfo serverInfo,
@@ -182,9 +183,18 @@ public class McpServer : IMcpServer
 
     public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
 
-    public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
+    public string? NegotiatedProtocolVersion => GetSharedNegotiatedProtocolVersion();
 
     internal IConnectionManager ConnectionManager => _connectionManager;
+
+    internal string? GetNegotiatedProtocolVersion(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        return _negotiatedProtocolVersionsBySession.TryGetValue(sessionId, out var negotiatedProtocolVersion)
+            ? negotiatedProtocolVersion
+            : null;
+    }
 
     /// <summary>
     /// Gets or sets the default timeout applied to server-initiated client requests.
@@ -208,8 +218,6 @@ public class McpServer : IMcpServer
 
     public async Task ConnectAsync(IServerTransport transport)
     {
-        _negotiatedProtocolVersion = null;
-
         var sessionId = transport.Id();
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -223,8 +231,8 @@ public class McpServer : IMcpServer
             sessionId
         );
 
-        transport.OnError += ex => HandleTransportError(sessionId, ex);
-        transport.OnClose += () => HandleTransportClose(sessionId);
+        transport.OnError += ex => _ = HandleTransportErrorAsync(sessionId, transport, ex);
+        transport.OnClose += () => _ = HandleTransportClosedAsync(sessionId, transport);
 
         _logger.LogInformation("MCP server connecting to transport");
 
@@ -458,19 +466,37 @@ public class McpServer : IMcpServer
         return await tcs.Task.ConfigureAwait(false);
     }
 
-    private void HandleTransportError(string sessionId, Exception ex)
+    private async Task HandleTransportErrorAsync(
+        string sessionId,
+        IServerTransport transport,
+        Exception ex
+    )
     {
+        if (!await IsActiveTransportAsync(sessionId, transport).ConfigureAwait(false))
+        {
+            _logger.LogDebug(
+                "Ignoring transport error for session {SessionId} because a different transport is registered.",
+                sessionId
+            );
+            return;
+        }
+
         _logger.LogError(ex, "Transport error");
         CancelPendingRequests(sessionId, ex);
     }
 
-    private void HandleTransportClose(string sessionId)
+    internal async Task HandleTransportClosedAsync(string sessionId, IServerTransport transport)
     {
-        _logger.LogInformation("Transport connection closed");
-        CancelPendingRequests(
-            sessionId,
-            new OperationCanceledException($"Transport {sessionId} closed.")
-        );
+        if (!await IsActiveTransportAsync(sessionId, transport).ConfigureAwait(false))
+        {
+            _logger.LogDebug(
+                "Ignoring transport close for session {SessionId} because a different transport is registered.",
+                sessionId
+            );
+            return;
+        }
+
+        HandleTransportClosed(sessionId);
     }
 
     /// <summary>
@@ -484,10 +510,21 @@ public class McpServer : IMcpServer
             throw new ArgumentException("Session identifier must be provided.", nameof(sessionId));
         }
 
+        _logger.LogInformation("Transport connection closed for session {SessionId}", sessionId);
+        ClearNegotiatedProtocolVersion(sessionId);
         CancelPendingRequests(
             sessionId,
             new OperationCanceledException($"Transport {sessionId} closed.")
         );
+    }
+
+    private async Task<bool> IsActiveTransportAsync(string sessionId, IServerTransport transport)
+    {
+        var activeTransport = await _connectionManager
+            .GetTransportAsync(sessionId)
+            .ConfigureAwait(false);
+
+        return ReferenceEquals(activeTransport, transport);
     }
 
     private void CancelPendingRequests(string sessionId, Exception? reason)
@@ -528,7 +565,7 @@ public class McpServer : IMcpServer
         _logger.LogDebug("Default MCP methods registered");
     }
 
-    private Task<object> HandleInitialize(InitializeRequest request)
+    private Task<object> HandleInitialize(InitializeRequest request, string? sessionId)
     {
         _logger.LogInformation("Handling initialize request");
 
@@ -555,7 +592,16 @@ public class McpServer : IMcpServer
             );
         }
 
-        _negotiatedProtocolVersion = negotiatedVersion;
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            SetNegotiatedProtocolVersion(sessionId, negotiatedVersion);
+        }
+        else
+        {
+            _logger.LogDebug(
+                "Initialize request handled without session context; negotiated protocol version will not be tracked."
+            );
+        }
 
         _logger.LogInformation(
             "Negotiated MCP protocol version {NegotiatedVersion}",
@@ -831,5 +877,50 @@ public class McpServer : IMcpServer
 
         HandleClientResponse(sessionId, response);
         return Task.CompletedTask;
+    }
+
+    private string? GetSharedNegotiatedProtocolVersion()
+    {
+        string? negotiatedProtocolVersion = null;
+
+        foreach (var candidate in _negotiatedProtocolVersionsBySession.Values)
+        {
+            if (string.IsNullOrWhiteSpace(negotiatedProtocolVersion))
+            {
+                negotiatedProtocolVersion = candidate;
+                continue;
+            }
+
+            if (
+                !string.Equals(
+                    negotiatedProtocolVersion,
+                    candidate,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+            {
+                return null;
+            }
+        }
+
+        return negotiatedProtocolVersion;
+    }
+
+    private void SetNegotiatedProtocolVersion(string sessionId, string negotiatedProtocolVersion)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(negotiatedProtocolVersion);
+
+        _negotiatedProtocolVersionsBySession[sessionId] = negotiatedProtocolVersion;
+    }
+
+    private void ClearNegotiatedProtocolVersion(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        _negotiatedProtocolVersionsBySession.TryRemove(sessionId, out _);
     }
 }

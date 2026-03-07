@@ -73,8 +73,10 @@ internal sealed class SseJsonRpcProcessor
         ILogger logger
     )
     {
+        var negotiatedProtocolVersion = _server.GetNegotiatedProtocolVersion(sessionId);
+
         if (
-            string.IsNullOrEmpty(_server.NegotiatedProtocolVersion)
+            string.IsNullOrEmpty(negotiatedProtocolVersion)
             || string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase)
         )
         {
@@ -91,7 +93,7 @@ internal sealed class SseJsonRpcProcessor
             await WriteProtocolVersionErrorAsync(
                 context,
                 sessionId,
-                $"Missing MCP-Protocol-Version header. Expected {_server.NegotiatedProtocolVersion}"
+                $"Missing MCP-Protocol-Version header. Expected {negotiatedProtocolVersion}"
             );
             return false;
         }
@@ -99,7 +101,7 @@ internal sealed class SseJsonRpcProcessor
         if (
             !string.Equals(
                 protocolHeader,
-                _server.NegotiatedProtocolVersion,
+                negotiatedProtocolVersion,
                 StringComparison.OrdinalIgnoreCase
             )
         )
@@ -112,7 +114,7 @@ internal sealed class SseJsonRpcProcessor
             await WriteProtocolVersionErrorAsync(
                 context,
                 sessionId,
-                $"Unsupported MCP-Protocol-Version \"{protocolHeader}\". Expected {_server.NegotiatedProtocolVersion}"
+                $"Unsupported MCP-Protocol-Version \"{protocolHeader}\". Expected {negotiatedProtocolVersion}"
             );
             return false;
         }
@@ -140,11 +142,7 @@ internal sealed class SseJsonRpcProcessor
                 {
                     await _server.HandleClientResponseAsync(sessionId, payload.Response);
                 }
-                await WriteAcceptedAsync(
-                    context,
-                    sessionId,
-                    _server.NegotiatedProtocolVersion
-                );
+                await WriteAcceptedAsync(context, sessionId, _server.GetNegotiatedProtocolVersion(sessionId));
                 return;
 
             case JsonRpcPayloadKind.Notification:
@@ -166,11 +164,7 @@ internal sealed class SseJsonRpcProcessor
                 );
 
                 await _server.HandleNotificationAsync(notificationContext);
-                await WriteAcceptedAsync(
-                    context,
-                    sessionId,
-                    _server.NegotiatedProtocolVersion
-                );
+                await WriteAcceptedAsync(context, sessionId, _server.GetNegotiatedProtocolVersion(sessionId));
                 return;
 
             case JsonRpcPayloadKind.Request:
@@ -198,11 +192,7 @@ internal sealed class SseJsonRpcProcessor
                 var response = await _server.HandleRequestAsync(requestContext);
 
                 await transport.SendAsync(response);
-                await WriteAcceptedAsync(
-                    context,
-                    sessionId,
-                    _server.NegotiatedProtocolVersion
-                );
+                await WriteAcceptedAsync(context, sessionId, _server.GetNegotiatedProtocolVersion(sessionId));
                 return;
         }
     }
