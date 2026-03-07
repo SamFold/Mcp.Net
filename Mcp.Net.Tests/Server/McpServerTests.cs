@@ -133,6 +133,50 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task ProcessJsonRpcRequest_Initialize_Should_NotAdvertiseLoggingCapability_WhenLoggingProtocolIsNotImplemented()
+    {
+        var server = new McpServer(
+            new ServerInfo { Name = "Logging Test Server", Version = "1.0.0" },
+            new InMemoryConnectionManager(NullLoggerFactory.Instance),
+            new ServerOptions
+            {
+                Capabilities = new ServerCapabilities
+                {
+                    Tools = new { listChanged = true },
+                    Logging = new { },
+                },
+            },
+            NullLoggerFactory.Instance
+        );
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "init-logging",
+            "initialize",
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                    capabilities = new object(),
+                    protocolVersion = McpServer.LatestProtocolVersion,
+                }
+            )
+        );
+
+        var response = await server.ProcessJsonRpcRequest(request, "test-session");
+
+        response.Error.Should().BeNull();
+        response.Result.Should().NotBeNull();
+
+        var capabilities = JsonSerializer
+            .SerializeToElement(response.Result)
+            .GetProperty("capabilities");
+
+        capabilities.TryGetProperty("tools", out _).Should().BeTrue();
+        capabilities.TryGetProperty("logging", out _).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ProcessJsonRpcRequest_Initialize_Should_Return_Error_When_ProtocolVersion_Missing()
     {
         var paramsElement = JsonSerializer.SerializeToElement(

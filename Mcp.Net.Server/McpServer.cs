@@ -679,11 +679,25 @@ public class McpServer : IMcpServer
             new
             {
                 protocolVersion = negotiatedVersion,
-                capabilities = _capabilities,
+                capabilities = GetAdvertisedCapabilities(),
                 serverInfo = _serverInfo,
                 instructions = _instructions,
             }
         );
+    }
+
+    private ServerCapabilities GetAdvertisedCapabilities()
+    {
+        // Keep initialize truthful: do not advertise primitives that have no protocol handling yet.
+        return new ServerCapabilities
+        {
+            Tools = _capabilities.Tools,
+            Resources = _capabilities.Resources,
+            Prompts = _capabilities.Prompts,
+            Logging = null,
+            Completions = _capabilities.Completions,
+            Experimental = _capabilities.Experimental,
+        };
     }
 
     private Task<object> HandleToolsList(ListToolsRequest _)

@@ -26,7 +26,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Outbound elicitation disconnect behavior is now covered end-to-end for both SSE and stdio; both transports cancel the pending server-side request promptly when the disconnect is simulated correctly.
 - SSE and stdio client transports now convert remote EOF / remote shutdown into a real close event, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout.
 - SSE and stdio server transports now serialize outbound writes per connection, so overlapping responses, requests, and notifications cannot enter the shared writer concurrently.
-- The full suite is green (`300/300`).
+- `initialize` now suppresses the unimplemented `logging` capability even if callers set `ServerCapabilities.Logging`, keeping capability advertisement truthful.
+- The full suite is green (`301/301`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -35,28 +36,27 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
 
 ## Goal
-- Continue the `Mcp.Net.Server` review slice by making capability advertisement truthful for logging.
+- Continue the `Mcp.Net.Server` review slice with logging/debuggability and hidden mutable state review.
 
 ## Scope
 - In scope:
-  - review whether `ServerCapabilities.Logging` should be advertised before the MCP logging primitive exists
-  - pin the current capability-truthfulness gap with a failing regression first
-  - implement the smallest truthful behavior change
+  - review remaining logging/debuggability gaps after the capability-truthfulness fix
+  - identify one concrete issue involving hidden mutable state or weak observability
+  - pin it with a failing regression first when feasible
   - keep the change commit-sized
 - Out of scope:
-  - broader logging/debuggability cleanup
-  - full MCP logging primitive implementation unless the review shows suppression is the wrong fix
+  - full MCP logging primitive implementation
+  - broad non-review refactors
 
 ## Current slice
-1. Add a failing regression proving the server advertises `logging` capability even though the protocol primitive is not implemented.
-2. Decide whether the smallest truthful fix is to suppress that capability from `initialize`.
-3. Implement the minimal fix.
-4. Rerun targeted server tests, then broader tests if the change affects shared initialization behavior.
+1. Review logging/debuggability and hidden mutable state in the server stack.
+2. Identify the first concrete correctness or observability gap.
+3. Add a failing regression first where practical.
+4. Implement the smallest fix and rerun targeted then broader tests.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - logging/debuggability and hidden mutable state
-   - decide whether to implement the MCP logging primitive after the capability-truthfulness gap is closed
+   - decide whether to implement the MCP logging primitive after the review closes
 
 ## Open decisions
 - Should `SseServerBuilder` delegate all endpoint mapping to `UseMcpServer(options => ...)`, or own an explicit hosting path with the same behavior contract?

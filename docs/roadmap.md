@@ -7,11 +7,12 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Logging capability truthfulness review
-2. Logging/debuggability and hidden mutable state review
-3. MCP server review closure and cleanup
+1. Logging/debuggability and hidden mutable state review
+2. MCP server review closure and cleanup
+3. MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- `initialize` now suppresses the unimplemented `logging` capability even when callers set `ServerCapabilities.Logging`, so capability advertisement stays truthful
 - SSE and stdio server transports now serialize outbound writes per connection so overlapping responses, requests, and notifications cannot enter the shared writer concurrently
 - SSE and stdio client transports now raise `OnClose` when the remote side ends the connection, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout
 - Added integration coverage proving outbound server-initiated elicitation cancels promptly on disconnect for both SSE and stdio
@@ -51,5 +52,5 @@ Update it when priorities, milestones, or major decisions change.
 - This file is for the broader sequence of upcoming work.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
-- The next active review area is logging capability truthfulness.
-- Current concrete follow-up: `ServerCapabilities.Logging` can be advertised even though the MCP logging primitive is not implemented yet.
+- The next active review area is logging/debuggability and hidden mutable state.
+- The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
