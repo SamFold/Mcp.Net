@@ -7,11 +7,14 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Hosted SSE builder/auth/origin consistency
-2. Notification/completion/resource refresh routing review
-3. Remaining builder/DI inconsistencies
-4. SSE vs stdio parity for server-initiated flows
-5. Logging/debuggability and hidden mutable state review
+1. Notification/completion/resource refresh routing review
+2. Remaining builder/DI inconsistencies
+3. SSE vs stdio parity for server-initiated flows
+4. Logging/debuggability and hidden mutable state review
+
+## Recently completed
+- Hosted SSE builder path now honors configured MCP and health endpoints
+- Hosted SSE requests now reuse middleware-authenticated request state instead of authenticating twice
 
 ## Server stability themes
 - Keep all session-scoped state isolated by connection/session

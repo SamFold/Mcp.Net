@@ -14,36 +14,35 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - multi-session SSE routing isolation coverage
   - SSE POST session-owner enforcement
   - reliable transport close cleanup on shutdown errors
-- Next open review area is hosted SSE builder/auth/origin consistency.
+- Hosted SSE builder path and health-path wiring now honor configured values and are covered by regression tests.
+- Hosted SSE requests now reuse middleware-authenticated request state instead of running the auth handler twice.
+- Next open review area is notification/completion/resource refresh routing.
 
 ## Goal
-- Make the hosted SSE builder path honor its configured endpoint, auth, and origin settings through one coherent server pipeline.
+- Review and harden server-side routing for notifications, completions, and resource refresh flows so session isolation and transport behavior stay correct under concurrency.
 
 ## Scope
 - In scope:
-  - hosted SSE builder option handling
-  - auth/origin consistency in the SSE hosted path
-  - regression coverage for the above
+  - notification routing
+  - completion request/response routing
+  - prompt/resource refresh notifications
+  - regression coverage where session-scoped behavior crosses component boundaries
 - Out of scope:
-  - notification/completion/resource refresh routing
   - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Add a regression test proving hosted SSE builder configuration honors a non-default MCP path and corresponding origin/CORS behavior.
-2. Fix the hosted builder/middleware wiring so the configured path and options are the actual runtime path.
-3. Verify the targeted test, then the next broader relevant server test scope.
+1. Review notification, completion, and resource-refresh routing for session/transport correctness.
+2. Add regression coverage for any routing bug found in that area.
+3. Fix the smallest verified issue and run the targeted and broader relevant test scopes.
 
 ## Next slices
-1. Collapse duplicate auth handling so the hosted SSE path uses one consistent auth contract.
-2. Resume the remaining `Mcp.Net.Server` review items:
-   - notification/completion/resource refresh routing
+1. Resume the remaining `Mcp.Net.Server` review items:
    - remaining builder/DI inconsistencies
    - SSE vs stdio parity
    - logging/debuggability and hidden mutable state
 
 ## Open decisions
-- Should `SseTransportHost` perform any direct authentication, or should auth/context setup belong entirely to middleware?
 - Should `SseServerBuilder` delegate all endpoint mapping to `UseMcpServer(options => ...)`, or own an explicit hosting path with the same behavior contract?
 
 ## Quality gates

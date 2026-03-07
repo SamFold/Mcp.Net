@@ -98,6 +98,15 @@ internal sealed class SseRequestSecurity
         ILogger logger
     )
     {
+        if (
+            context.Items.TryGetValue("AuthResult", out var existingResult)
+            && existingResult is AuthResult authResult
+            && authResult.Succeeded
+        )
+        {
+            return (true, authResult);
+        }
+
         if (_authHandler == null)
         {
             return (true, null);
@@ -117,7 +126,20 @@ internal sealed class SseRequestSecurity
             return (false, null);
         }
 
+        StampAuthenticatedContext(context, result);
         return (true, result);
+    }
+
+    private static void StampAuthenticatedContext(HttpContext context, AuthResult authResult)
+    {
+        context.Items["AuthResult"] = authResult;
+        context.Items["AuthenticatedUserId"] = authResult.UserId;
+
+        var principal = authResult.ToClaimsPrincipal();
+        if (principal != null)
+        {
+            context.User = principal;
+        }
     }
 
     private static string? NormalizeOrigin(string? origin)

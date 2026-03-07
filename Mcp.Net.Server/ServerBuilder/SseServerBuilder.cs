@@ -220,9 +220,7 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
 
         _logger.LogInformation("Starting MCP server with SSE transport on {BaseUrl}", BaseUrl);
 
-        var webApp = ConfigureWebApplication(_options.Args, server);
-
-        var serverConfig = ConfigureServerEndpoints(webApp, _options.Args);
+        var (webApp, serverConfig) = ConfigureWebApplication(_options.Args, server);
 
         _logger.LogInformation("Starting web server on {ServerUrl}", serverConfig.ServerUrl);
 
@@ -251,7 +249,10 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     /// <summary>
     /// Configures the web application with services and endpoints.
     /// </summary>
-    private WebApplication ConfigureWebApplication(string[] args, McpServer server)
+    private (WebApplication App, Server.ServerConfiguration ServerConfig) ConfigureWebApplication(
+        string[] args,
+        McpServer server
+    )
     {
         var builder = WebApplication.CreateBuilder(args);
 
@@ -261,12 +262,14 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
 
         ConfigureMcpServices(builder, server);
 
+        var serverConfig = ConfigureServerEndpoints(builder.Configuration, args);
+
         var app = builder.Build();
 
         ConfigureMiddleware(app);
         ConfigureEndpoints(app);
 
-        return app;
+        return (app, serverConfig);
     }
 
     /// <summary>
@@ -364,19 +367,26 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     /// </summary>
     private void ConfigureMiddleware(WebApplication app)
     {
-        // Configure CORS
-        app.UseCors(builder => builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+        if (!string.IsNullOrWhiteSpace(_options.HealthCheckPath))
+        {
+            var healthPath = EnsureLeadingSlash(_options.HealthCheckPath);
+            app.UseHealthChecks(
+                $"{healthPath}/ready",
+                new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }
+            );
+            app.UseHealthChecks(
+                $"{healthPath}/live",
+                new HealthCheckOptions { Predicate = _ => true }
+            );
+        }
 
-        // Add health check endpoints
-        app.UseHealthChecks("/health");
-        app.UseHealthChecks(
-            "/health/ready",
-            new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }
-        );
-        app.UseHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => true });
-
-        // Use MCP server middleware
-        app.UseMcpServer();
+        app.UseMcpServer(options =>
+        {
+            options.SsePath = _options.SsePath;
+            options.HealthCheckPath = _options.HealthCheckPath;
+            options.EnableCors = _options.EnableCors;
+            options.AllowedOrigins = _options.AllowedOrigins;
+        });
     }
 
     /// <summary>
@@ -430,17 +440,20 @@ public class SseServerBuilder : IMcpServerBuilder, ITransportBuilder
     /// <summary>
     /// Configures server endpoints using the configuration.
     /// </summary>
-    private Server.ServerConfiguration ConfigureServerEndpoints(WebApplication app, string[] args)
+    private Server.ServerConfiguration ConfigureServerEndpoints(
+        IConfiguration configuration,
+        string[] args
+    )
     {
         var serverLogger = _loggerFactory.CreateLogger("ServerConfig");
 
         // Store configuration for later use
-        _configuration = app.Configuration;
+        _configuration = configuration;
 
         // Create a server configuration using our existing options
         var serverConfig = new Server.ServerConfiguration(
             _options,
-            app.Configuration,
+            configuration,
             serverLogger
         );
 
