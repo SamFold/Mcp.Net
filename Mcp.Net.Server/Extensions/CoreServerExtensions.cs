@@ -10,6 +10,7 @@ using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Services;
 using Microsoft.Extensions.Options;
 using Mcp.Net.Server.Interfaces;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Mcp.Net.Server.Extensions;
 
@@ -153,6 +154,8 @@ public static class CoreServerExtensions
         McpServerBuilder builder
     )
     {
+        var server = builder.Build();
+
         // Create options from the builder
         var options = new McpServerOptions
         {
@@ -183,16 +186,9 @@ public static class CoreServerExtensions
             }
         }
 
-        // Register the server directly
-        services.AddSingleton<McpServer>(sp =>
-        {
-            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger("McpServerBuilder");
-
-            logger.LogInformation("Building McpServer instance");
-            var server = builder.Build();
-            return server;
-        });
+        // Register the pre-built server and its shared connection manager.
+        services.AddSingleton(server);
+        services.TryAddSingleton<IConnectionManager>(server.ConnectionManager);
 
         // Register the options for other services to use
         services.AddSingleton(options);

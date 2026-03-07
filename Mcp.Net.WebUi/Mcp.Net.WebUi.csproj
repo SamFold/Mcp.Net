@@ -1,14 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Mcp.Net.LLM\Mcp.Net.LLM.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.Shared\Mcp.Net.Examples.Shared.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

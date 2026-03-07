@@ -181,6 +181,8 @@ public class McpServer : IMcpServer
 
     public string? NegotiatedProtocolVersion => _negotiatedProtocolVersion;
 
+    internal IConnectionManager ConnectionManager => _connectionManager;
+
     /// <summary>
     /// Gets or sets the default timeout applied to server-initiated client requests.
     /// </summary>

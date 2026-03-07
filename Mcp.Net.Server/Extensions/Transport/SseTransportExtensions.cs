@@ -6,6 +6,7 @@ using Mcp.Net.Server.Options;
 using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Transport.Sse;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Mcp.Net.Server.Extensions.Transport;
@@ -29,10 +30,9 @@ public static class SseTransportExtensions
         // Register options
         services.Configure(configureOptions);
 
-        // Add connection manager
-        services.AddSingleton<IConnectionManager>(sp =>
+        // Reuse an existing connection manager when the server registration already created one.
+        services.TryAddSingleton<IConnectionManager>(sp =>
         {
-            var server = sp.GetRequiredService<McpServer>();
             var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
             var options = sp.GetRequiredService<IOptions<SseServerOptions>>().Value;
 
