@@ -121,7 +121,10 @@ internal sealed class PromptService : IPromptService
         }
     }
 
-    public async Task<object[]> GetPromptMessagesAsync(string name)
+    public async Task<object[]> GetPromptMessagesAsync(
+        string name,
+        CancellationToken cancellationToken = default
+    )
     {
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -140,7 +143,7 @@ internal sealed class PromptService : IPromptService
 
         try
         {
-            var messages = await registration.MessagesFactory(CancellationToken.None)
+            var messages = await registration.MessagesFactory(cancellationToken)
                 .ConfigureAwait(false);
             return messages ?? Array.Empty<object>();
         }

@@ -116,7 +116,10 @@ internal sealed class ResourceService : IResourceService
         }
     }
 
-    public async Task<ResourceContent[]> ReadResourceAsync(string uri)
+    public async Task<ResourceContent[]> ReadResourceAsync(
+        string uri,
+        CancellationToken cancellationToken = default
+    )
     {
         if (string.IsNullOrWhiteSpace(uri))
         {
@@ -135,7 +138,7 @@ internal sealed class ResourceService : IResourceService
 
         try
         {
-            var contents = await registration.Reader(CancellationToken.None).ConfigureAwait(false);
+            var contents = await registration.Reader(cancellationToken).ConfigureAwait(false);
             return contents ?? Array.Empty<ResourceContent>();
         }
         catch (Exception ex)

@@ -17,6 +17,5 @@ public interface IResourceService
 
     IReadOnlyCollection<Resource> ListResources();
 
-    Task<ResourceContent[]> ReadResourceAsync(string uri);
+    Task<ResourceContent[]> ReadResourceAsync(string uri, CancellationToken cancellationToken = default);
 }
-

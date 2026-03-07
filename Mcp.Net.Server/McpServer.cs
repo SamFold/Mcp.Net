@@ -34,7 +34,7 @@ public class McpServer : IMcpServer
         "2024-11-05",
     };
 
-    private readonly Dictionary<string, Func<string, string?, Task<object>>> _methodHandlers = new();
+    private readonly Dictionary<string, Func<string, RequestExecutionContext?, Task<object>>> _methodHandlers = new();
     private readonly ConcurrentDictionary<
         string,
         ConcurrentDictionary<string, TaskCompletionSource<JsonRpcResponseMessage>>
@@ -663,9 +663,10 @@ public class McpServer : IMcpServer
 
     private async Task<object> HandleToolCall(
         ToolCallRequest request,
-        string? sessionId
+        RequestExecutionContext? context
     )
     {
+        var sessionId = context?.SessionId;
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             throw new McpException(
@@ -689,11 +690,14 @@ public class McpServer : IMcpServer
         );
     }
 
-    private async Task<object> HandleResourcesRead(ResourcesReadRequest request)
+    private async Task<object> HandleResourcesRead(
+        ResourcesReadRequest request,
+        RequestExecutionContext? context
+    )
     {
         _logger.LogDebug("Handling resources/read request");
         var contents = await _resourceService
-            .ReadResourceAsync(request.Uri ?? string.Empty)
+            .ReadResourceAsync(request.Uri ?? string.Empty, context?.CancellationToken ?? default)
             .ConfigureAwait(false);
         _logger.LogInformation("Resource read requested for URI: {Uri}", request.Uri);
         return new ResourceReadResponse { Contents = contents };
@@ -706,17 +710,23 @@ public class McpServer : IMcpServer
         return Task.FromResult<object>(new PromptsListResponse { Prompts = prompts.ToArray() });
     }
 
-    private async Task<object> HandlePromptsGet(PromptsGetRequest request)
+    private async Task<object> HandlePromptsGet(
+        PromptsGetRequest request,
+        RequestExecutionContext? context
+    )
     {
         _logger.LogDebug("Handling prompts/get request");
         var messages = await _promptService
-            .GetPromptMessagesAsync(request.Name ?? string.Empty)
+            .GetPromptMessagesAsync(request.Name ?? string.Empty, context?.CancellationToken ?? default)
             .ConfigureAwait(false);
         _logger.LogInformation("Prompt requested: {Name}", request.Name);
         return new PromptsGetResponse { Messages = messages };
     }
 
-    private async Task<object> HandleCompletionComplete(CompletionCompleteParams request)
+    private async Task<object> HandleCompletionComplete(
+        CompletionCompleteParams request,
+        RequestExecutionContext? context
+    )
     {
         if (_capabilities.Completions == null)
         {
@@ -730,7 +740,7 @@ public class McpServer : IMcpServer
         }
 
         var suggestions = await _completionService
-            .CompleteAsync(request, CancellationToken.None)
+            .CompleteAsync(request, context?.CancellationToken ?? default)
             .ConfigureAwait(false);
 
         return new CompletionCompleteResult
@@ -747,7 +757,7 @@ public class McpServer : IMcpServer
     {
         RegisterMethod<TRequest>(
             methodName,
-            (request, _) => handler(request)
+            (TRequest request, RequestExecutionContext? _) => handler(request)
         );
     }
 
@@ -757,8 +767,20 @@ public class McpServer : IMcpServer
     )
         where TRequest : IMcpRequest
     {
+        RegisterMethod<TRequest>(
+            methodName,
+            (request, context) => handler(request, context?.SessionId)
+        );
+    }
+
+    private void RegisterMethod<TRequest>(
+        string methodName,
+        Func<TRequest, RequestExecutionContext?, Task<object>> handler
+    )
+        where TRequest : IMcpRequest
+    {
         // Store a function that takes a JSON string, deserializes it and calls the handler
-        _methodHandlers[methodName] = async (jsonParams, sessionId) =>
+        _methodHandlers[methodName] = async (jsonParams, context) =>
         {
             try
             {
@@ -784,7 +806,7 @@ public class McpServer : IMcpServer
                 }
 
                 // Call the handler with the typed request
-                return await handler(request, sessionId);
+                return await handler(request, context);
             }
             catch (JsonException ex)
             {
@@ -814,6 +836,14 @@ public class McpServer : IMcpServer
     public async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(
         JsonRpcRequestMessage request,
         string? sessionId = null
+    ) => await ProcessJsonRpcRequest(
+        request,
+        sessionId != null ? new RequestExecutionContext(sessionId) : null
+    ).ConfigureAwait(false);
+
+    private async Task<JsonRpcResponseMessage> ProcessJsonRpcRequest(
+        JsonRpcRequestMessage request,
+        RequestExecutionContext? context
     )
     {
         if (!_methodHandlers.TryGetValue(request.Method, out var handler))
@@ -833,7 +863,7 @@ public class McpServer : IMcpServer
             }
 
             // Call the handler with the JSON string
-            var result = await handler(paramsJson, sessionId);
+            var result = await handler(paramsJson, context).ConfigureAwait(false);
 
             _logger.LogDebug(
                 "Request {Id} ({Method}) handled successfully",
@@ -877,7 +907,15 @@ public class McpServer : IMcpServer
             throw new ArgumentNullException(nameof(context));
         }
 
-        return ProcessJsonRpcRequest(context.Request, context.SessionId);
+        return ProcessJsonRpcRequest(
+            context.Request,
+            new RequestExecutionContext(
+                context.SessionId,
+                context.TransportId,
+                context.CancellationToken,
+                context.Metadata
+            )
+        );
     }
 
     /// <summary>
@@ -1053,4 +1091,11 @@ public class McpServer : IMcpServer
 
         return false;
     }
+
+    private sealed record RequestExecutionContext(
+        string SessionId,
+        string? TransportId = null,
+        CancellationToken CancellationToken = default,
+        IReadOnlyDictionary<string, string>? Metadata = null
+    );
 }

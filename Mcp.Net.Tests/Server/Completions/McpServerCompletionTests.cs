@@ -7,6 +7,7 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server;
+using Mcp.Net.Server.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
 using Mcp.Net.Server.Services;
@@ -212,5 +213,53 @@ public class McpServerCompletionTests
         var response = await server.ProcessJsonRpcRequest(request);
         response.Error.Should().NotBeNull();
         response.Error!.Code.Should().Be((int)ErrorCode.InternalError);
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_PassRequestCancellationToken_ToCompletionHandler()
+    {
+        var server = CreateServer();
+        CancellationToken observedToken = default;
+
+        server.RegisterPromptCompletion(
+            "draft-email",
+            (_, cancellationToken) =>
+            {
+                observedToken = cancellationToken;
+                return Task.FromResult(new CompletionValues { Values = new[] { "value" } });
+            }
+        );
+
+        using var cts = new CancellationTokenSource();
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "ctx-completion",
+            "completion/complete",
+            new CompletionCompleteParams
+            {
+                Reference = new CompletionReference
+                {
+                    Type = "ref/prompt",
+                    Name = "draft-email",
+                },
+                Argument = new CompletionArgument
+                {
+                    Name = "subject",
+                    Value = "demo",
+                },
+            }
+        );
+
+        var context = new ServerRequestContext(
+            "session-completion",
+            "transport-completion",
+            request,
+            cts.Token
+        );
+
+        var response = await server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        observedToken.Should().Be(cts.Token);
     }
 }

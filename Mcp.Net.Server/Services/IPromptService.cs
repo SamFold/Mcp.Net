@@ -16,6 +16,5 @@ public interface IPromptService
 
     IReadOnlyCollection<Prompt> ListPrompts();
 
-    Task<object[]> GetPromptMessagesAsync(string name);
+    Task<object[]> GetPromptMessagesAsync(string name, CancellationToken cancellationToken = default);
 }
-

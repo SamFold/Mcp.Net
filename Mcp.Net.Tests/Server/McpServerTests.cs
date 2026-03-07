@@ -344,6 +344,86 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task HandleRequestAsync_Should_PassRequestCancellationToken_ToResourceReader()
+    {
+        var resource = new Resource
+        {
+            Uri = "mcp://test/cancellable-resource",
+            Name = "Cancellable Resource",
+        };
+
+        CancellationToken observedToken = default;
+        _server.RegisterResource(
+            resource,
+            cancellationToken =>
+            {
+                observedToken = cancellationToken;
+                return Task.FromResult(Array.Empty<ResourceContent>());
+            }
+        );
+
+        using var cts = new CancellationTokenSource();
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "resource-read-context",
+            "resources/read",
+            JsonSerializer.SerializeToElement(new { uri = resource.Uri })
+        );
+
+        var context = new ServerRequestContext(
+            "session-resource",
+            "transport-resource",
+            request,
+            cts.Token
+        );
+
+        var response = await _server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        observedToken.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_PassRequestCancellationToken_ToPromptFactory()
+    {
+        var prompt = new Prompt
+        {
+            Name = "cancellable-prompt",
+            Description = "Prompt used to verify request context propagation",
+        };
+
+        CancellationToken observedToken = default;
+        _server.RegisterPrompt(
+            prompt,
+            cancellationToken =>
+            {
+                observedToken = cancellationToken;
+                return Task.FromResult(Array.Empty<object>());
+            }
+        );
+
+        using var cts = new CancellationTokenSource();
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "prompt-get-context",
+            "prompts/get",
+            JsonSerializer.SerializeToElement(new { name = prompt.Name })
+        );
+
+        var context = new ServerRequestContext(
+            "session-prompt",
+            "transport-prompt",
+            request,
+            cts.Token
+        );
+
+        var response = await _server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        observedToken.Should().Be(cts.Token);
+    }
+
+    [Fact]
     public async Task HandleTransportClosed_Should_CancelPendingClientRequests()
     {
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);

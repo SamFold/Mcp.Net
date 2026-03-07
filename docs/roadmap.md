@@ -7,7 +7,7 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. Preserve cancellation and request metadata through prompt/resource/completion handlers
+1. Expose request metadata/session context to prompt/resource/completion handlers
 2. Remaining builder/DI inconsistencies
 3. SSE vs stdio parity for server-initiated flows
 4. Logging/debuggability and hidden mutable state review
@@ -17,6 +17,7 @@ Update it when priorities, milestones, or major decisions change.
 - Hosted SSE requests now reuse middleware-authenticated request state instead of authenticating twice
 - Server-driven `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations
 - LLM and WebUI refresh listeners now accept the spec notification names and refresh-path coverage is in place
+- `HandleRequestAsync` now preserves cancellation tokens through resource, prompt, and completion execution
 
 ## Server stability themes
 - Keep all session-scoped state isolated by connection/session
@@ -35,4 +36,4 @@ Update it when priorities, milestones, or major decisions change.
 ## Notes
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
-- The next active bug class is lost cancellation and metadata in prompt/resource/completion handling.
+- The next active bug class is missing request metadata/session-context exposure in prompt/resource/completion handling.

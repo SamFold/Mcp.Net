@@ -17,27 +17,28 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Hosted SSE builder path and health-path wiring now honor configured values and are covered by regression tests.
 - Hosted SSE requests now reuse middleware-authenticated request state instead of running the auth handler twice.
 - Spec-aligned `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations.
-- LLM and WebUI refresh listeners now accept the spec notification names and the full suite is green (`278/278`).
+- LLM and WebUI refresh listeners now accept the spec notification names.
+- `HandleRequestAsync` now preserves request cancellation through resource, prompt, and completion execution, and the full suite is green (`281/281`).
 - Latest remaining review finding in the notification/completion/resource-refresh area:
-  - prompt/resource/completion handlers lose cancellation and request metadata
+  - prompt/resource/completion handlers still do not expose request metadata/session context at the final handler boundary
 
 ## Goal
-- Preserve cancellation and request metadata through prompt, resource, and completion handler execution.
+- Expose request metadata/session context to non-tool handlers without regressing the now-fixed cancellation flow.
 
 ## Scope
 - In scope:
-  - keep `ServerRequestContext.CancellationToken` alive through prompt/resource/completion paths
-  - preserve request metadata/session context until the non-tool handlers run
-  - add regression coverage for cancellation or metadata loss in one concrete path first
+  - define the smallest safe surface for prompt/resource/completion handlers to access request metadata
+  - keep `HandleRequestAsync` as the authoritative context-aware request path
+  - add regression coverage for one concrete metadata/session-context path first
 - Out of scope:
   - further notification naming changes
   - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review the prompt/resource/completion call path and identify the first concrete cancellation or metadata regression to pin.
+1. Review the remaining non-tool handler surfaces and choose the smallest metadata/session-context seam.
 2. Add the failing regression test first.
-3. Implement the smallest fix that preserves request context through that path.
+3. Implement the smallest fix that exposes request metadata/context through that path.
 4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices
