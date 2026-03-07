@@ -154,4 +154,64 @@ public class McpServerRegistrationExtensionsTests
         resolvedOptions.ConnectionTimeout.Should().Be(TimeSpan.FromMinutes(5));
         resolvedOptions.Args.Should().Equal("--flag");
     }
+
+    [Fact]
+    public async Task AddMcpCore_WithBuilder_ShouldPreserveBuilderConfiguredServerOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+
+        var builder = Mcp.Net.Server.ServerBuilder.McpServerBuilder.ForSse();
+        builder
+            .WithName("Builder Configured Server")
+            .WithTitle("Builder Configured Title")
+            .WithVersion("2.3.4")
+            .WithInstructions("Use the configured instructions.")
+            .WithNoAuth();
+
+        services.AddMcpCore(builder);
+
+        using var provider = services.BuildServiceProvider();
+
+        var server = provider.GetRequiredService<McpServer>();
+        var resolvedOptions = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("builder-init"),
+            "builder-session"
+        );
+        var initializeResult = System.Text.Json.JsonSerializer.SerializeToElement(
+            initializeResponse.Result
+        );
+
+        resolvedOptions.Name.Should().Be("Builder Configured Server");
+        resolvedOptions.Title.Should().Be("Builder Configured Title");
+        resolvedOptions.Version.Should().Be("2.3.4");
+        resolvedOptions.Instructions.Should().Be("Use the configured instructions.");
+        initializeResult.GetProperty("serverInfo").GetProperty("name").GetString()
+            .Should()
+            .Be("Builder Configured Server");
+        initializeResult.GetProperty("serverInfo").GetProperty("title").GetString()
+            .Should()
+            .Be("Builder Configured Title");
+        initializeResult.GetProperty("serverInfo").GetProperty("version").GetString()
+            .Should()
+            .Be("2.3.4");
+        initializeResult.GetProperty("instructions").GetString()
+            .Should()
+            .Be("Use the configured instructions.");
+    }
+
+    private static JsonRpcRequestMessage CreateInitializeRequest(string requestId)
+    {
+        var paramsElement = System.Text.Json.JsonSerializer.SerializeToElement(
+            new
+            {
+                clientInfo = new { name = "Test Client", version = "1.0" },
+                capabilities = new { },
+                protocolVersion = McpServer.LatestProtocolVersion,
+            }
+        );
+
+        return new JsonRpcRequestMessage("2.0", requestId, "initialize", paramsElement);
+    }
 }

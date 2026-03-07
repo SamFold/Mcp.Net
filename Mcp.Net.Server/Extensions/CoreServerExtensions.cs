@@ -134,18 +134,7 @@ public static class CoreServerExtensions
         McpServerOptions options
     )
     {
-        return services.AddMcpCore(opt =>
-        {
-            opt.Name = options.Name;
-            opt.Version = options.Version;
-            opt.Instructions = options.Instructions;
-            opt.LogLevel = options.LogLevel;
-            opt.UseConsoleLogging = options.UseConsoleLogging;
-            opt.LogFilePath = options.LogFilePath;
-            opt.NoAuthExplicitlyConfigured = options.NoAuthExplicitlyConfigured;
-            opt.ToolAssemblyPaths = new List<string>(options.ToolAssemblyPaths);
-            opt.Capabilities = options.Capabilities;
-        });
+        return services.AddMcpCore(opt => CopyOptions(options, opt));
     }
 
     /// <summary>
@@ -164,14 +153,15 @@ public static class CoreServerExtensions
         // Create options from the builder
         var options = new McpServerOptions
         {
-            Name = "MCP Server", // Default name
-            Version = "1.0.0", // Default version
-            Instructions = null,
+            Name = builder.ConfiguredName,
+            Title = builder.ConfiguredTitle ?? builder.ConfiguredName,
+            Version = builder.ConfiguredVersion,
+            Instructions = builder.ConfiguredInstructions,
             LogLevel = builder.LogLevel,
             UseConsoleLogging = builder.UseConsoleLogging,
             LogFilePath = builder.LogFilePath,
             NoAuthExplicitlyConfigured = builder.AuthHandler is NoAuthenticationHandler,
-            Capabilities = null,
+            Capabilities = builder.ConfiguredCapabilities,
         };
 
         // Add assemblies from the builder
@@ -205,17 +195,70 @@ public static class CoreServerExtensions
         services.AddSingleton(options);
         services.Configure<McpServerOptions>(opt =>
         {
-            opt.Name = options.Name;
-            opt.Version = options.Version;
-            opt.Instructions = options.Instructions;
-            opt.LogLevel = options.LogLevel;
-            opt.UseConsoleLogging = options.UseConsoleLogging;
-            opt.LogFilePath = options.LogFilePath;
-            opt.NoAuthExplicitlyConfigured = options.NoAuthExplicitlyConfigured;
-            opt.ToolAssemblyPaths = new List<string>(options.ToolAssemblyPaths);
-            opt.Capabilities = options.Capabilities;
+            CopyOptions(options, opt);
         });
 
         return services;
+    }
+
+    private static void CopyOptions(McpServerOptions source, McpServerOptions destination)
+    {
+        destination.Name = source.Name;
+        destination.Title = source.Title;
+        destination.Version = source.Version;
+        destination.Instructions = source.Instructions;
+        destination.Logging = CloneLoggingOptions(source.Logging);
+        destination.Authentication = CloneAuthOptions(source.Authentication);
+        destination.ToolRegistration = CloneToolRegistrationOptions(source.ToolRegistration);
+        destination.LogLevel = source.LogLevel;
+        destination.UseConsoleLogging = source.UseConsoleLogging;
+        destination.LogFilePath = source.LogFilePath;
+        destination.NoAuthExplicitlyConfigured = source.NoAuthExplicitlyConfigured;
+        destination.ToolAssemblyPaths = new List<string>(source.ToolAssemblyPaths);
+        destination.Capabilities = source.Capabilities;
+    }
+
+    private static LoggingOptions CloneLoggingOptions(LoggingOptions source)
+    {
+        return new LoggingOptions
+        {
+            MinimumLogLevel = source.MinimumLogLevel,
+            UseConsoleLogging = source.UseConsoleLogging,
+            UseStdio = source.UseStdio,
+            LogFilePath = source.LogFilePath,
+            PrettyConsoleOutput = source.PrettyConsoleOutput,
+            FileRollingInterval = source.FileRollingInterval,
+            FileSizeLimitBytes = source.FileSizeLimitBytes,
+            RetainedFileCountLimit = source.RetainedFileCountLimit,
+            ComponentLogLevels = new Dictionary<string, Microsoft.Extensions.Logging.LogLevel>(
+                source.ComponentLogLevels
+            ),
+        };
+    }
+
+    private static AuthOptions CloneAuthOptions(AuthOptions source)
+    {
+        return new AuthOptions
+        {
+            Enabled = source.Enabled,
+            SchemeName = source.SchemeName,
+            SecuredPaths = new List<string>(source.SecuredPaths),
+            EnableLogging = source.EnableLogging,
+            NoAuthExplicitlyConfigured = source.NoAuthExplicitlyConfigured,
+            AuthHandler = source.AuthHandler,
+        };
+    }
+
+    private static ToolRegistrationOptions CloneToolRegistrationOptions(
+        ToolRegistrationOptions source
+    )
+    {
+        return new ToolRegistrationOptions
+        {
+            IncludeEntryAssembly = source.IncludeEntryAssembly,
+            Assemblies = new List<Assembly>(source.Assemblies),
+            ValidateToolMethods = source.ValidateToolMethods,
+            EnableDetailedLogging = source.EnableDetailedLogging,
+        };
     }
 }

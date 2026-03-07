@@ -110,6 +110,16 @@ public class McpServerBuilder
     /// </summary>
     public string? LogFilePath => _logFilePath;
 
+    internal string ConfiguredName => _serverInfo.Name;
+
+    internal string? ConfiguredTitle => _serverInfo.Title;
+
+    internal string ConfiguredVersion => _serverInfo.Version;
+
+    internal string? ConfiguredInstructions => _options?.Instructions;
+
+    internal ServerCapabilities? ConfiguredCapabilities => _options?.Capabilities;
+
     /// <summary>
     /// Configures the server with a specific name.
     /// </summary>
