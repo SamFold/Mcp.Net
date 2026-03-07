@@ -247,6 +247,30 @@ internal sealed class StdioIntegrationTestServer : IAsyncDisposable
 
     public IConnectionManager ConnectionRegistry => _connectionManager;
 
+    public async Task DisconnectClientAsync()
+    {
+        try
+        {
+            await _clientToServer.Writer.CompleteAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore disconnect races; the goal is to signal EOF to the server.
+        }
+
+        try
+        {
+            await _serverToClient.Reader.CompleteAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Ignore disconnect races; the goal is to stop client-side reads.
+        }
+
+        await SafeDisposeAsync(_clientOutput).ConfigureAwait(false);
+        await SafeDisposeAsync(_clientInput).ConfigureAwait(false);
+    }
+
     public static async Task<StdioIntegrationTestServer> StartAsync(
         Action<McpServer>? configureServer,
         CancellationToken cancellationToken

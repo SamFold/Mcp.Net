@@ -23,7 +23,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
 - Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
 - The server now tracks client-advertised capabilities per session during `initialize`, and server-initiated elicitation fails fast when the target session did not negotiate `elicitation`.
-- The full suite is green (`292/292`).
+- Outbound elicitation disconnect behavior is now covered end-to-end for both SSE and stdio; both transports cancel the pending server-side request promptly when the disconnect is simulated correctly.
+- The full suite is green (`294/294`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -37,7 +38,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 ## Scope
 - In scope:
   - review whether server-initiated requests and notifications behave consistently across SSE and stdio transports
-  - start from outbound elicitation now that per-session capability negotiation is enforced
+  - continue after outbound elicitation negotiation and disconnect coverage
+  - check server-initiated notification behavior next
   - identify one concrete transport parity gap
   - pin it with a failing regression first
   - fix one commit-sized parity issue
@@ -45,10 +47,10 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - logging/debuggability cleanup
 
 ## Current slice
-1. Compare SSE vs stdio disconnect and cancellation behavior for outbound elicitation requests.
-2. Add the failing regression test first for the first verified mismatch.
-3. Implement the smallest transport-parity fix.
-4. Run the targeted tests, then the relevant broader server suite.
+1. Review SSE vs stdio parity for server-initiated notifications, starting with `notifications/.../list_changed`.
+2. Identify one concrete parity gap before writing a test.
+3. Add the failing regression first for the first verified mismatch.
+4. Implement the smallest transport-parity fix and rerun targeted then broader tests.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:

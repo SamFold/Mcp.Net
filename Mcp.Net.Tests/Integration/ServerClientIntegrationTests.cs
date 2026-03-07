@@ -19,6 +19,7 @@ using Mcp.Net.Core.Transport;
 using Mcp.Net.Server;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Server.Transport.Stdio;
 using Mcp.Net.Server.Models;
@@ -372,6 +373,61 @@ public class ServerClientIntegrationTests
     }
 
     [Fact]
+    public async Task SseTransport_ShouldCancel_ServerInitiatedElicitation_WhenClientDisconnects()
+    {
+        await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync();
+
+        var clientLogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClient");
+        var requestClient = serverHost.CreateHttpClient();
+        requestClient.BaseAddress = new Uri(serverHost.ServerUrl);
+
+        var streamClient = serverHost.CreateHttpClient();
+        streamClient.BaseAddress = new Uri(serverHost.ServerUrl);
+
+        using var client = new TestSseMcpClient(
+            new SseClientTransport(requestClient, clientLogger, null, null, streamClient),
+            clientLogger
+        );
+
+        var handlerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.SetElicitationHandler(async (context, cancellationToken) =>
+        {
+            handlerStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            return ElicitationClientResponse.Cancel();
+        });
+
+        await client.Initialize();
+
+        var sessionId = await client.GetSessionIdAsync();
+        var service = new ElicitationService(
+            serverHost.Server,
+            sessionId,
+            NullLogger<ElicitationService>.Instance
+        );
+
+        var requestTask = service.RequestAsync(
+            new ElicitationPrompt(
+                "Disconnect before replying",
+                new ElicitationSchema().AddProperty(
+                    "alias",
+                    ElicitationSchemaProperty.ForString(title: "Alias"),
+                    required: true
+                )
+            )
+        );
+
+        await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        client.Dispose();
+
+        await FluentActions
+            .Awaiting(() => requestTask.WaitAsync(TimeSpan.FromSeconds(2)))
+            .Should()
+            .ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task SseTransport_Should_Handle_Request_Response_Without_Event_Wiring()
     {
         await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
@@ -706,6 +762,59 @@ public class ServerClientIntegrationTests
     }
 
     [Fact]
+    public async Task StdioTransport_ShouldCancel_ServerInitiatedElicitation_WhenClientDisconnects()
+    {
+        await using var stdioServer = await IntegrationTestServerFactory.StartStdioServerAsync();
+
+        using var client = new TestStdioMcpClient(
+            new StdioClientTransport(
+                stdioServer.ClientInput,
+                stdioServer.ClientOutput,
+                "",
+                NullLogger<StdioClientTransport>.Instance
+            ),
+            NullLoggerFactory.Instance.CreateLogger("StdioIntegrationClient")
+        );
+
+        var handlerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.SetElicitationHandler(async (context, cancellationToken) =>
+        {
+            handlerStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            return ElicitationClientResponse.Cancel();
+        });
+
+        await client.Initialize();
+
+        var sessionId = GetSingleRegisteredSessionId(stdioServer.ConnectionRegistry);
+        var service = new ElicitationService(
+            stdioServer.Server,
+            sessionId,
+            NullLogger<ElicitationService>.Instance
+        );
+
+        var requestTask = service.RequestAsync(
+            new ElicitationPrompt(
+                "Disconnect before replying",
+                new ElicitationSchema().AddProperty(
+                    "alias",
+                    ElicitationSchemaProperty.ForString(title: "Alias"),
+                    required: true
+                )
+            )
+        );
+
+        await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await stdioServer.DisconnectClientAsync();
+
+        await FluentActions
+            .Awaiting(() => requestTask.WaitAsync(TimeSpan.FromSeconds(2)))
+            .Should()
+            .ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task SseTransport_ShouldRouteConcurrentElicitations_ToTheInvokingSession()
     {
         var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -984,6 +1093,27 @@ public class ServerClientIntegrationTests
             .Which.Should().BeOfType<TextContent>()
             .Subject.As<TextContent>()
             .Text;
+    }
+
+    private static string GetSingleRegisteredSessionId(IConnectionManager connectionManager)
+    {
+        var registry = connectionManager.Should().BeOfType<InMemoryConnectionManager>().Subject;
+        var connectionsField = typeof(InMemoryConnectionManager).GetField(
+            "_connections",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        connectionsField.Should().NotBeNull();
+
+        var connections = connectionsField!.GetValue(registry);
+        connections.Should().NotBeNull();
+
+        var keysProperty = connections!.GetType().GetProperty("Keys");
+        keysProperty.Should().NotBeNull();
+
+        return ((ICollection<string>)keysProperty!.GetValue(connections)!)
+            .Should()
+            .ContainSingle()
+            .Which;
     }
 }
 

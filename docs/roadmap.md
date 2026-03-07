@@ -11,6 +11,7 @@ Update it when priorities, milestones, or major decisions change.
 2. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
+- Added integration coverage proving outbound server-initiated elicitation cancels promptly on disconnect for both SSE and stdio
 - Server-initiated elicitation now honors per-session client capability negotiation instead of sending requests to sessions that never advertised `elicitation`
 - `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions during DI registration
 - `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration
@@ -45,4 +46,5 @@ Update it when priorities, milestones, or major decisions change.
 - This file is for the broader sequence of upcoming work.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The next active review area is SSE vs stdio parity for server-initiated flows.
-- The first server-initiated flow gap closed in this area was per-session elicitation capability enforcement; the remaining parity work is transport lifecycle behavior.
+- The first server-initiated flow gap closed in this area was per-session elicitation capability enforcement.
+- Outbound elicitation disconnect coverage is now in place for both transports; the next parity candidate is server-initiated notification behavior.
