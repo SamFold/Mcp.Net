@@ -123,6 +123,8 @@ ehthumbs.db
 # Folder config file
 Desktop.ini
 *.MD
+!AGENTS.md
+!docs/**/*.md
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
 
