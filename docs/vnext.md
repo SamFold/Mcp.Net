@@ -24,7 +24,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
 - The server now tracks client-advertised capabilities per session during `initialize`, and server-initiated elicitation fails fast when the target session did not negotiate `elicitation`.
 - Outbound elicitation disconnect behavior is now covered end-to-end for both SSE and stdio; both transports cancel the pending server-side request promptly when the disconnect is simulated correctly.
-- The full suite is green (`294/294`).
+- SSE and stdio client transports now convert remote EOF / remote shutdown into a real close event, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout.
+- The full suite is green (`298/298`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -38,7 +39,7 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 ## Scope
 - In scope:
   - review whether server-initiated requests and notifications behave consistently across SSE and stdio transports
-  - continue after outbound elicitation negotiation and disconnect coverage
+  - continue after outbound elicitation negotiation, disconnect coverage, and client remote-close propagation
   - check server-initiated notification behavior next
   - identify one concrete transport parity gap
   - pin it with a failing regression first
@@ -47,8 +48,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review SSE vs stdio parity for server-initiated notifications, starting with `notifications/.../list_changed`.
-2. Identify one concrete parity gap before writing a test.
+1. Review SSE vs stdio parity for server-initiated notifications, starting with `notifications/.../list_changed` and logging notifications.
+2. Identify one concrete notification-delivery or notification-lifecycle mismatch before writing a test.
 3. Add the failing regression first for the first verified mismatch.
 4. Implement the smallest transport-parity fix and rerun targeted then broader tests.
 

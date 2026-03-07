@@ -11,6 +11,7 @@ Update it when priorities, milestones, or major decisions change.
 2. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
+- SSE and stdio client transports now raise `OnClose` when the remote side ends the connection, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout
 - Added integration coverage proving outbound server-initiated elicitation cancels promptly on disconnect for both SSE and stdio
 - Server-initiated elicitation now honors per-session client capability negotiation instead of sending requests to sessions that never advertised `elicitation`
 - `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions during DI registration
@@ -47,4 +48,4 @@ Update it when priorities, milestones, or major decisions change.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The next active review area is SSE vs stdio parity for server-initiated flows.
 - The first server-initiated flow gap closed in this area was per-session elicitation capability enforcement.
-- Outbound elicitation disconnect coverage is now in place for both transports; the next parity candidate is server-initiated notification behavior.
+- Outbound elicitation disconnect coverage and client remote-close propagation are now in place for both transports; the next parity candidate is server-initiated notification behavior.

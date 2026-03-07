@@ -142,6 +142,77 @@ public class StdioClientTransportTests
     }
 
     [Fact]
+    public async Task ProcessMessagesAsync_ShouldRaiseOnClose_WhenRemoteInputEnds()
+    {
+        var clientToServer = new Pipe();
+        var serverToClient = new Pipe();
+
+        await using var inputStream = serverToClient.Reader.AsStream();
+        await using var outputStream = clientToServer.Writer.AsStream();
+
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance);
+        await transport.StartAsync();
+
+        var closeTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.OnClose += () => closeTcs.TrySetResult();
+
+        try
+        {
+            await serverToClient.Writer.CompleteAsync();
+            var completedTask = await Task.WhenAny(
+                closeTcs.Task,
+                Task.Delay(TimeSpan.FromSeconds(1))
+            );
+
+            completedTask.Should().Be(
+                closeTcs.Task,
+                "remote EOF should raise OnClose for the stdio client transport"
+            );
+            closeTcs.Task.IsCompletedSuccessfully.Should().BeTrue();
+        }
+        finally
+        {
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_ShouldFailPendingRequestsPromptly_WhenRemoteInputEnds()
+    {
+        var clientToServer = new Pipe();
+        var serverToClient = new Pipe();
+
+        await using var inputStream = serverToClient.Reader.AsStream();
+        await using var outputStream = clientToServer.Writer.AsStream();
+
+        var transport = new StdioClientTransport(inputStream, outputStream, "", NullLogger.Instance)
+        {
+            RequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+        await transport.StartAsync();
+
+        try
+        {
+            var pendingTask = transport.SendRequestAsync("tools/list", new { });
+
+            var readResult = await clientToServer.Reader.ReadAsync();
+            clientToServer.Reader.AdvanceTo(readResult.Buffer.End);
+
+            await serverToClient.Writer.CompleteAsync();
+
+            await FluentActions.Awaiting(async () =>
+                    await pendingTask.WaitAsync(TimeSpan.FromSeconds(1))
+                )
+                .Should()
+                .ThrowAsync<OperationCanceledException>();
+        }
+        finally
+        {
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_ShouldRaiseErrorOnInvalidJson()
     {
         var clientToServer = new Pipe();

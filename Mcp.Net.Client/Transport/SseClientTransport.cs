@@ -36,6 +36,7 @@ public class SseClientTransport : ClientTransportBase
     private StreamReader? _sseReader;
     private string? _sessionId;
     private string? _negotiatedProtocolVersion;
+    private int _remoteCloseScheduled;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SseClientTransport"/> class.
@@ -240,6 +241,14 @@ public class SseClientTransport : ClientTransportBase
             if (completedTask == timeoutTask)
             {
                 PendingRequests.TryRemove(id, out _);
+                if (timeoutTask.IsCanceled)
+                {
+                    throw new OperationCanceledException(
+                        "Request was cancelled.",
+                        CancellationTokenSource.Token
+                    );
+                }
+
                 throw new TimeoutException($"Request timed out: {method}");
             }
 
@@ -596,6 +605,8 @@ public class SseClientTransport : ClientTransportBase
 
     private async Task ListenToServerEventsAsync()
     {
+        var shouldCloseTransport = false;
+
         if (_sseReader == null)
         {
             return;
@@ -611,6 +622,7 @@ public class SseClientTransport : ClientTransportBase
                 if (line == null)
                 {
                     Logger.LogInformation("SSE stream ended by remote host.");
+                    shouldCloseTransport = true;
                     break;
                 }
 
@@ -656,12 +668,53 @@ public class SseClientTransport : ClientTransportBase
         finally
         {
             Logger.LogInformation("SSE listen task terminated");
+            if (shouldCloseTransport)
+            {
+                ScheduleRemoteClose();
+            }
         }
+    }
+
+    private void ScheduleRemoteClose()
+    {
+        if (IsClosed || Interlocked.Exchange(ref _remoteCloseScheduled, 1) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await CloseAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "SSE transport close after remote shutdown failed.");
+                }
+            }
+        );
     }
 
     /// <inheritdoc />
     protected override async Task OnClosingAsync()
     {
+        foreach (var kvp in PendingRequests)
+        {
+            if (
+                kvp.Value.TrySetException(
+                    new OperationCanceledException(
+                        "Transport is closing.",
+                        CancellationTokenSource.Token
+                    )
+                )
+            )
+            {
+                PendingRequests.TryRemove(kvp.Key, out _);
+            }
+        }
+
         await base.OnClosingAsync();
 
         try
@@ -699,6 +752,7 @@ public class SseClientTransport : ClientTransportBase
                 _requestHttpClient.Dispose();
             }
 
+            Interlocked.Exchange(ref _remoteCloseScheduled, 0);
             _sessionId = null;
             _negotiatedProtocolVersion = null;
         }

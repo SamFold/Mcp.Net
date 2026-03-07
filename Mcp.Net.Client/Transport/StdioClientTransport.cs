@@ -26,6 +26,7 @@ public class StdioClientTransport : ClientMessageTransportBase
     private StreamReader? _reader;
     private TimeSpan _requestTimeout = TimeSpan.FromSeconds(60);
     private string? _negotiatedProtocolVersion;
+    private int _remoteCloseScheduled;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StdioClientTransport"/> class using default stdin/stdout.
@@ -195,6 +196,8 @@ public class StdioClientTransport : ClientMessageTransportBase
             leaveOpen: true
         );
 
+        var shouldCloseTransport = false;
+
         try
         {
             while (!CancellationTokenSource.Token.IsCancellationRequested)
@@ -203,6 +206,7 @@ public class StdioClientTransport : ClientMessageTransportBase
                 if (line == null)
                 {
                     Logger.LogInformation("End of input stream detected");
+                    shouldCloseTransport = true;
                     break;
                 }
 
@@ -226,7 +230,33 @@ public class StdioClientTransport : ClientMessageTransportBase
         finally
         {
             Logger.LogInformation("Message processing loop terminated");
+            if (shouldCloseTransport)
+            {
+                ScheduleRemoteClose();
+            }
         }
+    }
+
+    private void ScheduleRemoteClose()
+    {
+        if (IsClosed || Interlocked.Exchange(ref _remoteCloseScheduled, 1) != 0)
+        {
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await CloseAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Stdio transport close after remote shutdown failed.");
+                }
+            }
+        );
     }
 
     /// <inheritdoc />
@@ -308,6 +338,7 @@ public class StdioClientTransport : ClientMessageTransportBase
         }
 
         await base.OnClosingAsync();
+        Interlocked.Exchange(ref _remoteCloseScheduled, 0);
         _negotiatedProtocolVersion = null;
     }
 

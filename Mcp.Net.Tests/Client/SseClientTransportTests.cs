@@ -440,6 +440,110 @@ public class SseClientTransportTests
     }
 
     [Fact]
+    public async Task ListenToServerEventsAsync_ShouldRaiseOnClose_WhenRemoteStreamEnds()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-close");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        var closeTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.OnClose += () => closeTcs.TrySetResult();
+
+        try
+        {
+            await sseStream.CompleteAsync();
+            var completedTask = await Task.WhenAny(
+                closeTcs.Task,
+                Task.Delay(TimeSpan.FromSeconds(1))
+            );
+
+            completedTask.Should().Be(
+                closeTcs.Task,
+                "remote EOF should raise OnClose for the SSE client transport"
+            );
+            closeTcs.Task.IsCompletedSuccessfully.Should().BeTrue();
+        }
+        finally
+        {
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ListenToServerEventsAsync_ShouldFailPendingRequestsPromptly_WhenRemoteStreamEnds()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+        var requestAcceptedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-pending");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        requestHandler.EnqueueResponse(_ =>
+        {
+            requestAcceptedTcs.TrySetResult();
+            var response = new HttpResponseMessage(HttpStatusCode.Accepted);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-pending");
+            response.Content = new StringContent(string.Empty);
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        try
+        {
+            var pendingTask = transport.SendRequestAsync("tools/list", new { });
+            await requestAcceptedTcs.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            await sseStream.CompleteAsync();
+
+            await FluentActions.Awaiting(async () =>
+                    await pendingTask.WaitAsync(TimeSpan.FromSeconds(1))
+                )
+                .Should()
+                .ThrowAsync<OperationCanceledException>();
+        }
+        finally
+        {
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
     public async Task SendRequestAsync_ShouldCaptureJsonErrorSummary()
     {
         var sseStream = new TestSseStream();
