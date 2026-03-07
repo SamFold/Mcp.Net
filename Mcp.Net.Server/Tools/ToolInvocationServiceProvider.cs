@@ -41,6 +41,11 @@ internal sealed class ToolInvocationServiceProvider : IServiceProvider
     {
         if (serviceType == typeof(IElicitationService))
         {
+            if (_inner.GetService(typeof(IElicitationServiceFactory)) is IElicitationServiceFactory factory)
+            {
+                return factory.Create(_sessionId);
+            }
+
             return _elicitationService.Value;
         }
 

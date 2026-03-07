@@ -15,13 +15,11 @@ namespace Mcp.Net.Server.Tools;
 internal sealed class ToolInvocationFactory
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly McpServer _server;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<ToolInvocationFactory> _logger;
 
     public ToolInvocationFactory(
         IServiceProvider serviceProvider,
-        McpServer server,
         ILoggerFactory loggerFactory,
         ILogger<ToolInvocationFactory> logger
     )
@@ -29,17 +27,22 @@ internal sealed class ToolInvocationFactory
         _serviceProvider =
             serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _server = server ?? throw new ArgumentNullException(nameof(server));
         _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
     }
 
     /// <summary>
     /// Produces a delegate capable of executing the tool described by <paramref name="descriptor"/>.
     /// </summary>
+    /// <param name="server">The server instance that should own the registered tool handler.</param>
     /// <param name="descriptor">Descriptor that contains the tool metadata and invocation information.</param>
     /// <returns>Delegate that accepts optional JSON arguments and a session id, yielding a <see cref="ToolCallResult"/>.</returns>
-    public Func<JsonElement?, string, Task<ToolCallResult>> CreateHandler(ToolDescriptor descriptor)
+    public Func<JsonElement?, string, Task<ToolCallResult>> CreateHandler(
+        McpServer server,
+        ToolDescriptor descriptor
+    )
     {
+        ArgumentNullException.ThrowIfNull(server);
+
         return async (arguments, sessionId) =>
         {
             _logger.LogInformation("Tool {ToolName} invoked", descriptor.Name);
@@ -48,7 +51,7 @@ internal sealed class ToolInvocationFactory
             {
                 var scopedProvider = new ToolInvocationServiceProvider(
                     _serviceProvider,
-                    _server,
+                    server,
                     sessionId,
                     _loggerFactory
                 );

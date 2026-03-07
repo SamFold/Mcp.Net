@@ -81,7 +81,12 @@ public static class CoreServerExtensions
                 sp.GetRequiredService<ILogger<CompletionService>>()
             )
         );
-        services.AddSingleton<IElicitationService, ElicitationService>();
+        services.AddSingleton<IElicitationServiceFactory>(sp =>
+            new ElicitationServiceFactory(
+                sp.GetRequiredService<McpServer>(),
+                sp.GetService<ILoggerFactory>()
+            )
+        );
 
         services.AddSingleton<McpServer>(sp =>
         {
@@ -189,6 +194,12 @@ public static class CoreServerExtensions
         // Register the pre-built server and its shared connection manager.
         services.AddSingleton(server);
         services.TryAddSingleton<IConnectionManager>(server.ConnectionManager);
+        services.TryAddSingleton<IElicitationServiceFactory>(sp =>
+            new ElicitationServiceFactory(
+                sp.GetRequiredService<McpServer>(),
+                sp.GetService<ILoggerFactory>()
+            )
+        );
 
         // Register the options for other services to use
         services.AddSingleton(options);

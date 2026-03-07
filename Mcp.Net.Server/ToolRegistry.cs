@@ -36,7 +36,6 @@ public class ToolRegistry
         );
         _invocationFactory = new ToolInvocationFactory(
             _serviceProvider,
-            _serviceProvider.GetRequiredService<McpServer>(),
             loggerFactory,
             loggerFactory.CreateLogger<ToolInvocationFactory>()
         );
@@ -138,7 +137,7 @@ public class ToolRegistry
 
     private void RegisterToolWithServer(McpServer server, ToolDescriptor descriptor)
     {
-        var handler = _invocationFactory.CreateHandler(descriptor);
+        var handler = _invocationFactory.CreateHandler(server, descriptor);
 
         server.RegisterTool(
             name: descriptor.Name,

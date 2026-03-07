@@ -35,14 +35,14 @@ public class ToolInvocationFactoryTests
             .AddSingleton(new McpServer(new ServerInfo { Name = "Test", Version = "1.0" }, new InMemoryConnectionManager(NullLoggerFactory.Instance), new ServerOptions(), NullLoggerFactory.Instance))
             .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
             .BuildServiceProvider();
+        var server = services.GetRequiredService<McpServer>();
         var factory = new ToolInvocationFactory(
             services,
-            services.GetRequiredService<McpServer>(),
             services.GetRequiredService<ILoggerFactory>(),
             NullLoggerFactory.Instance.CreateLogger<ToolInvocationFactory>()
         );
 
-        var handler = factory.CreateHandler(descriptor);
+        var handler = factory.CreateHandler(server, descriptor);
         var result = await handler(JsonSerializer.SerializeToElement(new { }), "session-1");
 
         Assert.False(result.IsError);
@@ -58,14 +58,14 @@ public class ToolInvocationFactoryTests
             .AddSingleton(new McpServer(new ServerInfo { Name = "Test", Version = "1.0" }, new InMemoryConnectionManager(NullLoggerFactory.Instance), new ServerOptions(), NullLoggerFactory.Instance))
             .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
             .BuildServiceProvider();
+        var server = services.GetRequiredService<McpServer>();
         var factory = new ToolInvocationFactory(
             services,
-            services.GetRequiredService<McpServer>(),
             services.GetRequiredService<ILoggerFactory>(),
             NullLoggerFactory.Instance.CreateLogger<ToolInvocationFactory>()
         );
 
-        var handler = factory.CreateHandler(descriptor);
+        var handler = factory.CreateHandler(server, descriptor);
         var arguments = JsonSerializer.SerializeToElement(new { message = "hello world" });
         var result = await handler(arguments, "session-1");
 

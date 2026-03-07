@@ -6,6 +6,7 @@ using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Elicitation;
 using Mcp.Net.Core.Models.Exceptions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.Services;
 
 namespace Mcp.Net.Server.Elicitation;
@@ -25,6 +26,19 @@ public interface IElicitationService
         ElicitationPrompt prompt,
         CancellationToken cancellationToken = default
     );
+}
+
+/// <summary>
+/// Creates session-bound elicitation services on demand.
+/// </summary>
+public interface IElicitationServiceFactory
+{
+    /// <summary>
+    /// Creates an elicitation service for the specified session.
+    /// </summary>
+    /// <param name="sessionId">The session that should receive elicitation requests.</param>
+    /// <returns>A session-bound elicitation service.</returns>
+    IElicitationService Create(string sessionId);
 }
 
 /// <summary>
@@ -169,5 +183,29 @@ public sealed class ElicitationService : IElicitationService
                 ex
             );
         }
+    }
+}
+
+/// <summary>
+/// Default factory for constructing session-bound <see cref="IElicitationService"/> instances.
+/// </summary>
+public sealed class ElicitationServiceFactory : IElicitationServiceFactory
+{
+    private readonly McpServer _server;
+    private readonly ILoggerFactory _loggerFactory;
+
+    public ElicitationServiceFactory(McpServer server, ILoggerFactory? loggerFactory = null)
+    {
+        _server = server ?? throw new ArgumentNullException(nameof(server));
+        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+    }
+
+    public IElicitationService Create(string sessionId)
+    {
+        return new ElicitationService(
+            _server,
+            sessionId,
+            _loggerFactory.CreateLogger<ElicitationService>()
+        );
     }
 }
