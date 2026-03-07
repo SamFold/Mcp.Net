@@ -115,6 +115,15 @@ internal sealed class CompletionService : ICompletionService
             var result = await handler(context, cancellationToken).ConfigureAwait(false);
             return result ?? new CompletionValues();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(
+                "Completion generation canceled for {ReferenceType} '{Identifier}'.",
+                referenceType,
+                identifier
+            );
+            throw;
+        }
         catch (McpException)
         {
             throw;

@@ -262,4 +262,48 @@ public class McpServerCompletionTests
         response.Error.Should().BeNull();
         observedToken.Should().Be(cts.Token);
     }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_Propagate_RequestCancellation_FromCompletionHandler()
+    {
+        var server = CreateServer();
+
+        server.RegisterPromptCompletion(
+            "draft-email",
+            (_, cancellationToken) => Task.FromCanceled<CompletionValues>(cancellationToken)
+        );
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "ctx-completion-cancelled",
+            "completion/complete",
+            new CompletionCompleteParams
+            {
+                Reference = new CompletionReference
+                {
+                    Type = "ref/prompt",
+                    Name = "draft-email",
+                },
+                Argument = new CompletionArgument
+                {
+                    Name = "subject",
+                    Value = "demo",
+                },
+            }
+        );
+
+        var context = new ServerRequestContext(
+            "session-completion-cancelled",
+            "transport-completion-cancelled",
+            request,
+            cts.Token
+        );
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => server.HandleRequestAsync(context)
+        );
+    }
 }

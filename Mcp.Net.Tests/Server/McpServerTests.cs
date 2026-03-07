@@ -424,6 +424,78 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task HandleRequestAsync_Should_Propagate_RequestCancellation_FromResourceReader()
+    {
+        var resource = new Resource
+        {
+            Uri = "mcp://test/cancelled-resource",
+            Name = "Cancelled Resource",
+        };
+
+        _server.RegisterResource(
+            resource,
+            cancellationToken => Task.FromCanceled<ResourceContent[]>(cancellationToken)
+        );
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "resource-read-cancelled",
+            "resources/read",
+            JsonSerializer.SerializeToElement(new { uri = resource.Uri })
+        );
+
+        var context = new ServerRequestContext(
+            "session-resource-cancelled",
+            "transport-resource-cancelled",
+            request,
+            cts.Token
+        );
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _server.HandleRequestAsync(context)
+        );
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_Propagate_RequestCancellation_FromPromptFactory()
+    {
+        var prompt = new Prompt
+        {
+            Name = "cancelled-prompt",
+            Description = "Prompt used to verify cancellation propagation",
+        };
+
+        _server.RegisterPrompt(
+            prompt,
+            cancellationToken => Task.FromCanceled<object[]>(cancellationToken)
+        );
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "prompt-get-cancelled",
+            "prompts/get",
+            JsonSerializer.SerializeToElement(new { name = prompt.Name })
+        );
+
+        var context = new ServerRequestContext(
+            "session-prompt-cancelled",
+            "transport-prompt-cancelled",
+            request,
+            cts.Token
+        );
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _server.HandleRequestAsync(context)
+        );
+    }
+
+    [Fact]
     public async Task HandleTransportClosed_Should_CancelPendingClientRequests()
     {
         var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);

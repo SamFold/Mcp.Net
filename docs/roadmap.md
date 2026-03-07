@@ -18,6 +18,7 @@ Update it when priorities, milestones, or major decisions change.
 - Server-driven `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations
 - LLM and WebUI refresh listeners now accept the spec notification names and refresh-path coverage is in place
 - `HandleRequestAsync` now preserves cancellation tokens through resource, prompt, and completion execution
+- True non-tool request cancellation now propagates as cancellation instead of being normalized to `InternalError`
 
 ## Server stability themes
 - Keep all session-scoped state isolated by connection/session

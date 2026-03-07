@@ -141,6 +141,11 @@ internal sealed class ResourceService : IResourceService
             var contents = await registration.Reader(cancellationToken).ConfigureAwait(false);
             return contents ?? Array.Empty<ResourceContent>();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Resource read canceled for {Uri}", uri);
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error reading resource {Uri}", uri);

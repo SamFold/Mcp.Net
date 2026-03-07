@@ -204,6 +204,10 @@ public class SseTransportHost
             {
                 await _messageProcessor.ProcessAsync(context, sessionId, transport, logger);
             }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                logger.LogDebug("Request processing canceled for session {SessionId}", sessionId);
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error processing message");

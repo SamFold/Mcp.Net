@@ -18,12 +18,14 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Hosted SSE requests now reuse middleware-authenticated request state instead of running the auth handler twice.
 - Spec-aligned `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations.
 - LLM and WebUI refresh listeners now accept the spec notification names.
-- `HandleRequestAsync` now preserves request cancellation through resource, prompt, and completion execution, and the full suite is green (`281/281`).
+- `HandleRequestAsync` now preserves request cancellation through resource, prompt, and completion execution.
+- True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
+- The full suite is green (`284/284`).
 - Latest remaining review finding in the notification/completion/resource-refresh area:
   - prompt/resource/completion handlers still do not expose request metadata/session context at the final handler boundary
 
 ## Goal
-- Expose request metadata/session context to non-tool handlers without regressing the now-fixed cancellation flow.
+- Expose request metadata/session context to non-tool handlers now that cancellation flow and semantics are both correct.
 
 ## Scope
 - In scope:

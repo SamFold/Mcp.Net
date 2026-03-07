@@ -195,6 +195,14 @@ public sealed class StdioIngressHost
             var response = await _server.HandleRequestAsync(context).ConfigureAwait(false);
             await _transport.SendAsync(response).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(
+                "Request {Method} canceled on stdio ingress for transport {TransportId}",
+                context.Request.Method,
+                _transport.Id()
+            );
+        }
         catch (Exception ex)
         {
             _logger.LogError(

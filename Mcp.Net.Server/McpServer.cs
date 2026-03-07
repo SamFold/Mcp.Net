@@ -883,6 +883,15 @@ public class McpServer : IMcpServer
             );
             return CreateErrorResponse(request.Id, ex.Code, ex.Message, ex.Data);
         }
+        catch (OperationCanceledException) when (context?.CancellationToken.IsCancellationRequested == true)
+        {
+            _logger.LogDebug(
+                "Request {Id} ({Method}) canceled by caller",
+                request.Id,
+                request.Method
+            );
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(

@@ -147,6 +147,11 @@ internal sealed class PromptService : IPromptService
                 .ConfigureAwait(false);
             return messages ?? Array.Empty<object>();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Prompt generation canceled for {Name}", name);
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error generating prompt {Name}", name);
