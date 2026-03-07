@@ -15,6 +15,7 @@ namespace Mcp.Net.Server.Transport.Stdio;
 public class StdioTransport : ServerMessageTransportBase
 {
     private readonly Stream _inputStream;
+    private readonly SemaphoreSlim _outboundWriteLock = new(1, 1);
     private readonly PipeWriter _writer;
 
     /// <summary>
@@ -88,15 +89,18 @@ public class StdioTransport : ServerMessageTransportBase
 
         try
         {
-            Logger.LogDebug(
-                "Sending response: ID={Id}, HasResult={HasResult}, HasError={HasError}",
-                message.Id,
-                message.Result != null,
-                message.Error != null
-            );
+            await SerializeOutboundSendAsync(async () =>
+            {
+                Logger.LogDebug(
+                    "Sending response: ID={Id}, HasResult={HasResult}, HasError={HasError}",
+                    message.Id,
+                    message.Result != null,
+                    message.Error != null
+                );
 
-            string json = SerializeMessage(message);
-            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+                string json = SerializeMessage(message);
+                await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+            });
         }
         catch (Exception ex)
         {
@@ -116,14 +120,17 @@ public class StdioTransport : ServerMessageTransportBase
 
         try
         {
-            Logger.LogDebug(
-                "Sending request: Method={Method}, Id={Id}",
-                message.Method,
-                message.Id
-            );
+            await SerializeOutboundSendAsync(async () =>
+            {
+                Logger.LogDebug(
+                    "Sending request: Method={Method}, Id={Id}",
+                    message.Method,
+                    message.Id
+                );
 
-            string json = SerializeMessage(message);
-            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+                string json = SerializeMessage(message);
+                await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+            });
         }
         catch (Exception ex)
         {
@@ -143,9 +150,12 @@ public class StdioTransport : ServerMessageTransportBase
 
         try
         {
-            Logger.LogDebug("Sending notification: Method={Method}", message.Method);
-            string json = SerializeMessage(message);
-            await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+            await SerializeOutboundSendAsync(async () =>
+            {
+                Logger.LogDebug("Sending notification: Method={Method}", message.Method);
+                string json = SerializeMessage(message);
+                await WriteRawAsync(Encoding.UTF8.GetBytes(json + "\n"));
+            });
         }
         catch (Exception ex)
         {
@@ -169,5 +179,18 @@ public class StdioTransport : ServerMessageTransportBase
     {
         await _writer.CompleteAsync();
         await base.OnClosingAsync();
+    }
+
+    private async Task SerializeOutboundSendAsync(Func<Task> sendOperation)
+    {
+        await _outboundWriteLock.WaitAsync(CancellationTokenSource.Token);
+        try
+        {
+            await sendOperation();
+        }
+        finally
+        {
+            _outboundWriteLock.Release();
+        }
     }
 }

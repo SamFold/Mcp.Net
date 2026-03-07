@@ -7,10 +7,12 @@ Update it when priorities, milestones, or major decisions change.
 1. Finish the `Mcp.Net.Server` stability and consistency review
 
 ## Near-term roadmap
-1. SSE vs stdio parity for server-initiated flows
+1. Logging capability truthfulness review
 2. Logging/debuggability and hidden mutable state review
+3. MCP server review closure and cleanup
 
 ## Recently completed
+- SSE and stdio server transports now serialize outbound writes per connection so overlapping responses, requests, and notifications cannot enter the shared writer concurrently
 - SSE and stdio client transports now raise `OnClose` when the remote side ends the connection, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout
 - Added integration coverage proving outbound server-initiated elicitation cancels promptly on disconnect for both SSE and stdio
 - Server-initiated elicitation now honors per-session client capability negotiation instead of sending requests to sessions that never advertised `elicitation`
@@ -35,6 +37,8 @@ Update it when priorities, milestones, or major decisions change.
 - Keep refresh/list-changed behavior spec-aligned so connected clients do not drift stale
 - Preserve request cancellation and request metadata until the final handler boundary
 - Preserve client capability negotiation per session before issuing server-initiated client-feature requests
+- Serialize outbound writes per transport so responses, requests, and notifications cannot corrupt one another on a shared connection
+- Keep capability advertisement truthful so `initialize` does not promise primitives the server does not implement
 
 ## Broader roadmap
 1. MCP server review closure and cleanup
@@ -46,6 +50,6 @@ Update it when priorities, milestones, or major decisions change.
 - `docs/vnext.md` is for the next slice only.
 - This file is for the broader sequence of upcoming work.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
-- The next active review area is SSE vs stdio parity for server-initiated flows.
-- The first server-initiated flow gap closed in this area was per-session elicitation capability enforcement.
-- Outbound elicitation disconnect coverage and client remote-close propagation are now in place for both transports; the next parity candidate is server-initiated notification behavior.
+- The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
+- The next active review area is logging capability truthfulness.
+- Current concrete follow-up: `ServerCapabilities.Logging` can be advertised even though the MCP logging primitive is not implemented yet.

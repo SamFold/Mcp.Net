@@ -25,7 +25,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - The server now tracks client-advertised capabilities per session during `initialize`, and server-initiated elicitation fails fast when the target session did not negotiate `elicitation`.
 - Outbound elicitation disconnect behavior is now covered end-to-end for both SSE and stdio; both transports cancel the pending server-side request promptly when the disconnect is simulated correctly.
 - SSE and stdio client transports now convert remote EOF / remote shutdown into a real close event, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout.
-- The full suite is green (`298/298`).
+- SSE and stdio server transports now serialize outbound writes per connection, so overlapping responses, requests, and notifications cannot enter the shared writer concurrently.
+- The full suite is green (`300/300`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -34,28 +35,28 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
 
 ## Goal
-- Continue the `Mcp.Net.Server` review slice for SSE vs stdio parity on server-initiated flows.
+- Continue the `Mcp.Net.Server` review slice by making capability advertisement truthful for logging.
 
 ## Scope
 - In scope:
-  - review whether server-initiated requests and notifications behave consistently across SSE and stdio transports
-  - continue after outbound elicitation negotiation, disconnect coverage, and client remote-close propagation
-  - check server-initiated notification behavior next
-  - identify one concrete transport parity gap
-  - pin it with a failing regression first
-  - fix one commit-sized parity issue
+  - review whether `ServerCapabilities.Logging` should be advertised before the MCP logging primitive exists
+  - pin the current capability-truthfulness gap with a failing regression first
+  - implement the smallest truthful behavior change
+  - keep the change commit-sized
 - Out of scope:
-  - logging/debuggability cleanup
+  - broader logging/debuggability cleanup
+  - full MCP logging primitive implementation unless the review shows suppression is the wrong fix
 
 ## Current slice
-1. Review SSE vs stdio parity for server-initiated notifications, starting with `notifications/.../list_changed` and logging notifications.
-2. Identify one concrete notification-delivery or notification-lifecycle mismatch before writing a test.
-3. Add the failing regression first for the first verified mismatch.
-4. Implement the smallest transport-parity fix and rerun targeted then broader tests.
+1. Add a failing regression proving the server advertises `logging` capability even though the protocol primitive is not implemented.
+2. Decide whether the smallest truthful fix is to suppress that capability from `initialize`.
+3. Implement the minimal fix.
+4. Rerun targeted server tests, then broader tests if the change affects shared initialization behavior.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
    - logging/debuggability and hidden mutable state
+   - decide whether to implement the MCP logging primitive after the capability-truthfulness gap is closed
 
 ## Open decisions
 - Should `SseServerBuilder` delegate all endpoint mapping to `UseMcpServer(options => ...)`, or own an explicit hosting path with the same behavior contract?

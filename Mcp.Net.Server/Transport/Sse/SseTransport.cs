@@ -18,6 +18,7 @@ public class SseTransport : TransportBase, IServerTransport
     protected readonly IResponseWriter ResponseWriter;
     private bool _isStarted;
     private readonly Stopwatch _uptime;
+    private readonly SemaphoreSlim _outboundWriteLock = new(1, 1);
     private int _messagesSent;
     private int _messagesReceived;
     private int _bytesReceived;
@@ -306,8 +307,16 @@ public class SseTransport : TransportBase, IServerTransport
     private async Task SendDataAsync(string data)
     {
         string sseData = string.Format(SSE_DATA_FORMAT, data);
-        await ResponseWriter.WriteAsync(sseData, CancellationTokenSource.Token);
-        await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
+        await _outboundWriteLock.WaitAsync(CancellationTokenSource.Token);
+        try
+        {
+            await ResponseWriter.WriteAsync(sseData, CancellationTokenSource.Token);
+            await ResponseWriter.FlushAsync(CancellationTokenSource.Token);
+        }
+        finally
+        {
+            _outboundWriteLock.Release();
+        }
     }
 
     /// <summary>
