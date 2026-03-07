@@ -305,7 +305,30 @@ public class McpServer : IMcpServer
             .RegisterTransportAsync(sessionId, transport)
             .ConfigureAwait(false);
 
-        await transport.StartAsync();
+        try
+        {
+            await transport.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start transport {TransportId}", sessionId);
+
+            try
+            {
+                await transport.CloseAsync().ConfigureAwait(false);
+            }
+            catch (Exception closeEx)
+            {
+                _logger.LogWarning(
+                    closeEx,
+                    "Failed to close transport {TransportId} after startup failure",
+                    sessionId
+                );
+            }
+
+            await _connectionManager.RemoveTransportAsync(sessionId).ConfigureAwait(false);
+            throw;
+        }
     }
 
     private void HandleNotification(JsonRpcNotificationMessage notification)

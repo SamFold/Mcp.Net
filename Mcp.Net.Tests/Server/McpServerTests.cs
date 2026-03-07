@@ -58,6 +58,26 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task ConnectAsync_Should_NotLeave_Transport_Registered_When_StartAsync_Fails()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        );
+
+        var transport = new FailingStartTransport("failed-start");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => server.ConnectAsync(transport));
+
+        exception.Message.Should().Be("Simulated transport start failure.");
+        transport.CloseCallCount.Should().BeGreaterThan(0);
+        (await connectionManager.GetTransportAsync(transport.Id())).Should().BeNull();
+    }
+
+    [Fact]
     public async Task ProcessJsonRpcRequest_Initialize_Should_Return_ServerInfo()
     {
         // Arrange
@@ -1140,5 +1160,43 @@ public class McpServerTests
         }
 
         (await condition()).Should().BeTrue();
+    }
+
+    private sealed class FailingStartTransport : IServerTransport
+    {
+        private readonly string _id;
+
+        public FailingStartTransport(string id)
+        {
+            _id = id;
+        }
+
+        public event Action<Exception>? OnError
+        {
+            add { }
+            remove { }
+        }
+        public event Action? OnClose;
+
+        public int CloseCallCount { get; private set; }
+
+        public Task StartAsync() => throw new InvalidOperationException("Simulated transport start failure.");
+
+        public Task SendAsync(JsonRpcResponseMessage message) => Task.CompletedTask;
+
+        public Task SendRequestAsync(JsonRpcRequestMessage message) => Task.CompletedTask;
+
+        public Task SendNotificationAsync(JsonRpcNotificationMessage message) => Task.CompletedTask;
+
+        public Task CloseAsync()
+        {
+            CloseCallCount++;
+            OnClose?.Invoke();
+            return Task.CompletedTask;
+        }
+
+        public void Dispose() { }
+
+        public string Id() => _id;
     }
 }
