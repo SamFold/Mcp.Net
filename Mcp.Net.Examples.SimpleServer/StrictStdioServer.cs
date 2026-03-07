@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
@@ -238,9 +239,23 @@ internal static class StrictStdioServer
             logging.SetMinimumLevel(LogLevel.Error); // Set very high threshold
         });
 
+        services.AddHttpClient(ModelCatalogTools.OpenAiClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.openai.com/v1/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
+        services.AddHttpClient(ModelCatalogTools.AnthropicClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.anthropic.com/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
+
         services.AddSingleton<CSharpCodeExecutionService>();
         services.AddSingleton(server);
-        // ElicitationService is provided per-tool invocation via ToolInvocationServiceProvider.
 
         // Set up logging options
         var loggingOptions = new LoggingOptions

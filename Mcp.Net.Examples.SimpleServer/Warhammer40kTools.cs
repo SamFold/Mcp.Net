@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Attributes;
 using Mcp.Net.Core.Models.Elicitation;
+using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Tools;
 
@@ -387,9 +388,37 @@ public class Warhammer40kTools
                     )
             );
 
-            var elicitationResult = await _elicitationService
-                .RequestAsync(prompt)
-                .ConfigureAwait(false);
+            InquisitorInfo BuildResponse() =>
+                new InquisitorInfo
+                {
+                    Name = fullName,
+                    FullTitle = $"{title}Inquisitor {fullName}",
+                    Ordo = $"Ordo {ordo}",
+                    Description =
+                        $"A servant of the Emperor and member of the Ordo {ordo}, known for relentless pursuit of the Emperor's enemies.",
+                    Homeworld = homeworld,
+                    YearsOfService = yearsOfService,
+                    SignatureWeapon = weapon,
+                    NotableAchievement = achievement,
+                };
+
+            ElicitationResult elicitationResult;
+            try
+            {
+                elicitationResult = await _elicitationService
+                    .RequestAsync(prompt)
+                    .ConfigureAwait(false);
+            }
+            catch (McpException ex) when (ex.Code == ErrorCode.RequestTimeout)
+            {
+                // If the client does not respond in time, return the generated defaults.
+                return BuildResponse();
+            }
+            catch (OperationCanceledException)
+            {
+                // If the request was cancelled, also return the generated defaults.
+                return BuildResponse();
+            }
 
             if (
                 elicitationResult.Action == ElicitationAction.Accept
@@ -414,18 +443,7 @@ public class Warhammer40kTools
                 }
             }
 
-            return new InquisitorInfo
-            {
-                Name = fullName,
-                FullTitle = $"{title}Inquisitor {fullName}",
-                Ordo = $"Ordo {ordo}",
-                Description =
-                    $"A servant of the Emperor and member of the Ordo {ordo}, known for relentless pursuit of the Emperor's enemies.",
-                Homeworld = homeworld,
-                YearsOfService = yearsOfService,
-                SignatureWeapon = weapon,
-                NotableAchievement = achievement,
-            };
+            return BuildResponse();
         }
 
         private static bool TryGetString(JsonElement element, string propertyName, out string value)

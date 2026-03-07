@@ -374,6 +374,21 @@ class Program
             logging.SetMinimumLevel(logLevel);
         });
 
+        services.AddHttpClient(ModelCatalogTools.OpenAiClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.openai.com/v1/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
+        services.AddHttpClient(ModelCatalogTools.AnthropicClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.anthropic.com/");
+            client.DefaultRequestHeaders.Accept.Add(
+                new MediaTypeWithQualityHeaderValue("application/json")
+            );
+        });
+
         services.AddSingleton<CSharpCodeExecutionService>();
 
         // Register a logger factory
