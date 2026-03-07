@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -703,6 +704,287 @@ public class ServerClientIntegrationTests
         contextCompletion.Total.Should().Be(2);
         contextCompletion.HasMore.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task SseTransport_ShouldRouteConcurrentElicitations_ToTheInvokingSession()
+    {
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocationCount = 0;
+
+        await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
+            server =>
+            {
+                var elicitationSchema = new ElicitationSchema()
+                    .AddProperty(
+                        "alias",
+                        ElicitationSchemaProperty.ForString(
+                            title: "Display Alias",
+                            description: "Alias to register for the agent"
+                        ),
+                        required: true
+                    );
+
+                server.RegisterTool(
+                    "integration.concurrent_elicitation",
+                    "Requests an alias from the active client session",
+                    JsonSerializer.SerializeToElement(
+                        new
+                        {
+                            type = "object",
+                            properties = new { },
+                        }
+                    ),
+                    async (_, sessionId) =>
+                    {
+                        if (Interlocked.Increment(ref invocationCount) == 2)
+                        {
+                            barrier.TrySetResult();
+                        }
+
+                        await barrier.Task.ConfigureAwait(false);
+
+                        var prompt = new ElicitationPrompt(
+                            $"Please provide an alias for session {sessionId}",
+                            elicitationSchema
+                        );
+
+                        var elicitationService = new ElicitationService(
+                            server,
+                            sessionId,
+                            NullLogger<ElicitationService>.Instance
+                        );
+
+                        var result = await elicitationService.RequestAsync(prompt).ConfigureAwait(false);
+                        var alias = result.Content.HasValue
+                            && result.Content.Value.TryGetProperty("alias", out var aliasElement)
+                            ? aliasElement.GetString()
+                            : null;
+
+                        return new ToolCallResult
+                        {
+                            Content = new ContentBase[]
+                            {
+                                new TextContent
+                                {
+                                    Text = $"{sessionId}:{alias ?? "<none>"}",
+                                },
+                            },
+                        };
+                    }
+                );
+            }
+        );
+
+        var clientALogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClientA");
+        var clientAContexts = new ConcurrentQueue<ElicitationRequestContext>();
+        using var clientA = new TestSseMcpClient(
+            new SseClientTransport(
+                serverHost.CreateHttpClient(),
+                clientALogger,
+                null,
+                null,
+                serverHost.CreateHttpClient()
+            ),
+            clientALogger
+        );
+        clientA.SetElicitationHandler((context, cancellationToken) =>
+        {
+            clientAContexts.Enqueue(context);
+            return Task.FromResult(ElicitationClientResponse.Accept(new { alias = "alpha" }));
+        });
+
+        var clientBLogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClientB");
+        var clientBContexts = new ConcurrentQueue<ElicitationRequestContext>();
+        using var clientB = new TestSseMcpClient(
+            new SseClientTransport(
+                serverHost.CreateHttpClient(),
+                clientBLogger,
+                null,
+                null,
+                serverHost.CreateHttpClient()
+            ),
+            clientBLogger
+        );
+        clientB.SetElicitationHandler((context, cancellationToken) =>
+        {
+            clientBContexts.Enqueue(context);
+            return Task.FromResult(ElicitationClientResponse.Accept(new { alias = "beta" }));
+        });
+
+        await clientA.Initialize();
+        await clientB.Initialize();
+
+        var sessionA = await clientA.GetSessionIdAsync();
+        var sessionB = await clientB.GetSessionIdAsync();
+
+        sessionA.Should().NotBeNullOrWhiteSpace();
+        sessionB.Should().NotBeNullOrWhiteSpace();
+        sessionA.Should().NotBe(sessionB);
+
+        var callATask = clientA.CallTool("integration.concurrent_elicitation");
+        var callBTask = clientB.CallTool("integration.concurrent_elicitation");
+
+        await Task.WhenAll(callATask, callBTask).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var resultA = await callATask;
+        var resultB = await callBTask;
+
+        clientAContexts.Should().ContainSingle();
+        clientBContexts.Should().ContainSingle();
+
+        var clientAMessage = clientAContexts.Single().Message;
+        var clientBMessage = clientBContexts.Single().Message;
+
+        clientAMessage.Should().Contain(sessionA);
+        clientAMessage.Should().NotContain(sessionB);
+        clientBMessage.Should().Contain(sessionB);
+        clientBMessage.Should().NotContain(sessionA);
+
+        ExtractSingleText(resultA).Should().Be($"{sessionA}:alpha");
+        ExtractSingleText(resultB).Should().Be($"{sessionB}:beta");
+    }
+
+    [Fact]
+    public async Task SseTransport_ShouldKeepConcurrentToolResults_IsolatedPerSession()
+    {
+        await using var serverHost = await IntegrationTestServerFactory.StartSseServerAsync(
+            server =>
+            {
+                server.RegisterTool(
+                    "integration.route_probe",
+                    "Returns the active session and caller label",
+                    JsonSerializer.SerializeToElement(
+                        new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                caller = new { type = "string" },
+                                delayMs = new { type = "integer" },
+                            },
+                            required = new[] { "caller" },
+                        }
+                    ),
+                    async (args, sessionId) =>
+                    {
+                        var caller = args!.Value.GetProperty("caller").GetString() ?? string.Empty;
+                        var delayMs = args.Value.TryGetProperty("delayMs", out var delayElement)
+                            ? delayElement.GetInt32()
+                            : 0;
+
+                        if (delayMs > 0)
+                        {
+                            await Task.Delay(delayMs).ConfigureAwait(false);
+                        }
+
+                        return new ToolCallResult
+                        {
+                            Content = new ContentBase[]
+                            {
+                                new TextContent { Text = $"{sessionId}:{caller}" },
+                            },
+                        };
+                    }
+                );
+            }
+        );
+
+        var clientALogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClientA");
+        using var clientA = new TestSseMcpClient(
+            new SseClientTransport(
+                serverHost.CreateHttpClient(),
+                clientALogger,
+                null,
+                null,
+                serverHost.CreateHttpClient()
+            ),
+            clientALogger
+        );
+
+        var clientBLogger = NullLoggerFactory.Instance.CreateLogger("SseIntegrationClientB");
+        using var clientB = new TestSseMcpClient(
+            new SseClientTransport(
+                serverHost.CreateHttpClient(),
+                clientBLogger,
+                null,
+                null,
+                serverHost.CreateHttpClient()
+            ),
+            clientBLogger
+        );
+
+        await clientA.Initialize();
+        await clientB.Initialize();
+
+        var sessionA = await clientA.GetSessionIdAsync();
+        var sessionB = await clientB.GetSessionIdAsync();
+
+        sessionA.Should().NotBeNullOrWhiteSpace();
+        sessionB.Should().NotBeNullOrWhiteSpace();
+        sessionA.Should().NotBe(sessionB);
+
+        var clientATasks = Enumerable
+            .Range(1, 4)
+            .Select(index => clientA.CallTool(
+                "integration.route_probe",
+                new
+                {
+                    caller = $"A-{index}",
+                    delayMs = 15 * (5 - index),
+                }
+            ))
+            .ToArray();
+
+        var clientBTasks = Enumerable
+            .Range(1, 4)
+            .Select(index => clientB.CallTool(
+                "integration.route_probe",
+                new
+                {
+                    caller = $"B-{index}",
+                    delayMs = 10 * index,
+                }
+            ))
+            .ToArray();
+
+        await Task.WhenAll(clientATasks.Concat(clientBTasks)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var clientAResults = (await Task.WhenAll(clientATasks))
+            .Select(ExtractSingleText)
+            .ToArray();
+        var clientBResults = (await Task.WhenAll(clientBTasks))
+            .Select(ExtractSingleText)
+            .ToArray();
+
+        clientAResults.Should().HaveCount(4);
+        clientBResults.Should().HaveCount(4);
+
+        clientAResults.Should().OnlyContain(text => text.StartsWith($"{sessionA}:A-", StringComparison.Ordinal));
+        clientBResults.Should().OnlyContain(text => text.StartsWith($"{sessionB}:B-", StringComparison.Ordinal));
+
+        clientAResults.Should().BeEquivalentTo(new[]
+        {
+            $"{sessionA}:A-1",
+            $"{sessionA}:A-2",
+            $"{sessionA}:A-3",
+            $"{sessionA}:A-4",
+        });
+        clientBResults.Should().BeEquivalentTo(new[]
+        {
+            $"{sessionB}:B-1",
+            $"{sessionB}:B-2",
+            $"{sessionB}:B-3",
+            $"{sessionB}:B-4",
+        });
+    }
+
+    private static string ExtractSingleText(ToolCallResult result)
+    {
+        return result.Content.Should().ContainSingle()
+            .Which.Should().BeOfType<TextContent>()
+            .Subject.As<TextContent>()
+            .Text;
+    }
 }
 
 internal sealed class TestSseMcpClient : McpClient
@@ -725,8 +1007,7 @@ internal sealed class TestSseMcpClient : McpClient
         await _transport.StartAsync().ConfigureAwait(false);
         await InitializeProtocolAsync(_transport).ConfigureAwait(false);
 
-        // Capture the negotiated session id from the transport if available.
-        _sessionId = (_transport as IServerTransport)?.Id();
+        _sessionId = TryResolveSessionId(_transport);
     }
 
     public Task<string> GetSessionIdAsync()
@@ -749,7 +1030,17 @@ internal sealed class TestSseMcpClient : McpClient
         return _transport.SendNotificationAsync(method, parameters);
     }
 
-public override void Dispose()
+    private static string? TryResolveSessionId(IClientTransport transport)
+    {
+        var sessionProperty = transport.GetType().GetProperty(
+            "SessionId",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+        );
+
+        return sessionProperty?.GetValue(transport) as string;
+    }
+
+    public override void Dispose()
     {
         _transport.CloseAsync().GetAwaiter().GetResult();
     }
