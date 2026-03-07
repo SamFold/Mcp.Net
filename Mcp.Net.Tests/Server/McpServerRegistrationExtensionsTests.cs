@@ -156,6 +156,56 @@ public class McpServerRegistrationExtensionsTests
     }
 
     [Fact]
+    public void AddMcpStdioTransport_WithOptionsInstance_ShouldPreserveConfiguredOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+
+        using var inputStream = new MemoryStream(new byte[] { 1, 2, 3 });
+        using var outputStream = new MemoryStream();
+
+        var transportOptions = new StdioServerOptions
+        {
+            Name = "Stdio Options Server",
+            Title = "Stdio Options Title",
+            Version = "3.2.1",
+            Instructions = "Use stdio options.",
+            UseStandardIO = false,
+            InputStream = inputStream,
+            OutputStream = outputStream,
+            Capabilities = new Mcp.Net.Core.Models.Capabilities.ServerCapabilities(),
+            ToolRegistration = new ToolRegistrationOptions
+            {
+                IncludeEntryAssembly = false,
+                ValidateToolMethods = false,
+                EnableDetailedLogging = true,
+            },
+        };
+
+        transportOptions.Authentication.Enabled = false;
+        transportOptions.Authentication.NoAuthExplicitlyConfigured = true;
+
+        services.AddMcpStdioTransport(transportOptions);
+
+        using var provider = services.BuildServiceProvider();
+
+        var resolvedOptions = provider.GetRequiredService<IOptions<StdioServerOptions>>().Value;
+
+        resolvedOptions.Name.Should().Be("Stdio Options Server");
+        resolvedOptions.Title.Should().Be("Stdio Options Title");
+        resolvedOptions.Version.Should().Be("3.2.1");
+        resolvedOptions.Instructions.Should().Be("Use stdio options.");
+        resolvedOptions.UseStandardIO.Should().BeFalse();
+        resolvedOptions.InputStream.Should().BeSameAs(inputStream);
+        resolvedOptions.OutputStream.Should().BeSameAs(outputStream);
+        resolvedOptions.Authentication.Enabled.Should().BeFalse();
+        resolvedOptions.Authentication.NoAuthExplicitlyConfigured.Should().BeTrue();
+        resolvedOptions.ToolRegistration.IncludeEntryAssembly.Should().BeFalse();
+        resolvedOptions.ToolRegistration.ValidateToolMethods.Should().BeFalse();
+        resolvedOptions.ToolRegistration.EnableDetailedLogging.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task AddMcpCore_WithBuilder_ShouldPreserveBuilderConfiguredServerOptions()
     {
         var services = new ServiceCollection();

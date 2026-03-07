@@ -1,4 +1,5 @@
 using Mcp.Net.Server.Options;
+using Mcp.Net.Server.Authentication;
 using Mcp.Net.Server.ServerBuilder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -53,13 +54,7 @@ public static class StdioTransportExtensions
     {
         return services.AddMcpStdioTransport(opt =>
         {
-            opt.Name = options.Name;
-            opt.Version = options.Version;
-            opt.Instructions = options.Instructions;
-            opt.LogLevel = options.LogLevel;
-            opt.LogFilePath = options.LogFilePath;
-            opt.UseConsoleLogging = options.UseConsoleLogging;
-            opt.Capabilities = options.Capabilities;
+            CopyOptions(options, opt);
         });
     }
 
@@ -87,5 +82,69 @@ public static class StdioTransportExtensions
         };
 
         return services.AddMcpStdioTransport(options);
+    }
+
+    private static void CopyOptions(StdioServerOptions source, StdioServerOptions destination)
+    {
+        destination.Name = source.Name;
+        destination.Title = source.Title;
+        destination.Version = source.Version;
+        destination.Instructions = source.Instructions;
+        destination.Logging = CloneLoggingOptions(source.Logging);
+        destination.Authentication = CloneAuthOptions(source.Authentication);
+        destination.ToolRegistration = CloneToolRegistrationOptions(source.ToolRegistration);
+        destination.LogLevel = source.LogLevel;
+        destination.LogFilePath = source.LogFilePath;
+        destination.UseConsoleLogging = source.UseConsoleLogging;
+        destination.Capabilities = source.Capabilities;
+        destination.NoAuthExplicitlyConfigured = source.NoAuthExplicitlyConfigured;
+        destination.ToolAssemblyPaths = new List<string>(source.ToolAssemblyPaths);
+        destination.UseStandardIO = source.UseStandardIO;
+        destination.InputStream = source.InputStream;
+        destination.OutputStream = source.OutputStream;
+    }
+
+    private static LoggingOptions CloneLoggingOptions(LoggingOptions source)
+    {
+        return new LoggingOptions
+        {
+            MinimumLogLevel = source.MinimumLogLevel,
+            UseConsoleLogging = source.UseConsoleLogging,
+            UseStdio = source.UseStdio,
+            LogFilePath = source.LogFilePath,
+            PrettyConsoleOutput = source.PrettyConsoleOutput,
+            FileRollingInterval = source.FileRollingInterval,
+            FileSizeLimitBytes = source.FileSizeLimitBytes,
+            RetainedFileCountLimit = source.RetainedFileCountLimit,
+            ComponentLogLevels = new Dictionary<string, Microsoft.Extensions.Logging.LogLevel>(
+                source.ComponentLogLevels
+            ),
+        };
+    }
+
+    private static AuthOptions CloneAuthOptions(AuthOptions source)
+    {
+        return new AuthOptions
+        {
+            Enabled = source.Enabled,
+            SchemeName = source.SchemeName,
+            SecuredPaths = new List<string>(source.SecuredPaths),
+            EnableLogging = source.EnableLogging,
+            NoAuthExplicitlyConfigured = source.NoAuthExplicitlyConfigured,
+            AuthHandler = source.AuthHandler,
+        };
+    }
+
+    private static ToolRegistrationOptions CloneToolRegistrationOptions(
+        ToolRegistrationOptions source
+    )
+    {
+        return new ToolRegistrationOptions
+        {
+            IncludeEntryAssembly = source.IncludeEntryAssembly,
+            Assemblies = new List<System.Reflection.Assembly>(source.Assemblies),
+            ValidateToolMethods = source.ValidateToolMethods,
+            EnableDetailedLogging = source.EnableDetailedLogging,
+        };
     }
 }
