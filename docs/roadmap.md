@@ -12,6 +12,7 @@ Update it when priorities, milestones, or major decisions change.
 3. MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- Reconnect replacement now starts before registration, so a failed replacement startup no longer evicts the existing live transport for that session
 - `ConnectAsync` now rolls back startup-failed transports so a `StartAsync` exception does not leave a dead transport registered in the connection manager
 - Hosted SSE connections now use a single authoritative registration path, removing duplicate transport registration and duplicate close-subscription state on initial connect
 - Transport errors now converge on the close path, so fatal send failures clear session-scoped negotiated state and remove the broken transport instead of leaving stale active-session state behind
@@ -60,3 +61,4 @@ Update it when priorities, milestones, or major decisions change.
 - The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.
 - The hosted SSE duplicate-registration hidden-state gap is now closed by removing the redundant host-side registration before `McpServer.ConnectAsync`.
 - The transport-startup rollback gap is now closed by cleaning up registration when `ConnectAsync` fails during `StartAsync`.
+- The reconnect replacement startup gap is now closed by delaying session replacement until the new transport has started successfully.

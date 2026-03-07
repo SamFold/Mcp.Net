@@ -78,6 +78,31 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task ConnectAsync_Should_NotEvict_Existing_Transport_When_Replacement_StartAsync_Fails()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test Server", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        );
+
+        var originalTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(originalTransport);
+
+        var replacementTransport = new FailingStartTransport("shared-session");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => server.ConnectAsync(replacementTransport)
+        );
+
+        exception.Message.Should().Be("Simulated transport start failure.");
+        replacementTransport.CloseCallCount.Should().BeGreaterThan(0);
+        (await connectionManager.GetTransportAsync(originalTransport.Id())).Should().BeSameAs(originalTransport);
+    }
+
+    [Fact]
     public async Task ProcessJsonRpcRequest_Initialize_Should_Return_ServerInfo()
     {
         // Arrange

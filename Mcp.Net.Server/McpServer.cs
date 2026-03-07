@@ -301,10 +301,6 @@ public class McpServer : IMcpServer
 
         _logger.LogInformation("MCP server connecting to transport");
 
-        await _connectionManager
-            .RegisterTransportAsync(sessionId, transport)
-            .ConfigureAwait(false);
-
         try
         {
             await transport.StartAsync();
@@ -326,7 +322,32 @@ public class McpServer : IMcpServer
                 );
             }
 
-            await _connectionManager.RemoveTransportAsync(sessionId).ConfigureAwait(false);
+            throw;
+        }
+
+        try
+        {
+            await _connectionManager
+                .RegisterTransportAsync(sessionId, transport)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to register transport {TransportId}", sessionId);
+
+            try
+            {
+                await transport.CloseAsync().ConfigureAwait(false);
+            }
+            catch (Exception closeEx)
+            {
+                _logger.LogWarning(
+                    closeEx,
+                    "Failed to close transport {TransportId} after registration failure",
+                    sessionId
+                );
+            }
+
             throw;
         }
     }

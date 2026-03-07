@@ -30,7 +30,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Transport errors now converge on the close path, so fatal send failures no longer leave a broken session registered with negotiated protocol state still present.
 - Hosted SSE connections now follow a single authoritative registration path through `McpServer.ConnectAsync`, so the same transport is no longer registered twice on initial connect.
 - `ConnectAsync` now rolls back startup-failed transports, so a `StartAsync` failure no longer leaves a registered-but-dead transport in the connection manager.
-- The full suite is green (`304/304`).
+- Reconnect replacement now only swaps the active transport after the new transport has started, so a failed replacement startup no longer evicts a healthy existing session transport.
+- The full suite is green (`305/305`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
