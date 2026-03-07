@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Completion;
+using Mcp.Net.Server.Models;
 
 namespace Mcp.Net.Server.Completions;
 
@@ -12,14 +13,26 @@ namespace Mcp.Net.Server.Completions;
 public sealed class CompletionRequestContext
 {
     public CompletionRequestContext(CompletionCompleteParams parameters)
+        : this(parameters, null) { }
+
+    public CompletionRequestContext(
+        CompletionCompleteParams parameters,
+        HandlerRequestContext? requestContext
+    )
     {
         Parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
+        RequestContext = requestContext;
     }
 
     /// <summary>
     /// Strongly typed parameters supplied by the client.
     /// </summary>
     public CompletionCompleteParams Parameters { get; }
+
+    /// <summary>
+    /// Session and transport metadata captured for the current request when available.
+    /// </summary>
+    public HandlerRequestContext? RequestContext { get; }
 
     /// <summary>
     /// Returns a read-only view over argument context values.

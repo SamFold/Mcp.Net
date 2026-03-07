@@ -6,6 +6,7 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server.Completions;
+using Mcp.Net.Server.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Server.Services;
@@ -76,7 +77,8 @@ internal sealed class CompletionService : ICompletionService
 
     public async Task<CompletionValues> CompleteAsync(
         CompletionCompleteParams request,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        HandlerRequestContext? requestContext = null
     )
     {
         if (request.Reference == null)
@@ -111,7 +113,7 @@ internal sealed class CompletionService : ICompletionService
 
         try
         {
-            var context = new CompletionRequestContext(request);
+            var context = new CompletionRequestContext(request, requestContext);
             var result = await handler(context, cancellationToken).ConfigureAwait(false);
             return result ?? new CompletionValues();
         }

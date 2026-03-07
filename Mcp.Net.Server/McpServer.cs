@@ -740,7 +740,11 @@ public class McpServer : IMcpServer
         }
 
         var suggestions = await _completionService
-            .CompleteAsync(request, context?.CancellationToken ?? default)
+            .CompleteAsync(
+                request,
+                context?.CancellationToken ?? default,
+                CreateHandlerRequestContext(context)
+            )
             .ConfigureAwait(false);
 
         return new CompletionCompleteResult
@@ -1107,4 +1111,16 @@ public class McpServer : IMcpServer
         CancellationToken CancellationToken = default,
         IReadOnlyDictionary<string, string>? Metadata = null
     );
+
+    private static HandlerRequestContext? CreateHandlerRequestContext(
+        RequestExecutionContext? context
+    )
+    {
+        if (context == null)
+        {
+            return null;
+        }
+
+        return new HandlerRequestContext(context.SessionId, context.TransportId, context.Metadata);
+    }
 }

@@ -7,6 +7,7 @@ using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Exceptions;
 using Mcp.Net.Server;
+using Mcp.Net.Server.Completions;
 using Mcp.Net.Server.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.ConnectionManagers;
@@ -305,5 +306,68 @@ public class McpServerCompletionTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => server.HandleRequestAsync(context)
         );
+    }
+
+    [Fact]
+    public async Task HandleRequestAsync_Should_Expose_RequestMetadata_And_SessionContext_ToCompletionHandler()
+    {
+        var server = CreateServer();
+
+        CompletionRequestContext? observedContext = null;
+        server.RegisterPromptCompletion(
+            "draft-email",
+            (context, _) =>
+            {
+                observedContext = context;
+                return Task.FromResult(new CompletionValues { Values = new[] { "value" } });
+            }
+        );
+
+        var request = new JsonRpcRequestMessage(
+            "2.0",
+            "ctx-completion-metadata",
+            "completion/complete",
+            new CompletionCompleteParams
+            {
+                Reference = new CompletionReference
+                {
+                    Type = "ref/prompt",
+                    Name = "draft-email",
+                },
+                Argument = new CompletionArgument
+                {
+                    Name = "subject",
+                    Value = "demo",
+                },
+            }
+        );
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["UserId"] = "user-123",
+            ["TraceId"] = "trace-abc",
+        };
+
+        var context = new ServerRequestContext(
+            "session-completion-metadata",
+            "transport-completion-metadata",
+            request,
+            CancellationToken.None,
+            metadata
+        );
+
+        var response = await server.HandleRequestAsync(context);
+
+        response.Error.Should().BeNull();
+        Assert.NotNull(observedContext);
+        observedContext!.RequestContext.Should().NotBeNull();
+        observedContext.RequestContext!.SessionId.Should().Be("session-completion-metadata");
+        observedContext.RequestContext.TransportId.Should().Be(
+            "transport-completion-metadata"
+        );
+        observedContext.RequestContext.Metadata
+            .Should()
+            .Contain(new KeyValuePair<string, string>("UserId", "user-123"))
+            .And.Contain(new KeyValuePair<string, string>("TraceId", "trace-abc"));
     }
 }

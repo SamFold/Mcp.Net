@@ -20,25 +20,26 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - LLM and WebUI refresh listeners now accept the spec notification names.
 - `HandleRequestAsync` now preserves request cancellation through resource, prompt, and completion execution.
 - True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
-- The full suite is green (`284/284`).
+- Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
+- The full suite is green (`285/285`).
 - Latest remaining review finding in the notification/completion/resource-refresh area:
-  - prompt/resource/completion handlers still do not expose request metadata/session context at the final handler boundary
+  - prompt/resource handlers still do not expose request metadata/session context at the final handler boundary
 
 ## Goal
-- Expose request metadata/session context to non-tool handlers now that cancellation flow and semantics are both correct.
+- Expose request metadata/session context to prompt and resource handlers now that completion already has the shared request-context seam.
 
 ## Scope
 - In scope:
-  - define the smallest safe surface for prompt/resource/completion handlers to access request metadata
+  - define the smallest safe delegate surface for prompt and resource handlers to access request metadata
   - keep `HandleRequestAsync` as the authoritative context-aware request path
-  - add regression coverage for one concrete metadata/session-context path first
+  - add regression coverage for one concrete prompt or resource path first
 - Out of scope:
   - further notification naming changes
   - SSE vs stdio parity review
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review the remaining non-tool handler surfaces and choose the smallest metadata/session-context seam.
+1. Review the remaining prompt/resource registration surfaces and choose the smaller context-aware delegate seam.
 2. Add the failing regression test first.
 3. Implement the smallest fix that exposes request metadata/context through that path.
 4. Run the targeted tests, then the relevant broader server suite.
