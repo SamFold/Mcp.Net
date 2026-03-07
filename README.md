@@ -446,6 +446,7 @@ Ideal for CLI tools and AI model integration:
 - Simple line-based protocol
 - Lightweight and efficient
 - Requests now honour newline-delimited framing and expose a configurable `StdioClientTransport.RequestTimeout` (default 60s, set to `Timeout.InfiniteTimeSpan` to disable). Pending requests are cancelled automatically when the transport closes so callers can surface clean shutdown errors.
+- Inbound stdio traffic is host-driven: a host component (for example `StdioIngressHost`) reads newline-delimited JSON-RPC and calls `McpServer` entry points. `IServerTransport` is outbound-only.
 
 ## 🧩 Advanced Usage
 
