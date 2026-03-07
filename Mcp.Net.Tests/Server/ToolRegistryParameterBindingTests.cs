@@ -138,6 +138,20 @@ public class ToolRegistryParameterBindingTests
 
         await providerServer.ConnectAsync(providerTransport);
         await targetServer.ConnectAsync(targetTransport);
+        await targetServer.ProcessJsonRpcRequest(
+            new JsonRpcRequestMessage(
+                "2.0",
+                "init-target",
+                "initialize",
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                    capabilities = new { elicitation = new { } },
+                    protocolVersion = McpServer.LatestProtocolVersion,
+                }
+            ),
+            targetTransport.Id()
+        );
 
         var services = new ServiceCollection()
             .AddSingleton(providerServer)

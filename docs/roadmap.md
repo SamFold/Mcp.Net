@@ -11,6 +11,7 @@ Update it when priorities, milestones, or major decisions change.
 2. Logging/debuggability and hidden mutable state review
 
 ## Recently completed
+- Server-initiated elicitation now honors per-session client capability negotiation instead of sending requests to sessions that never advertised `elicitation`
 - `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions during DI registration
 - `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`
@@ -31,6 +32,7 @@ Update it when priorities, milestones, or major decisions change.
 - Keep auth, origin validation, and teardown behavior consistent across hosting paths
 - Keep refresh/list-changed behavior spec-aligned so connected clients do not drift stale
 - Preserve request cancellation and request metadata until the final handler boundary
+- Preserve client capability negotiation per session before issuing server-initiated client-feature requests
 
 ## Broader roadmap
 1. MCP server review closure and cleanup
@@ -43,3 +45,4 @@ Update it when priorities, milestones, or major decisions change.
 - This file is for the broader sequence of upcoming work.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The next active review area is SSE vs stdio parity for server-initiated flows.
+- The first server-initiated flow gap closed in this area was per-session elicitation capability enforcement; the remaining parity work is transport lifecycle behavior.

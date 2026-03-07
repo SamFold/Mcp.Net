@@ -51,12 +51,36 @@ public class ElicitationServiceTests
         return new ElicitationPrompt("Provide the display name", schema);
     }
 
+    private static Task InitializeSessionAsync(
+        McpServer server,
+        string sessionId,
+        object? capabilities = null
+    )
+    {
+        var initializeRequest = new JsonRpcRequestMessage(
+            "2.0",
+            Guid.NewGuid().ToString("N"),
+            "initialize",
+            JsonSerializer.SerializeToElement(
+                new
+                {
+                    clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                    capabilities = capabilities ?? new { },
+                    protocolVersion = McpServer.LatestProtocolVersion,
+                }
+            )
+        );
+
+        return server.ProcessJsonRpcRequest(initializeRequest, sessionId);
+    }
+
     [Fact]
     public async Task RequestAsync_ShouldReturnAcceptResult_WhenClientProvidesContent()
     {
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
+        await InitializeSessionAsync(server, transport.Id(), capabilities: new { elicitation = new { } });
 
         var service = new ElicitationService(
             server,
@@ -98,6 +122,7 @@ public class ElicitationServiceTests
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
+        await InitializeSessionAsync(server, transport.Id(), capabilities: new { elicitation = new { } });
 
         var service = new ElicitationService(
             server,
@@ -130,6 +155,7 @@ public class ElicitationServiceTests
         var server = CreateServer();
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
+        await InitializeSessionAsync(server, transport.Id(), capabilities: new { elicitation = new { } });
 
         var service = new ElicitationService(
             server,
@@ -170,6 +196,7 @@ public class ElicitationServiceTests
         server.ClientRequestTimeout = TimeSpan.FromMilliseconds(50);
         var transport = new MockTransport();
         await server.ConnectAsync(transport);
+        await InitializeSessionAsync(server, transport.Id(), capabilities: new { elicitation = new { } });
 
         var service = new ElicitationService(
             server,
@@ -183,5 +210,30 @@ public class ElicitationServiceTests
             .Should()
             .ThrowAsync<McpException>()
             .Where(ex => ex.Code == ErrorCode.RequestTimeout);
+    }
+
+    [Fact]
+    public async Task RequestAsync_ShouldThrow_WhenClientDidNotAdvertiseElicitationCapability()
+    {
+        var server = CreateServer();
+        server.ClientRequestTimeout = TimeSpan.FromMilliseconds(50);
+        var transport = new MockTransport();
+        await server.ConnectAsync(transport);
+        await InitializeSessionAsync(server, transport.Id(), capabilities: new { });
+
+        var service = new ElicitationService(
+            server,
+            transport.Id(),
+            NullLogger<ElicitationService>.Instance
+        );
+        var prompt = CreatePrompt();
+
+        await FluentActions
+            .Awaiting(() => service.RequestAsync(prompt))
+            .Should()
+            .ThrowAsync<McpException>()
+            .Where(ex => ex.Code == ErrorCode.MethodNotFound);
+
+        transport.SentRequests.Should().BeEmpty();
     }
 }

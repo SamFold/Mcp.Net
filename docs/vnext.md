@@ -22,7 +22,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - True non-tool request cancellation now stays cancellation instead of being normalized to `InternalError`, and SSE/stdio ingress no longer treat canceled requests as server faults.
 - Completion handlers now receive a read-only request-context snapshot with session, transport, and metadata.
 - Prompt and resource handlers now receive the same read-only request-context snapshot with session, transport, and metadata.
-- The full suite is green (`291/291`).
+- The server now tracks client-advertised capabilities per session during `initialize`, and server-initiated elicitation fails fast when the target session did not negotiate `elicitation`.
+- The full suite is green (`292/292`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -31,21 +32,22 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
 
 ## Goal
-- Start the next remaining `Mcp.Net.Server` review slice: SSE vs stdio parity for server-initiated flows.
+- Continue the `Mcp.Net.Server` review slice for SSE vs stdio parity on server-initiated flows.
 
 ## Scope
 - In scope:
   - review whether server-initiated requests and notifications behave consistently across SSE and stdio transports
-  - identify one concrete parity gap
+  - start from outbound elicitation now that per-session capability negotiation is enforced
+  - identify one concrete transport parity gap
   - pin it with a failing regression first
   - fix one commit-sized parity issue
 - Out of scope:
   - logging/debuggability cleanup
 
 ## Current slice
-1. Review SSE vs stdio behavior for server-initiated flows such as elicitation, logging, and other outbound client requests.
-2. Add the failing regression test first.
-3. Implement the smallest fix for the first verified parity gap.
+1. Compare SSE vs stdio disconnect and cancellation behavior for outbound elicitation requests.
+2. Add the failing regression test first for the first verified mismatch.
+3. Implement the smallest transport-parity fix.
 4. Run the targeted tests, then the relevant broader server suite.
 
 ## Next slices

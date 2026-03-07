@@ -85,6 +85,14 @@ public sealed class ElicitationService : IElicitationService
 
         _logger.LogInformation("Requesting elicitation: {Message}", prompt.Message);
 
+        if (!_server.SupportsClientElicitation(_sessionId))
+        {
+            throw new McpException(
+                ErrorCode.MethodNotFound,
+                "Client does not support elicitation."
+            );
+        }
+
         var payload = new ElicitationCreateParams
         {
             Message = prompt.Message,

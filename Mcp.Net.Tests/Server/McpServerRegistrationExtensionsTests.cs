@@ -2,6 +2,7 @@ using System.Linq;
 using FluentAssertions;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Elicitation;
+using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Server.Elicitation;
 using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.Extensions.Transport;
@@ -73,6 +74,22 @@ public class McpServerRegistrationExtensionsTests
 
         var transport = new MockTransport("session-elicitation");
         await server.ConnectAsync(transport);
+        await server.ProcessJsonRpcRequest(
+            new JsonRpcRequestMessage(
+                "2.0",
+                "init-elicitation",
+                "initialize",
+                System.Text.Json.JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        clientInfo = new ClientInfo { Name = "Test Client", Version = "1.0" },
+                        capabilities = new { elicitation = new { } },
+                        protocolVersion = McpServer.LatestProtocolVersion,
+                    }
+                )
+            ),
+            transport.Id()
+        );
 
         var prompt = new ElicitationPrompt(
             "Provide the inquisitor name",

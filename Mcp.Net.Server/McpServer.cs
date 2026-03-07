@@ -41,6 +41,8 @@ public class McpServer : IMcpServer
     > _pendingClientRequestsBySession = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _negotiatedProtocolVersionsBySession =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ClientCapabilities> _clientCapabilitiesBySession =
+        new(StringComparer.Ordinal);
     private readonly IConnectionManager _connectionManager;
     private readonly IToolService _toolService;
     private readonly IResourceService _resourceService;
@@ -249,6 +251,14 @@ public class McpServer : IMcpServer
         return _negotiatedProtocolVersionsBySession.TryGetValue(sessionId, out var negotiatedProtocolVersion)
             ? negotiatedProtocolVersion
             : null;
+    }
+
+    internal bool SupportsClientElicitation(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        return _clientCapabilitiesBySession.TryGetValue(sessionId, out var capabilities)
+            && capabilities.Elicitation != null;
     }
 
     /// <summary>
@@ -567,6 +577,7 @@ public class McpServer : IMcpServer
 
         _logger.LogInformation("Transport connection closed for session {SessionId}", sessionId);
         ClearNegotiatedProtocolVersion(sessionId);
+        ClearClientCapabilities(sessionId);
         CancelPendingRequests(
             sessionId,
             new OperationCanceledException($"Transport {sessionId} closed.")
@@ -650,6 +661,7 @@ public class McpServer : IMcpServer
         if (!string.IsNullOrWhiteSpace(sessionId))
         {
             SetNegotiatedProtocolVersion(sessionId, negotiatedVersion);
+            SetClientCapabilities(sessionId, request.Capabilities);
         }
         else
         {
@@ -1040,6 +1052,23 @@ public class McpServer : IMcpServer
         }
 
         _negotiatedProtocolVersionsBySession.TryRemove(sessionId, out _);
+    }
+
+    private void SetClientCapabilities(string sessionId, ClientCapabilities? capabilities)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        _clientCapabilitiesBySession[sessionId] = capabilities ?? new ClientCapabilities();
+    }
+
+    private void ClearClientCapabilities(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        _clientCapabilitiesBySession.TryRemove(sessionId, out _);
     }
 
     private void NotifyListChangedIfSupported(string method, object? capability)
