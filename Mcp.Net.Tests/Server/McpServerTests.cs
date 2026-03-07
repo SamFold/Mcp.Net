@@ -792,6 +792,47 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task HandleTransportError_Should_CloseTransport_And_ClearSessionState()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        );
+
+        var transport = new MockTransport("session-error");
+
+        await server.ConnectAsync(transport);
+        await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-error", McpServer.LatestProtocolVersion),
+            transport.Id()
+        );
+
+        server.GetNegotiatedProtocolVersion(transport.Id()).Should().Be(McpServer.LatestProtocolVersion);
+        (await connectionManager.GetTransportAsync(transport.Id())).Should().BeSameAs(transport);
+
+        transport.SimulateError(new InvalidOperationException("boom"));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var registeredTransport = await connectionManager.GetTransportAsync(transport.Id());
+                return transport.IsClosed
+                    && registeredTransport == null
+                    && server.GetNegotiatedProtocolVersion(transport.Id()) == null;
+            },
+            TimeSpan.FromMilliseconds(500)
+        );
+
+        transport.IsClosed.Should().BeTrue();
+        server.GetNegotiatedProtocolVersion(transport.Id()).Should().BeNull();
+        server.NegotiatedProtocolVersion.Should().BeNull();
+        (await connectionManager.GetTransportAsync(transport.Id())).Should().BeNull();
+    }
+
+    [Fact]
     public async Task HandleToolsList_Should_Return_Registered_Tools()
     {
         // Arrange
@@ -1079,5 +1120,25 @@ public class McpServerTests
         }
 
         transport.SentNotifications.Count.Should().BeGreaterThanOrEqualTo(expectedCount);
+    }
+
+    private static async Task WaitForAsync(
+        Func<Task<bool>> condition,
+        TimeSpan timeout
+    )
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        (await condition()).Should().BeTrue();
     }
 }

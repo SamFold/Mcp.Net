@@ -12,6 +12,7 @@ Update it when priorities, milestones, or major decisions change.
 3. MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- Transport errors now converge on the close path, so fatal send failures clear session-scoped negotiated state and remove the broken transport instead of leaving stale active-session state behind
 - `initialize` now suppresses the unimplemented `logging` capability even when callers set `ServerCapabilities.Logging`, so capability advertisement stays truthful
 - SSE and stdio server transports now serialize outbound writes per connection so overlapping responses, requests, and notifications cannot enter the shared writer concurrently
 - SSE and stdio client transports now raise `OnClose` when the remote side ends the connection, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout
@@ -54,3 +55,4 @@ Update it when priorities, milestones, or major decisions change.
 - The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
 - The next active review area is logging/debuggability and hidden mutable state.
 - The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
+- The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.

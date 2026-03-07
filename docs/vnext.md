@@ -27,7 +27,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - SSE and stdio client transports now convert remote EOF / remote shutdown into a real close event, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout.
 - SSE and stdio server transports now serialize outbound writes per connection, so overlapping responses, requests, and notifications cannot enter the shared writer concurrently.
 - `initialize` now suppresses the unimplemented `logging` capability even if callers set `ServerCapabilities.Logging`, keeping capability advertisement truthful.
-- The full suite is green (`301/301`).
+- Transport errors now converge on the close path, so fatal send failures no longer leave a broken session registered with negotiated protocol state still present.
+- The full suite is green (`302/302`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -49,8 +50,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - broad non-review refactors
 
 ## Current slice
-1. Review logging/debuggability and hidden mutable state in the server stack.
-2. Identify the first concrete correctness or observability gap.
+1. Continue the logging/debuggability and hidden mutable state review in the server stack.
+2. Identify the next concrete correctness or observability gap.
 3. Add a failing regression first where practical.
 4. Implement the smallest fix and rerun targeted then broader tests.
 

@@ -548,6 +548,19 @@ public class McpServer : IMcpServer
 
         _logger.LogError(ex, "Transport error");
         CancelPendingRequests(sessionId, ex);
+
+        try
+        {
+            await transport.CloseAsync().ConfigureAwait(false);
+        }
+        catch (Exception closeEx)
+        {
+            _logger.LogWarning(
+                closeEx,
+                "Transport close after error failed for session {SessionId}",
+                sessionId
+            );
+        }
     }
 
     internal async Task HandleTransportClosedAsync(string sessionId, IServerTransport transport)
