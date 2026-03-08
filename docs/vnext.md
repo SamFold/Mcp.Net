@@ -35,7 +35,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state until the new connection re-initializes.
 - Replacement transports now also cancel pending server-initiated client requests from the old connection, so reconnect handoff no longer leaves stale outbound requests waiting until timeout.
 - In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes.
-- The full suite is green (`310/310`).
+- Stdio ingress now preserves per-connection ordering for client-originated requests and notifications while still letting client responses flow immediately, so back-to-back `initialize` and `notifications/initialized` no longer drop readiness on stdio.
+- The full suite is green (`311/311`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -57,10 +58,9 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - broad non-review refactors
 
 ## Current slice
-1. Continue the `Mcp.Net.Server` logging/debuggability and hidden mutable state review after the `list_changed` replacement-race fix.
-2. Identify the next concrete issue in that review area.
-3. Add a failing regression first when feasible.
-4. Keep the next change commit-sized.
+1. Resume the remaining `Mcp.Net.Server` review with focus on logging/debuggability and hidden mutable state.
+2. Identify one concrete issue in that area and pin it with a failing regression first when feasible.
+3. Keep the next change commit-sized and avoid reopening the completed stdio ingress ordering slice.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
@@ -76,7 +76,7 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Targeted tests must pass before broadening to a wider test scope.
 
 ## Verification checklist
-- Keep the next targeted regression failing until the production fix is in place.
+- Pin the next issue with a failing regression before implementation when feasible.
 - After implementation, run the focused regression or targeted test group for the affected behavior.
 - Run the relevant broader `Mcp.Net.Server` and integration test group.
 - Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling, notification delivery, or session lifecycle behavior.

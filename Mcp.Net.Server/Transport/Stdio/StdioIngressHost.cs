@@ -17,6 +17,8 @@ public sealed class StdioIngressHost
     private readonly StdioTransport _transport;
     private readonly ILogger _logger;
     private readonly JsonRpcMessageParser _parser = new();
+    private readonly object _orderedDispatchSync = new();
+    private Task _orderedDispatchTail = Task.CompletedTask;
 
     public StdioIngressHost(McpServer server, StdioTransport transport, ILogger logger)
     {
@@ -125,7 +127,7 @@ public sealed class StdioIngressHost
                     _transport.Metadata
                 );
 
-                _ = HandleRequestAsync(context);
+                EnqueueOrderedDispatch(() => HandleRequestAsync(context));
                 return;
             }
 
@@ -145,7 +147,7 @@ public sealed class StdioIngressHost
                     _transport.Metadata
                 );
 
-                _ = HandleNotificationAsync(context);
+                EnqueueOrderedDispatch(() => HandleNotificationAsync(context));
                 return;
             }
 
@@ -171,6 +173,30 @@ public sealed class StdioIngressHost
         {
             _logger.LogError(ex, "Error processing stdio message");
         }
+    }
+
+    private void EnqueueOrderedDispatch(Func<Task> workItem)
+    {
+        lock (_orderedDispatchSync)
+        {
+            // Preserve stdio request/notification order without blocking client responses
+            // that may be needed to complete a server-initiated request on the same stream.
+            _orderedDispatchTail = ContinueOrderedDispatchAsync(_orderedDispatchTail, workItem);
+        }
+    }
+
+    private static async Task ContinueOrderedDispatchAsync(Task previous, Func<Task> workItem)
+    {
+        try
+        {
+            await previous.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Prior work logs its own failures; keep later inbound messages flowing.
+        }
+
+        await workItem().ConfigureAwait(false);
     }
 
     private static bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)

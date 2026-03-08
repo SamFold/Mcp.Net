@@ -1,6 +1,9 @@
 using System;
+using System.Collections;
 using System.Buffers;
 using System.IO.Pipelines;
+using System.Linq.Expressions;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -129,6 +132,98 @@ public class StdioTransportTests
         await CleanupAsync(server, transport, inputPipe, outputPipe);
     }
 
+    [Fact]
+    public async Task StdioIngressHost_BackToBackInitializeAndInitializedNotification_Should_LeaveSessionReady_ForServerDrivenNotifications()
+    {
+        var (server, transport, host, inputPipe, outputPipe, cts) = CreateServerAndHost(
+            capabilities: new ServerCapabilities
+            {
+                Tools = new { listChanged = true },
+                Resources = new { },
+                Prompts = new { },
+            }
+        );
+
+        await server.ConnectAsync(transport);
+
+        var initializeStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseInitialize = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        DelayInitializeHandler(server, initializeStarted, releaseInitialize.Task);
+
+        var hostTask = host.RunAsync(cts.Token);
+
+        try
+        {
+            var initializeRequest = new JsonRpcRequestMessage(
+                "2.0",
+                "init-1",
+                "initialize",
+                JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        clientInfo = new { name = "stdio-test", version = "1.0.0" },
+                        capabilities = new { },
+                        protocolVersion = McpServer.LatestProtocolVersion,
+                    }
+                )
+            );
+            var initializedNotification = new JsonRpcNotificationMessage(
+                "2.0",
+                "notifications/initialized",
+                null
+            );
+
+            var payload = string.Join(
+                "\n",
+                JsonSerializer.Serialize(initializeRequest),
+                JsonSerializer.Serialize(initializedNotification),
+                string.Empty
+            );
+
+            await inputPipe.Writer.WriteAsync(Encoding.UTF8.GetBytes(payload));
+            await inputPipe.Writer.FlushAsync();
+
+            await initializeStarted.Task.WaitAsync(TimeSpan.FromMilliseconds(500));
+
+            // Keep initialize blocked long enough for the follow-on lifecycle notification
+            // to be queued behind it on the same stdio stream.
+            await Task.Delay(100);
+
+            releaseInitialize.TrySetResult(true);
+
+            var initializeResponse = await ReadResponseAsync(outputPipe.Reader);
+            initializeResponse.Id.Should().Be("init-1");
+            initializeResponse.Error.Should().BeNull();
+
+            server.RegisterTool(
+                "dynamic.tool",
+                "Tool registered after stdio lifecycle handshake",
+                JsonSerializer.SerializeToElement(new { type = "object" }),
+                (_, _) => Task.FromResult(new ToolCallResult())
+            );
+
+            var listChangedNotification = await TryReadNotificationAsync(
+                outputPipe.Reader,
+                TimeSpan.FromMilliseconds(300)
+            );
+
+            listChangedNotification.Should().NotBeNull(
+                "back-to-back stdio initialize and notifications/initialized should leave the session ready for later server-driven notifications"
+            );
+            listChangedNotification!.Method.Should().Be("notifications/tools/list_changed");
+        }
+        finally
+        {
+            cts.Cancel();
+            await hostTask;
+            await CleanupAsync(server, transport, inputPipe, outputPipe);
+        }
+    }
+
     private static async Task CleanupAsync(
         McpServer server,
         StdioTransport transport,
@@ -170,6 +265,45 @@ public class StdioTransportTests
         }
     }
 
+    private static async Task<JsonRpcNotificationMessage?> TryReadNotificationAsync(
+        PipeReader reader,
+        TimeSpan timeout
+    )
+    {
+        var parser = new JsonRpcMessageParser();
+        using var cts = new CancellationTokenSource(timeout);
+
+        try
+        {
+            while (true)
+            {
+                var result = await reader.ReadAsync(cts.Token);
+                var buffer = result.Buffer;
+                try
+                {
+                    if (buffer.IsEmpty && result.IsCompleted)
+                    {
+                        return null;
+                    }
+
+                    if (TryReadLine(ref buffer, out var line))
+                    {
+                        var json = Encoding.UTF8.GetString(line.ToArray());
+                        return parser.DeserializeNotification(json);
+                    }
+                }
+                finally
+                {
+                    reader.AdvanceTo(buffer.Start, buffer.End);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
     private static bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
     {
         var position = buffer.PositionOf((byte)'\n');
@@ -184,19 +318,28 @@ public class StdioTransportTests
         return true;
     }
 
-    private static (McpServer Server, StdioTransport Transport, StdioIngressHost Host, Pipe Input, Pipe Output, CancellationTokenSource Cts) CreateServerAndHost()
+    private static (
+        McpServer Server,
+        StdioTransport Transport,
+        StdioIngressHost Host,
+        Pipe Input,
+        Pipe Output,
+        CancellationTokenSource Cts
+    ) CreateServerAndHost(ServerCapabilities? capabilities = null)
     {
         var inputPipe = new Pipe();
         var outputPipe = new Pipe();
 
         var serverOptions = new ServerOptions
         {
-            Capabilities = new Mcp.Net.Core.Models.Capabilities.ServerCapabilities
-            {
-                Tools = new { },
-                Resources = new { },
-                Prompts = new { },
-            },
+            Capabilities =
+                capabilities
+                ?? new Mcp.Net.Core.Models.Capabilities.ServerCapabilities
+                {
+                    Tools = new { },
+                    Resources = new { },
+                    Prompts = new { },
+                },
         };
 
         var server = new McpServer(
@@ -221,5 +364,75 @@ public class StdioTransportTests
 
         var cts = new CancellationTokenSource();
         return (server, transport, host, inputPipe, outputPipe, cts);
+    }
+
+    private static void DelayInitializeHandler(
+        McpServer server,
+        TaskCompletionSource<bool> initializeStarted,
+        Task releaseInitialize
+    )
+    {
+        var methodHandlersField = typeof(McpServer).GetField(
+            "_methodHandlers",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        methodHandlersField.Should().NotBeNull();
+
+        var methodHandlers = methodHandlersField!.GetValue(server).Should().BeAssignableTo<IDictionary>().Subject;
+        var originalHandler = methodHandlers["initialize"].Should().BeAssignableTo<Delegate>().Subject;
+
+        var contextType = typeof(McpServer).GetNestedType(
+            "RequestExecutionContext",
+            BindingFlags.NonPublic
+        );
+        contextType.Should().NotBeNull();
+
+        var delayedHandlerType = typeof(Func<,,>).MakeGenericType(
+            typeof(string),
+            contextType!,
+            typeof(Task<object>)
+        );
+
+        var jsonParams = Expression.Parameter(typeof(string), "jsonParams");
+        var context = Expression.Parameter(contextType, "context");
+        var delayedHandlerMethod = typeof(StdioTransportTests).GetMethod(
+            nameof(InvokeDelayedInitializeHandlerAsync),
+            BindingFlags.Static | BindingFlags.NonPublic
+        );
+        delayedHandlerMethod.Should().NotBeNull();
+
+        var delayedHandler = Expression
+            .Lambda(
+                delayedHandlerType,
+                Expression.Call(
+                    delayedHandlerMethod!,
+                    jsonParams,
+                    Expression.Convert(context, typeof(object)),
+                    Expression.Constant(originalHandler, typeof(Delegate)),
+                    Expression.Constant(initializeStarted),
+                    Expression.Constant(releaseInitialize, typeof(Task))
+                ),
+                jsonParams,
+                context
+            )
+            .Compile();
+
+        methodHandlers["initialize"] = delayedHandler;
+    }
+
+    private static async Task<object> InvokeDelayedInitializeHandlerAsync(
+        string jsonParams,
+        object? context,
+        Delegate originalHandler,
+        TaskCompletionSource<bool> initializeStarted,
+        Task releaseInitialize
+    )
+    {
+        initializeStarted.TrySetResult(true);
+        await releaseInitialize.ConfigureAwait(false);
+
+        var result = originalHandler.DynamicInvoke(jsonParams, context);
+        result.Should().BeAssignableTo<Task<object>>();
+        return await ((Task<object>)result!).ConfigureAwait(false);
     }
 }
