@@ -103,7 +103,7 @@ public static class CoreServerExtensions
                 new ServerInfo
                 {
                     Name = options.Name,
-                    Title = options.Name,
+                    Title = options.Title,
                     Version = options.Version,
                 },
                 connectionManager,

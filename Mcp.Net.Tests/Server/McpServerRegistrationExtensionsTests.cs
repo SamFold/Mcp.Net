@@ -136,6 +136,38 @@ public class McpServerRegistrationExtensionsTests
     }
 
     [Fact]
+    public async Task AddMcpCore_WithConfiguredTitle_ShouldReturnTitleDuringInitialize()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+        services.AddMcpCore(options =>
+        {
+            options.Name = "Core Title Server";
+            options.Title = "Core Display Title";
+            options.Version = "1.2.3";
+        });
+
+        using var provider = services.BuildServiceProvider();
+
+        var server = provider.GetRequiredService<McpServer>();
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("core-title-init"),
+            "core-title-session"
+        );
+        var initializeResult = JsonSerializer.SerializeToElement(initializeResponse.Result);
+
+        initializeResult.GetProperty("serverInfo").GetProperty("name").GetString()
+            .Should()
+            .Be("Core Title Server");
+        initializeResult.GetProperty("serverInfo").GetProperty("title").GetString()
+            .Should()
+            .Be("Core Display Title");
+        initializeResult.GetProperty("serverInfo").GetProperty("version").GetString()
+            .Should()
+            .Be("1.2.3");
+    }
+
+    [Fact]
     public void AddMcpSseTransport_WithOptionsInstance_ShouldPreserveRoutingAndSecuritySettings()
     {
         var services = new ServiceCollection();
