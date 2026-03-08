@@ -11,6 +11,7 @@ using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Exceptions;
 using Mcp.Net.Client.Transport;
+using Mcp.Net.Core.Transport;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -144,6 +145,358 @@ public class SseClientTransportTests
 
         await sseStream.CompleteAsync();
         await transport.CloseAsync();
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldCompleteFromApplicationJsonPostResponseBody()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-json");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        requestHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+
+            var body = request.Content!.ReadAsStringAsync().Result;
+            using var doc = JsonDocument.Parse(body);
+            var requestId = doc.RootElement.GetProperty("id").GetString();
+            requestId.Should().NotBeNull();
+
+            var responsePayload = JsonSerializer.Serialize(
+                new
+                {
+                    jsonrpc = "2.0",
+                    id = requestId!,
+                    result = new { ok = true },
+                }
+            );
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-json");
+            response.Content = new StringContent(
+                responsePayload,
+                Encoding.UTF8,
+                "application/json"
+            );
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        try
+        {
+            var result = await transport.SendRequestAsync("tools/list", new { })
+                .WaitAsync(TimeSpan.FromSeconds(1));
+
+            var resultElement = result.Should().BeOfType<JsonElement>().Subject;
+            resultElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        }
+        finally
+        {
+            await sseStream.CompleteAsync();
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SendRequestAsync_ShouldCompleteFromPostScopedSseResponseStream()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-sse");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        requestHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+
+            var body = request.Content!.ReadAsStringAsync().Result;
+            using var doc = JsonDocument.Parse(body);
+            var requestId = doc.RootElement.GetProperty("id").GetString();
+            requestId.Should().NotBeNull();
+
+            var responsePayload = JsonSerializer.Serialize(
+                new
+                {
+                    jsonrpc = "2.0",
+                    id = requestId!,
+                    result = new { ok = true },
+                }
+            );
+
+            var postResponseStream = new TestSseStream();
+            postResponseStream
+                .WriteEventAsync($"data: {responsePayload}\n\n")
+                .GetAwaiter()
+                .GetResult();
+            postResponseStream.CompleteAsync().GetAwaiter().GetResult();
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-sse");
+            response.Content = new StreamContent(postResponseStream);
+            response.Content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        try
+        {
+            var result = await transport.SendRequestAsync("tools/list", new { })
+                .WaitAsync(TimeSpan.FromSeconds(1));
+
+            var resultElement = result.Should().BeOfType<JsonElement>().Subject;
+            resultElement.GetProperty("ok").GetBoolean().Should().BeTrue();
+        }
+        finally
+        {
+            await sseStream.CompleteAsync();
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Initialize_ShouldNotRequireGetSse_WhenServerUsesPostOnlyStreamableHttp()
+    {
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Get);
+            request.RequestUri.Should().Be(new Uri("http://localhost:5000/mcp"));
+            request.Headers.Accept.Should().ContainSingle(h => h.MediaType == "text/event-stream");
+            return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+            {
+                Content = new StringContent(string.Empty),
+            };
+        });
+
+        requestHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+            request.Headers.Contains("Mcp-Session-Id").Should().BeFalse();
+
+            var body = request.Content!.ReadAsStringAsync().Result;
+            using var doc = JsonDocument.Parse(body);
+            doc.RootElement.GetProperty("method").GetString().Should().Be("initialize");
+            var requestId = doc.RootElement.GetProperty("id").GetString();
+            requestId.Should().NotBeNull();
+
+            var responsePayload = JsonSerializer.Serialize(
+                new
+                {
+                    jsonrpc = "2.0",
+                    id = requestId!,
+                    result = new
+                    {
+                        protocolVersion = McpClient.LatestProtocolVersion,
+                        capabilities = new { },
+                        serverInfo = new { name = "server", version = "1.0.0" },
+                    },
+                }
+            );
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-only");
+            response.Headers.TryAddWithoutValidation(
+                "MCP-Protocol-Version",
+                McpClient.LatestProtocolVersion
+            );
+            response.Content = new StringContent(
+                responsePayload,
+                Encoding.UTF8,
+                "application/json"
+            );
+            return response;
+        });
+
+        requestHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+            request.Headers.TryGetValues("Mcp-Session-Id", out var sessionHeaders)
+                .Should()
+                .BeTrue();
+            sessionHeaders!.Should().Contain("session-post-only");
+
+            request.Headers.TryGetValues("MCP-Protocol-Version", out var protocolHeaders)
+                .Should()
+                .BeTrue();
+            protocolHeaders!.Should().Contain(McpClient.LatestProtocolVersion);
+
+            var body = request.Content!.ReadAsStringAsync().Result;
+            using var doc = JsonDocument.Parse(body);
+            doc.RootElement.GetProperty("method").GetString()
+                .Should()
+                .Be("notifications/initialized");
+
+            var response = new HttpResponseMessage(HttpStatusCode.Accepted);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-only");
+            response.Headers.TryAddWithoutValidation(
+                "MCP-Protocol-Version",
+                McpClient.LatestProtocolVersion
+            );
+            response.Content = new StringContent(string.Empty);
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        var client = new TransportBackedClient(transport);
+
+        await client.Initialize();
+
+        client.NegotiatedProtocolVersion.Should().Be(McpClient.LatestProtocolVersion);
+    }
+
+    [Fact(Skip = "Pending next slice: fresh POST request responses should not complete from the optional GET SSE stream.")]
+    public async Task SendRequestAsync_ShouldIgnoreGetStreamAsNormalResponsePath_ForNewInflightRequest()
+    {
+        var sseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+        var postRequestSeen = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var getResponseProcessed = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releasePostResponse = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-route");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        requestHandler.EnqueueAsyncResponse(async (request, cancellationToken) =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(body);
+            var requestId = doc.RootElement.GetProperty("id").GetString();
+            requestId.Should().NotBeNull();
+
+            postRequestSeen.TrySetResult(requestId!);
+            await releasePostResponse.Task.WaitAsync(TimeSpan.FromSeconds(1), cancellationToken);
+
+            var responsePayload = JsonSerializer.Serialize(
+                new
+                {
+                    jsonrpc = "2.0",
+                    id = requestId!,
+                    result = new { source = "post" },
+                }
+            );
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-route");
+            response.Content = new StringContent(
+                responsePayload,
+                Encoding.UTF8,
+                "application/json"
+            );
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        transport.OnResponse += response =>
+        {
+            if (
+                response.Result is JsonElement resultElement
+                && resultElement.TryGetProperty("source", out var sourceElement)
+                && sourceElement.GetString() == "get"
+            )
+            {
+                getResponseProcessed.TrySetResult();
+            }
+        };
+
+        await transport.StartAsync();
+
+        try
+        {
+            var requestTask = transport.SendRequestAsync("tools/list", new { });
+            var requestId = await postRequestSeen.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            var getResponsePayload = JsonSerializer.Serialize(
+                new
+                {
+                    jsonrpc = "2.0",
+                    id = requestId,
+                    result = new { source = "get" },
+                }
+            );
+            await sseStream.WriteEventAsync($"data: {getResponsePayload}\n\n");
+            await getResponseProcessed.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            releasePostResponse.TrySetResult();
+
+            var result = await requestTask.WaitAsync(TimeSpan.FromSeconds(1));
+            var resultElement = result.Should().BeOfType<JsonElement>().Subject;
+            resultElement.GetProperty("source").GetString().Should().Be("post");
+        }
+        finally
+        {
+            releasePostResponse.TrySetResult();
+            await sseStream.CompleteAsync();
+            await transport.CloseAsync();
+        }
     }
 
     [Fact]
@@ -598,16 +951,25 @@ public class SseClientTransportTests
 
     private sealed class TestMessageHandler : HttpMessageHandler
     {
-        private readonly ConcurrentQueue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new();
+        private readonly ConcurrentQueue<
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>
+        > _responses = new();
 
         public int RequestCount { get; private set; }
 
         public void EnqueueResponse(Func<HttpRequestMessage, HttpResponseMessage> responder)
         {
+            _responses.Enqueue((request, _) => Task.FromResult(responder(request)));
+        }
+
+        public void EnqueueAsyncResponse(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder
+        )
+        {
             _responses.Enqueue(responder);
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken
         )
@@ -618,7 +980,39 @@ public class SseClientTransportTests
                 throw new InvalidOperationException("No HTTP response configured for test.");
             }
 
-            return Task.FromResult(responder(request));
+            return await responder(request, cancellationToken);
+        }
+    }
+
+    private sealed class TransportBackedClient : McpClient
+    {
+        private readonly IClientTransport _transport;
+
+        public TransportBackedClient(IClientTransport transport)
+            : base("TestClient", "1.0.0", NullLogger.Instance)
+        {
+            _transport = transport;
+        }
+
+        public override async Task Initialize()
+        {
+            await _transport.StartAsync();
+            await InitializeProtocolAsync(_transport);
+        }
+
+        protected override Task<object> SendRequest(string method, object? parameters = null)
+        {
+            return _transport.SendRequestAsync(method, parameters);
+        }
+
+        protected override Task SendNotification(string method, object? parameters = null)
+        {
+            return _transport.SendNotificationAsync(method, parameters);
+        }
+
+        public override void Dispose()
+        {
+            _transport.CloseAsync().GetAwaiter().GetResult();
         }
     }
 

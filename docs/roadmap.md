@@ -3,15 +3,21 @@
 This document tracks the medium-term sequence of work across the repo.
 Update it when priorities, milestones, or major decisions change.
 
-## Current priority
-1. Finish the `Mcp.Net.Server` stability and consistency review
+## Current priorities
+1. Start the `Mcp.Net.Client` Streamable HTTP spec-alignment review slice
+2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
+3. Close the remaining high-severity `Mcp.Net.LLM` adapter correctness gaps
 
 ## Near-term roadmap
-1. Logging/debuggability and hidden mutable state review
-2. MCP server review closure and cleanup
-3. MCP spec alignment work across server, client, and LLM integrations
+1. `Mcp.Net.Client`: Streamable HTTP request-response spec alignment for 2025-11-25
+2. `Mcp.Net.Server`: logging/debuggability and hidden mutable state review
+3. `Mcp.Net.LLM`: nested tool argument preservation and adjacent adapter correctness fixes
+4. MCP server review closure and cleanup
+5. Broader MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- HTTP client startup now tolerates POST-only Streamable HTTP servers by treating GET SSE as optional during startup and allowing `initialize` before a session header exists
+- HTTP client POST requests now complete from spec-compliant Streamable HTTP response bodies, including both inline `application/json` responses and POST-scoped `text/event-stream` responses
 - In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes
 - Replacement transports now cancel pending server-initiated client requests from the old connection, so reconnect handoff does not leave stale outbound requests hanging until timeout
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state so a new connection cannot reuse the previous session handshake implicitly
@@ -56,11 +62,14 @@ Update it when priorities, milestones, or major decisions change.
 4. Continued integration coverage for SSE and stdio parity
 
 ## Notes
-- `docs/vnext.md` is for the next slice only.
-- This file is for the broader sequence of upcoming work.
+- `docs/vnext.md` is the repo-level index for active component and system tracks under `docs/vnext/`.
+- Each `docs/vnext/*.md` file holds the next commit-sized slice for one component, subsystem, or cross-cutting lane.
+- This file is for the broader sequence of upcoming work across those tracks.
+- The currently active tracks are `docs/vnext/client.md`, `docs/vnext/server.md`, and `docs/vnext/llm.md`.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
-- The next active review area is logging/debuggability and hidden mutable state.
+- The next active client review area is Streamable HTTP spec alignment for routing in-flight POST request responses away from the optional GET SSE stream.
+- The next active server review area remains logging/debuggability and hidden mutable state.
 - The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
 - The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.
 - The hosted SSE duplicate-registration hidden-state gap is now closed by removing the redundant host-side registration before `McpServer.ConnectAsync`.

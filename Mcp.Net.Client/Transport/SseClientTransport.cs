@@ -176,52 +176,59 @@ public class SseClientTransport : ClientTransportBase
             throw new InvalidOperationException("Transport already started");
         }
 
-        Logger.LogDebug("Opening SSE stream at {Endpoint}", _endpointUri);
+        Logger.LogDebug("Opening optional SSE stream at {Endpoint}", _endpointUri);
 
-        var response = await OpenSseStreamAsync();
-        Logger.LogInformation(
-            "SSE stream HTTP status: {StatusCode}",
-            response.StatusCode
-        );
-
-        if (!response.IsSuccessStatusCode)
+        HttpResponseMessage? response = null;
+        try
         {
-            var body = await response.Content.ReadAsStringAsync(CancellationTokenSource.Token);
-            throw new HttpRequestException(
-                $"Failed to open SSE stream: {(int)response.StatusCode} {response.StatusCode}. {body}"
+            response = await OpenSseStreamAsync();
+            Logger.LogInformation(
+                "SSE stream HTTP status: {StatusCode}",
+                response.StatusCode
+            );
+        }
+        catch (McpClientHttpException ex) when (ex.StatusCode == HttpStatusCode.MethodNotAllowed)
+        {
+            Logger.LogInformation(
+                "Server does not offer optional GET SSE at {Endpoint}; continuing with POST-only Streamable HTTP.",
+                _endpointUri
             );
         }
 
-        _sessionId = ExtractHeader(response.Headers, "Mcp-Session-Id");
-        if (string.IsNullOrWhiteSpace(_sessionId))
+        if (response != null)
         {
-            Logger.LogError(
-                "SSE stream established but server did not provide Mcp-Session-Id header. Headers: {Headers}",
-                string.Join(
-                    "; ",
-                    response.Headers.Select(h => $"{h.Key}={string.Join(",", h.Value)}")
-                )
+            _sessionId = ExtractHeader(response.Headers, "Mcp-Session-Id");
+            if (string.IsNullOrWhiteSpace(_sessionId))
+            {
+                Logger.LogDebug(
+                    "SSE stream established without session header; session may be assigned during initialize."
+                );
+            }
+            else
+            {
+                Logger.LogInformation("SSE session established with ID {SessionId}", _sessionId);
+            }
+
+            _sseResponse = response;
+            _sseReader = new StreamReader(
+                await response.Content.ReadAsStreamAsync(CancellationTokenSource.Token),
+                Encoding.UTF8
             );
-            response.Dispose();
-            throw new InvalidOperationException("Server did not return a session identifier.");
+            Logger.LogDebug("SSE response stream acquired; launching background listener.");
+            _sseListenTask = Task.Run(() => ListenToServerEventsAsync(), CancellationTokenSource.Token);
         }
 
-        Logger.LogInformation("SSE session established with ID {SessionId}", _sessionId);
-        _sseResponse = response;
-        _sseReader = new StreamReader(
-            await response.Content.ReadAsStreamAsync(CancellationTokenSource.Token),
-            Encoding.UTF8
-        );
-        Logger.LogDebug("SSE response stream acquired; launching background listener.");
-        _sseListenTask = Task.Run(() => ListenToServerEventsAsync(), CancellationTokenSource.Token);
         IsStarted = true;
-        Logger.LogInformation("SSE transport started with session {SessionId}", _sessionId);
+        Logger.LogInformation(
+            "SSE transport started. Session: {SessionId}",
+            _sessionId ?? "<not established>"
+        );
     }
 
     /// <inheritdoc />
     public override async Task<object> SendRequestAsync(string method, object? parameters = null)
     {
-        EnsureActiveSession();
+        EnsureCanSendRequest(method);
 
         Logger.LogInformation("Preparing to send JSON-RPC request '{Method}'", method);
         var id = Guid.NewGuid().ToString("N");
@@ -351,12 +358,15 @@ public class SseClientTransport : ClientTransportBase
             }
         );
 
-        await HandleHttpResponseAsync(response);
+        var requestId = payload is JsonRpcRequestMessage outgoingRequest ? outgoingRequest.Id : null;
+        await HandleHttpResponseAsync(response, requestId);
         Logger.LogInformation("JSON-RPC payload delivered successfully.");
     }
 
-    private async Task HandleHttpResponseAsync(HttpResponseMessage response)
+    private async Task HandleHttpResponseAsync(HttpResponseMessage response, string? requestId = null)
     {
+        var disposeResponse = true;
+
         try
         {
             if (!response.IsSuccessStatusCode)
@@ -387,12 +397,137 @@ public class SseClientTransport : ClientTransportBase
             {
                 _negotiatedProtocolVersion = protocolHeader;
             }
+
+            if (!string.IsNullOrWhiteSpace(requestId))
+            {
+                if (await TryProcessApplicationJsonResponseAsync(response))
+                {
+                    return;
+                }
+
+                if (TryStartPostResponseSseReader(response, requestId))
+                {
+                    disposeResponse = false;
+                }
+            }
         }
         finally
         {
-            response.Dispose();
+            if (disposeResponse)
+            {
+                response.Dispose();
+            }
         }
     }
+
+    private async Task<bool> TryProcessApplicationJsonResponseAsync(HttpResponseMessage response)
+    {
+        if (!HasContentType(response, "application/json"))
+        {
+            return false;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(CancellationTokenSource.Token);
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        ProcessJsonRpcMessage(body);
+        return true;
+    }
+
+    private bool TryStartPostResponseSseReader(HttpResponseMessage response, string requestId)
+    {
+        if (!HasContentType(response, "text/event-stream"))
+        {
+            return false;
+        }
+
+        _ = Task.Run(() => ListenToPostResponseEventsAsync(response, requestId));
+        return true;
+    }
+
+    private async Task ListenToPostResponseEventsAsync(HttpResponseMessage response, string requestId)
+    {
+        try
+        {
+            using (response)
+            {
+                using var reader = new StreamReader(
+                    await response.Content.ReadAsStreamAsync(CancellationTokenSource.Token),
+                    Encoding.UTF8
+                );
+
+                var dataBuilder = new StringBuilder();
+                while (!CancellationTokenSource.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync();
+                    if (line == null)
+                    {
+                        break;
+                    }
+
+                    if (line.Length == 0)
+                    {
+                        if (dataBuilder.Length > 0)
+                        {
+                            ProcessJsonRpcMessage(dataBuilder.ToString());
+                            dataBuilder.Clear();
+
+                            if (!PendingRequests.ContainsKey(requestId))
+                            {
+                                break;
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    if (line.StartsWith("data: ", StringComparison.Ordinal))
+                    {
+                        if (dataBuilder.Length > 0)
+                        {
+                            dataBuilder.Append('\n');
+                        }
+
+                        dataBuilder.Append(line.Substring(6));
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.LogDebug(
+                "POST-scoped SSE response stream for request {RequestId} was cancelled.",
+                requestId
+            );
+        }
+        catch (IOException ex) when (IsCancellationException(ex))
+        {
+            Logger.LogDebug(
+                ex,
+                "POST-scoped SSE response stream for request {RequestId} closed during shutdown.",
+                requestId
+            );
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "POST-scoped SSE response stream for request {RequestId} failed.",
+                requestId
+            );
+            RaiseOnError(ex);
+        }
+    }
+
+    private static bool HasContentType(HttpResponseMessage response, string mediaType) =>
+        string.Equals(
+            response.Content?.Headers.ContentType?.MediaType,
+            mediaType,
+            StringComparison.OrdinalIgnoreCase
+        );
 
     private async Task<HttpResponseMessage> OpenSseStreamAsync()
     {
@@ -766,6 +901,22 @@ public class SseClientTransport : ClientTransportBase
         }
 
         if (string.IsNullOrWhiteSpace(_sessionId))
+        {
+            throw new InvalidOperationException("SSE session has not been established.");
+        }
+    }
+
+    private void EnsureCanSendRequest(string method)
+    {
+        if (IsClosed)
+        {
+            throw new InvalidOperationException("Transport is closed");
+        }
+
+        if (
+            string.IsNullOrWhiteSpace(_sessionId)
+            && !string.Equals(method, "initialize", StringComparison.Ordinal)
+        )
         {
             throw new InvalidOperationException("SSE session has not been established.");
         }
