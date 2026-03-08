@@ -84,6 +84,53 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
+    public async Task SendMessageAsync_ToolCallWithNestedObjectAndArray_ShouldPreserveStructuredValues()
+    {
+        // Arrange
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var toolContent = new ToolUseContent
+        {
+            Id = "toolu_nested",
+            Name = "search",
+            Input = JsonNode.Parse(
+                """
+                {
+                  "query": "bugs",
+                  "filter": {
+                    "status": "open",
+                    "labels": ["server", "urgent"]
+                  },
+                  "tags": ["triage", "backend"]
+                }
+                """
+            ),
+        };
+
+        var messageClient = new StubAnthropicMessageClient(new ContentBase[] { toolContent });
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        // Act
+        var responses = await client.SendMessageAsync(
+            new LlmMessage { Type = MessageType.User, Content = "find nested arguments" }
+        );
+
+        // Assert
+        var invocation = responses.Single().ToolCalls.Single();
+        invocation.Arguments.Should().ContainKey("query").WhoseValue.Should().Be("bugs");
+        JsonSerializer.Serialize(invocation.Arguments["filter"])
+            .Should()
+            .Be("""{"status":"open","labels":["server","urgent"]}""");
+        JsonSerializer.Serialize(invocation.Arguments["tags"])
+            .Should()
+            .Be("""["triage","backend"]""");
+    }
+
+    [Fact]
     public async Task SendMessageAsync_FailedRequest_ShouldReturnSystemError()
     {
         // Arrange

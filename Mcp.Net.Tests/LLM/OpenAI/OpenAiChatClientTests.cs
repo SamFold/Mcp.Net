@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.LLM.Models;
@@ -66,10 +68,52 @@ public class OpenAiChatClientTests
         client.GetSystemPrompt().Should().NotBeNullOrWhiteSpace();
     }
 
+    [Fact]
+    public void ParseToolArguments_WithNestedObjectAndArray_ShouldPreserveStructuredValues()
+    {
+        // Arrange
+        const string argumentsJson =
+            """
+            {
+              "query": "bugs",
+              "filter": {
+                "status": "open",
+                "labels": ["server", "urgent"]
+              },
+              "tags": ["triage", "backend"]
+            }
+            """;
+
+        // Act
+        var arguments = ParseToolArguments(argumentsJson);
+
+        // Assert
+        arguments.Should().ContainKey("query").WhoseValue.Should().Be("bugs");
+        JsonSerializer.Serialize(arguments["filter"])
+            .Should()
+            .Be("""{"status":"open","labels":["server","urgent"]}""");
+        JsonSerializer.Serialize(arguments["tags"])
+            .Should()
+            .Be("""["triage","backend"]""");
+    }
+
     private static string ExtractSystemPrompt(IReadOnlyList<ChatMessage> messages)
     {
         messages[0].Should().BeOfType<SystemChatMessage>();
         return messages[0].Content.Single().Text;
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argumentsJson)
+    {
+        var parseMethod = typeof(OpenAiChatClient).GetMethod(
+            "ParseToolArguments",
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
+
+        parseMethod.Should().NotBeNull();
+
+        return (IReadOnlyDictionary<string, object?>)
+            parseMethod!.Invoke(null, new object[] { argumentsJson })!;
     }
 
     private sealed class CapturingChatCompletionInvoker : IOpenAiChatCompletionInvoker
