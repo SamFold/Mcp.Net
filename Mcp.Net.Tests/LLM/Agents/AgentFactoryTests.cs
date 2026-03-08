@@ -1,10 +1,14 @@
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Agents;
+using Mcp.Net.LLM.Anthropic;
+using Mcp.Net.LLM.Factories;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Models.Exceptions;
+using Mcp.Net.LLM.OpenAI;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace Mcp.Net.Tests.LLM.Agents;
@@ -217,6 +221,31 @@ public class AgentFactoryTests
         );
     }
 
+    [Theory]
+    [InlineData(LlmProvider.OpenAI, "gpt-5")]
+    [InlineData(LlmProvider.Anthropic, "claude-sonnet-4-5-20250929")]
+    public async Task CreateClientFromAgentDefinitionAsync_WithConcreteProviderClient_ShouldUseAgentSystemPrompt(
+        LlmProvider provider,
+        string modelName
+    )
+    {
+        // Arrange
+        var agent = new AgentDefinition
+        {
+            Provider = provider,
+            ModelName = modelName,
+            SystemPrompt = $"System prompt for {provider}",
+        };
+
+        var factory = CreateFactoryWithConcreteChatClientFactory();
+
+        // Act
+        var client = await factory.CreateClientFromAgentDefinitionAsync(agent);
+
+        // Assert
+        Assert.Equal(agent.SystemPrompt, client.GetSystemPrompt());
+    }
+
     [Fact]
     public async Task CreateClientFromAgentAsync_WhenAgentNotFound_ShouldThrowException()
     {
@@ -427,6 +456,22 @@ public class AgentFactoryTests
                     It.Is<ChatClientOptions>(o => o.ApiKey == userApiKey)
                 ),
             Times.Once
+        );
+    }
+
+    private AgentFactory CreateFactoryWithConcreteChatClientFactory()
+    {
+        var concreteChatClientFactory = new ChatClientFactory(
+            NullLogger<OpenAiChatClient>.Instance,
+            NullLogger<AnthropicChatClient>.Instance
+        );
+
+        return new AgentFactory(
+            _mockRegistry.Object,
+            concreteChatClientFactory,
+            _mockToolRegistry.Object,
+            _mockApiKeyProvider.Object,
+            NullLogger<AgentFactory>.Instance
         );
     }
 }

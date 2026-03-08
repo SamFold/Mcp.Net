@@ -12,6 +12,27 @@ using OpenAI.Chat;
 
 namespace Mcp.Net.LLM.OpenAI;
 
+internal interface IOpenAiChatCompletionInvoker
+{
+    ChatCompletion CompleteChat(
+        ChatClient client,
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions options
+    );
+}
+
+internal sealed class OpenAiChatCompletionInvoker : IOpenAiChatCompletionInvoker
+{
+    public ChatCompletion CompleteChat(
+        ChatClient client,
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions options
+    )
+    {
+        return client.CompleteChat(messages, options).Value;
+    }
+}
+
 /// <summary>
 /// Adapter that translates between the MCP-friendly chat/session model and the OpenAI Chat API.
 /// Maintains the message history, forwards prompts/tool results, and normalises tool call payloads.
@@ -19,22 +40,35 @@ namespace Mcp.Net.LLM.OpenAI;
 public sealed class OpenAiChatClient : IChatClient
 {
     private readonly ILogger<OpenAiChatClient> _logger;
-    private readonly OpenAIClient _client;
     private readonly ChatClient _chatClient;
     private readonly ChatCompletionOptions _completionOptions;
+    private readonly IOpenAiChatCompletionInvoker _completionInvoker;
     private readonly List<ChatMessage> _history = new();
     private string _systemPrompt =
         "You are a helpful assistant with access to various tools including calculators "
         + "and Warhammer 40k themed functions. Use these tools when appropriate.";
 
     public OpenAiChatClient(ChatClientOptions options, ILogger<OpenAiChatClient> logger)
+        : this(options, logger, new OpenAiChatCompletionInvoker())
+    {
+    }
+
+    internal OpenAiChatClient(
+        ChatClientOptions options,
+        ILogger<OpenAiChatClient> logger,
+        IOpenAiChatCompletionInvoker completionInvoker
+    )
     {
         _logger = logger;
-        _client = new OpenAIClient(options.ApiKey);
+        _completionInvoker =
+            completionInvoker ?? throw new ArgumentNullException(nameof(completionInvoker));
+        _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
+            ? _systemPrompt
+            : options.SystemPrompt;
 
         var modelName = ResolveModelName(options);
         _logger.LogInformation("Using OpenAI model: {Model}", modelName);
-        _chatClient = _client.GetChatClient(modelName);
+        _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(modelName);
 
         _completionOptions = BuildCompletionOptions(modelName, options);
         _history.Add(new SystemChatMessage(_systemPrompt));
@@ -190,8 +224,11 @@ public sealed class OpenAiChatClient : IChatClient
     {
         try
         {
-            var completionResult = _chatClient.CompleteChat(_history, _completionOptions);
-            var completion = completionResult.Value;
+            var completion = _completionInvoker.CompleteChat(
+                _chatClient,
+                _history,
+                _completionOptions
+            );
 
             // Handle different response types
             IEnumerable<LlmResponse> response = completion.FinishReason switch

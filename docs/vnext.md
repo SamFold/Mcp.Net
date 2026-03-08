@@ -48,29 +48,30 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions instead of falling back to defaults.
 - The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
 - `Mcp.Net.LLM` provider clients now honor `ChatClientOptions.SystemPrompt` during construction, and the library-path agent system-prompt regression is covered for both OpenAI and Anthropic.
+- Provider-level LLM tests now verify the first outbound Anthropic request payload and OpenAI message history both carry the configured system prompt, with fallback coverage for the default prompt path.
 
 ## Goal
-- Add deeper regression coverage that inspects the first outbound provider request payload for configured system prompts.
+- Resume the remaining `Mcp.Net.Server` review slice after closing the LLM prompt-application coverage gap.
 
 ## Scope
 - In scope:
-  - add provider-level tests that verify the first outbound request carries the configured prompt
-  - keep coverage focused on prompt application and default fallback behavior
-  - avoid production changes unless the deeper test exposes another gap
+  - continue the logging/debuggability and hidden mutable state review
+  - identify the next concrete server-side issue and pin it with a failing regression first when feasible
+  - keep the next change commit-sized
 - Out of scope:
-  - unrelated `Mcp.Net.Server` review items
-  - broad LLM refactors beyond prompt application coverage
+  - revisiting the now-covered LLM system-prompt path unless a new issue appears
+  - broad non-review refactors
 
 ## Current slice
-1. Add provider-level tests that assert the configured system prompt is present in the first outbound OpenAI and Anthropic request state.
-2. Add fallback tests that prove provider defaults still apply when `ChatClientOptions.SystemPrompt` is empty.
-3. Resume the broader review once that deeper coverage is in place.
+1. Resume the remaining `Mcp.Net.Server` review with focus on logging/debuggability and hidden mutable state.
+2. Identify the next concrete issue in that area and pin it with a failing regression first when feasible.
+3. Keep the next change commit-sized after the completed LLM prompt-application coverage work.
 
 ## Next slices
-1. Resume the remaining `Mcp.Net.Server` review items after the LLM prompt-application coverage is closed.
+1. Implement the next concrete `Mcp.Net.Server` review fix once it is pinned by regression coverage.
 
 ## Open decisions
-- Should prompt application live in provider constructors, in `AgentFactory`, or both for defense in depth?
+- Should `SseServerBuilder` delegate all endpoint mapping to `UseMcpServer(options => ...)`, or own an explicit hosting path with the same behavior contract?
 
 ## Quality gates
 - Test first for non-trivial behavior changes.

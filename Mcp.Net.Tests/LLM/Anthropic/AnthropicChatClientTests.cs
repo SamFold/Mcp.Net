@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Anthropic.SDK.Messaging;
@@ -107,9 +108,60 @@ public class AnthropicChatClientTests
         response.Content.Should().Contain("boom");
     }
 
+    [Fact]
+    public async Task SendMessageAsync_WithConfiguredSystemPrompt_ShouldIncludePromptInOutboundRequest()
+    {
+        // Arrange
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+            SystemPrompt = "Anthropic configured prompt",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        // Act
+        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+
+        // Assert
+        messageClient.LastParameters.Should().NotBeNull();
+        JsonSerializer.Serialize(messageClient.LastParameters).Should().Contain(options.SystemPrompt);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithoutConfiguredSystemPrompt_ShouldIncludeDefaultPromptInOutboundRequest()
+    {
+        // Arrange
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        // Act
+        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+
+        // Assert
+        messageClient.LastParameters.Should().NotBeNull();
+        client.GetSystemPrompt().Should().NotBeNullOrWhiteSpace();
+        JsonSerializer.Serialize(messageClient.LastParameters)
+            .Should()
+            .Contain(client.GetSystemPrompt());
+    }
+
     private sealed class StubAnthropicMessageClient : IAnthropicMessageClient
     {
         private readonly Queue<IReadOnlyList<ContentBase>> _responses;
+        public MessageParameters? LastParameters { get; private set; }
 
         public StubAnthropicMessageClient(params IReadOnlyList<ContentBase>[] responses)
         {
@@ -118,6 +170,8 @@ public class AnthropicChatClientTests
 
         public Task<IReadOnlyList<ContentBase>> GetResponseContentAsync(MessageParameters parameters)
         {
+            LastParameters = parameters;
+
             if (_responses.Count == 0)
             {
                 throw new InvalidOperationException("No stubbed responses configured.");

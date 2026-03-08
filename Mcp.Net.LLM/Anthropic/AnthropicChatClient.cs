@@ -42,6 +42,9 @@ public sealed class AnthropicChatClient : IChatClient
     {
         _logger = logger;
         _messagesClient = messagesClient ?? throw new ArgumentNullException(nameof(messagesClient));
+        _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
+            ? _systemPrompt
+            : options.SystemPrompt;
 
         // Determine the model to use
         if (string.IsNullOrEmpty(options.Model) || !options.Model.StartsWith("claude"))
