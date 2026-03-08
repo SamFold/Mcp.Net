@@ -32,7 +32,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - `ConnectAsync` now rolls back startup-failed transports, so a `StartAsync` failure no longer leaves a registered-but-dead transport in the connection manager.
 - Reconnect replacement now only swaps the active transport after the new transport has started, so a failed replacement startup no longer evicts a healthy existing session transport.
 - Server-driven `list_changed` notifications now wait for real per-session lifecycle readiness (`notifications/initialized`) instead of treating protocol negotiation as sufficient.
-- The full suite is green (`306/306`).
+- Replacement transports now clear inherited negotiated protocol, client capability, and readiness state until the new connection re-initializes.
+- The full suite is green (`308/308`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.

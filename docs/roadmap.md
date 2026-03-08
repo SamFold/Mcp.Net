@@ -13,6 +13,7 @@ Update it when priorities, milestones, or major decisions change.
 4. Continued integration coverage for SSE and stdio parity
 
 ## Recently completed
+- Replacement transports now clear inherited negotiated protocol, client capability, and readiness state so a new connection cannot reuse the previous session handshake implicitly
 - Server-driven `list_changed` notifications now wait for `notifications/initialized`, so protocol negotiation is no longer treated as equivalent to lifecycle readiness
 - Reconnect replacement now starts before registration, so a failed replacement startup no longer evicts the existing live transport for that session
 - `ConnectAsync` now rolls back startup-failed transports so a `StartAsync` exception does not leave a dead transport registered in the connection manager

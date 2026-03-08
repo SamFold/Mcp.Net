@@ -1206,6 +1206,51 @@ public class McpServerTests
             .Equal("notifications/tools/list_changed");
     }
 
+    [Fact]
+    public async Task ConnectAsync_Should_NotCarryReadyState_To_ReplacementTransport_BeforeReinitialize()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions
+            {
+                Capabilities = new ServerCapabilities
+                {
+                    Tools = new { listChanged = true },
+                },
+            },
+            NullLoggerFactory.Instance
+        );
+
+        var originalTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(originalTransport);
+
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-original", McpServer.LatestProtocolVersion),
+            originalTransport.Id()
+        );
+
+        initializeResponse.Error.Should().BeNull();
+        await server.HandleNotificationAsync(
+            CreateNotificationContext(originalTransport.Id(), "notifications/initialized")
+        );
+
+        var replacementTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(replacementTransport);
+
+        server.RegisterTool(
+            "replacement.tool",
+            "Tool registered after transport replacement",
+            JsonSerializer.SerializeToElement(new { type = "object" }),
+            (_, _) => Task.FromResult(new ToolCallResult())
+        );
+
+        replacementTransport.SentNotifications.Should().BeEmpty(
+            "a replacement transport must re-initialize before the server treats the session as ready for server-driven notifications"
+        );
+    }
+
     private static JsonRpcRequestMessage CreateInitializeRequest(
         string requestId,
         string protocolVersion

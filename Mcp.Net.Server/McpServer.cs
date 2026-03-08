@@ -57,6 +57,12 @@ public class McpServer : IMcpServer
     private readonly string? _instructions;
     private readonly ILogger<McpServer> _logger;
 
+    private sealed record SessionLifecycleState(
+        string? NegotiatedProtocolVersion,
+        ClientCapabilities? ClientCapabilities,
+        bool IsReady
+    );
+
     public McpServer(
         ServerInfo serverInfo,
         IConnectionManager connectionManager,
@@ -303,6 +309,15 @@ public class McpServer : IMcpServer
 
         _logger.LogInformation("MCP server connecting to transport");
 
+        var existingTransport = await _connectionManager
+            .GetTransportAsync(sessionId)
+            .ConfigureAwait(false);
+        var isReplacement = existingTransport is IServerTransport existingServerTransport
+            && !ReferenceEquals(existingServerTransport, transport);
+        var previousLifecycleState = isReplacement
+            ? CaptureSessionLifecycleState(sessionId)
+            : null;
+
         try
         {
             await transport.StartAsync();
@@ -329,12 +344,26 @@ public class McpServer : IMcpServer
 
         try
         {
+            if (isReplacement)
+            {
+                _logger.LogInformation(
+                    "Clearing inherited lifecycle state before replacing transport for session {SessionId}",
+                    sessionId
+                );
+                ClearSessionLifecycleState(sessionId);
+            }
+
             await _connectionManager
                 .RegisterTransportAsync(sessionId, transport)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            if (isReplacement && previousLifecycleState != null)
+            {
+                RestoreSessionLifecycleState(sessionId, previousLifecycleState);
+            }
+
             _logger.LogError(ex, "Failed to register transport {TransportId}", sessionId);
 
             try
@@ -1197,6 +1226,49 @@ public class McpServer : IMcpServer
         }
 
         _readySessions.TryRemove(sessionId, out _);
+    }
+
+    private SessionLifecycleState CaptureSessionLifecycleState(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        _negotiatedProtocolVersionsBySession.TryGetValue(sessionId, out var negotiatedProtocolVersion);
+        _clientCapabilitiesBySession.TryGetValue(sessionId, out var clientCapabilities);
+        var isReady = _readySessions.ContainsKey(sessionId);
+
+        return new SessionLifecycleState(
+            negotiatedProtocolVersion,
+            clientCapabilities,
+            isReady
+        );
+    }
+
+    private void ClearSessionLifecycleState(string sessionId)
+    {
+        ClearNegotiatedProtocolVersion(sessionId);
+        ClearClientCapabilities(sessionId);
+        ClearSessionReady(sessionId);
+    }
+
+    private void RestoreSessionLifecycleState(string sessionId, SessionLifecycleState state)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (!string.IsNullOrWhiteSpace(state.NegotiatedProtocolVersion))
+        {
+            SetNegotiatedProtocolVersion(sessionId, state.NegotiatedProtocolVersion);
+        }
+
+        if (state.ClientCapabilities != null)
+        {
+            SetClientCapabilities(sessionId, state.ClientCapabilities);
+        }
+
+        if (state.IsReady)
+        {
+            SetSessionReady(sessionId);
+        }
     }
 
     private void NotifyListChangedIfSupported(string method, object? capability)

@@ -236,4 +236,38 @@ public class ElicitationServiceTests
 
         transport.SentRequests.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task RequestAsync_ShouldNotReuse_ElicitationCapability_OnReplacementTransport_BeforeReinitialize()
+    {
+        var server = CreateServer();
+        server.ClientRequestTimeout = TimeSpan.FromMilliseconds(50);
+        var originalTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(originalTransport);
+        await InitializeSessionAsync(
+            server,
+            originalTransport.Id(),
+            capabilities: new { elicitation = new { } }
+        );
+
+        var replacementTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(replacementTransport);
+
+        var service = new ElicitationService(
+            server,
+            replacementTransport.Id(),
+            NullLogger<ElicitationService>.Instance
+        );
+        var prompt = CreatePrompt();
+
+        await FluentActions
+            .Awaiting(() => service.RequestAsync(prompt))
+            .Should()
+            .ThrowAsync<McpException>()
+            .Where(ex => ex.Code == ErrorCode.MethodNotFound);
+
+        replacementTransport.SentRequests.Should().BeEmpty(
+            "a replacement transport must negotiate client capabilities again before the server sends elicitation/create"
+        );
+    }
 }
