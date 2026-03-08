@@ -314,6 +314,36 @@ public class McpServerTests
     }
 
     [Fact]
+    public async Task ConnectAsync_Should_CancelPendingClientRequests_From_Replaced_Transport()
+    {
+        var connectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0" },
+            connectionManager,
+            new ServerOptions { Capabilities = new ServerCapabilities() },
+            NullLoggerFactory.Instance
+        )
+        {
+            ClientRequestTimeout = Timeout.InfiniteTimeSpan,
+        };
+
+        var originalTransport = new MockTransport("session-reconnect");
+        var replacementTransport = new MockTransport("session-reconnect");
+
+        await server.ConnectAsync(originalTransport);
+
+        var pendingRequest = server.SendClientRequestAsync(originalTransport.Id(), "noop", null);
+
+        originalTransport.SentRequests.Should().ContainSingle();
+
+        await server.ConnectAsync(replacementTransport);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await pendingRequest.WaitAsync(TimeSpan.FromMilliseconds(500))
+        );
+    }
+
+    [Fact]
     public async Task ProcessJsonRpcRequest_Should_Return_Error_For_Unknown_Method()
     {
         // Arrange

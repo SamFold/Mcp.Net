@@ -356,6 +356,20 @@ public class McpServer : IMcpServer
             await _connectionManager
                 .RegisterTransportAsync(sessionId, transport)
                 .ConfigureAwait(false);
+
+            if (isReplacement)
+            {
+                _logger.LogInformation(
+                    "Canceling pending client requests from the replaced transport for session {SessionId}",
+                    sessionId
+                );
+                CancelPendingRequests(
+                    sessionId,
+                    new OperationCanceledException(
+                        $"Transport {sessionId} was replaced before the client responded."
+                    )
+                );
+            }
         }
         catch (Exception ex)
         {

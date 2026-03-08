@@ -10,9 +10,9 @@ Update it when priorities, milestones, or major decisions change.
 1. Logging/debuggability and hidden mutable state review
 2. MCP server review closure and cleanup
 3. MCP spec alignment work across server, client, and LLM integrations
-4. Continued integration coverage for SSE and stdio parity
 
 ## Recently completed
+- Replacement transports now cancel pending server-initiated client requests from the old connection, so reconnect handoff does not leave stale outbound requests hanging until timeout
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state so a new connection cannot reuse the previous session handshake implicitly
 - Server-driven `list_changed` notifications now wait for `notifications/initialized`, so protocol negotiation is no longer treated as equivalent to lifecycle readiness
 - Reconnect replacement now starts before registration, so a failed replacement startup no longer evicts the existing live transport for that session
@@ -66,3 +66,4 @@ Update it when priorities, milestones, or major decisions change.
 - The transport-startup rollback gap is now closed by cleaning up registration when `ConnectAsync` fails during `StartAsync`.
 - The reconnect replacement startup gap is now closed by delaying session replacement until the new transport has started successfully.
 - The lifecycle-readiness gap is now closed by requiring `notifications/initialized` before server-driven `list_changed` broadcasts.
+- The stale pending client-request gap on transport replacement is now closed.

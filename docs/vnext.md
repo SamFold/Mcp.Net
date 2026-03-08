@@ -33,7 +33,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Reconnect replacement now only swaps the active transport after the new transport has started, so a failed replacement startup no longer evicts a healthy existing session transport.
 - Server-driven `list_changed` notifications now wait for real per-session lifecycle readiness (`notifications/initialized`) instead of treating protocol negotiation as sufficient.
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state until the new connection re-initializes.
-- The full suite is green (`308/308`).
+- Replacement transports now also cancel pending server-initiated client requests from the old connection, so reconnect handoff no longer leaves stale outbound requests waiting until timeout.
+- The full suite is green (`309/309`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -55,14 +56,14 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - broad non-review refactors
 
 ## Current slice
-1. Resume the remaining `Mcp.Net.Server` logging/debuggability and hidden mutable state review.
-2. Identify the next concrete issue with a real state or observability consequence.
+1. Continue the `Mcp.Net.Server` logging/debuggability and hidden mutable state review after the stale pending-request replacement fix.
+2. Identify the next concrete issue in that review area.
 3. Add a failing regression first when feasible.
-4. Keep the next fix commit-sized and rerun targeted then broader tests.
+4. Keep the next change commit-sized.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - continue the logging/debuggability and hidden mutable state review after the lifecycle-readiness fix
+   - continue the logging/debuggability and hidden mutable state review after the pending-request replacement fix
    - decide whether to implement the MCP logging primitive after the review closes
 
 ## Open decisions
@@ -74,7 +75,7 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Targeted tests must pass before broadening to a wider test scope.
 
 ## Verification checklist
-- Keep the targeted regression failing until the production fix is in place.
-- After implementation, run the targeted regression test.
+- Keep the next targeted regression failing until the production fix is in place.
+- After implementation, run the focused regression or targeted test group for the affected behavior.
 - Run the relevant broader `Mcp.Net.Server` and integration test group.
-- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling behavior.
+- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling or session lifecycle behavior.
