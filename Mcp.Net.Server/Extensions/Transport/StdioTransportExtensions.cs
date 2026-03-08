@@ -26,7 +26,7 @@ public static class StdioTransportExtensions
         services.Configure(configureOptions);
 
         // Register hosted service
-        services.AddSingleton<McpServerHostedService>();
+        services.AddMcpServerHostedService();
 
         // Register server configuration
         services.AddSingleton(sp =>

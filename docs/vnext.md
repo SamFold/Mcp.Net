@@ -37,7 +37,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes.
 - Stdio ingress now preserves per-connection ordering for client-originated requests and notifications while still letting client responses flow immediately, so back-to-back `initialize` and `notifications/initialized` no longer drop readiness on stdio.
 - Hosted-service startup logs now report the configured server name and version instead of a hardcoded placeholder, keeping startup observability truthful.
-- The full suite is green (`312/312`).
+- Hosted stdio DI registration now wires a real `IHostedService`, and the hosted server path now starts stdio transport/ingress using configured custom streams.
+- The full suite is green (`314/314`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -50,22 +51,24 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 
 ## Scope
 - In scope:
-  - review remaining logging/debuggability gaps after the capability-truthfulness fix
-  - identify one concrete issue involving hidden mutable state or weak observability
+  - review remaining logging/debuggability gaps after the hosted stdio DI fix
+  - identify one concrete hidden mutable state or weak observability issue
   - pin it with a failing regression first when feasible
-  - keep the change commit-sized
+  - keep the next change commit-sized
 - Out of scope:
+  - the separate `AddMcpCore(Action<McpServerOptions>)` title bug unless it becomes the selected next slice
+  - broad stdio transport refactors beyond the closed hosted DI fix
   - full MCP logging primitive implementation
   - broad non-review refactors
 
 ## Current slice
 1. Resume the remaining `Mcp.Net.Server` review with focus on logging/debuggability and hidden mutable state.
 2. Identify the next concrete issue in that area and pin it with a failing regression first when feasible.
-3. Keep the next change commit-sized after the hosted-service startup logging fix.
+3. Keep the next change commit-sized after the hosted stdio DI fix.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - continue the logging/debuggability and hidden mutable state review after the `list_changed` replacement-race fix
+   - continue the logging/debuggability and hidden mutable state review after the hosted stdio DI fix
    - decide whether to implement the MCP logging primitive after the review closes
 
 ## Open decisions

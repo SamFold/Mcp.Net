@@ -1,4 +1,8 @@
+using System.Buffers;
+using System.IO.Pipelines;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Elicitation;
@@ -8,9 +12,11 @@ using Mcp.Net.Server.Extensions;
 using Mcp.Net.Server.Extensions.Transport;
 using Mcp.Net.Server.Interfaces;
 using Mcp.Net.Server.Options;
+using Mcp.Net.Server.ServerBuilder;
 using Mcp.Net.Server.Transport.Sse;
 using Mcp.Net.Tests.TestUtils;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -223,6 +229,75 @@ public class McpServerRegistrationExtensionsTests
     }
 
     [Fact]
+    public void AddMcpStdioTransport_ShouldRegisterHostedService()
+    {
+        var services = new ServiceCollection();
+
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+        services.AddMcpCore(options =>
+        {
+            options.Name = "Hosted Stdio Server";
+            options.Version = "1.0.0";
+        });
+        services.AddMcpStdioTransport(options =>
+        {
+            options.Name = "Hosted Stdio Server";
+            options.Version = "1.0.0";
+        });
+
+        services.Should().ContainSingle(descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(McpServerHostedService)
+        );
+    }
+
+    [Fact]
+    public async Task AddMcpStdioTransport_WithCustomStreams_ShouldStartHostedServer()
+    {
+        var inputPipe = new Pipe();
+        var outputPipe = new Pipe();
+
+        using var host = new HostBuilder()
+            .ConfigureLogging(logging => logging.ClearProviders())
+            .ConfigureServices(services =>
+            {
+                services.AddMcpCore(options =>
+                {
+                    options.Name = "Hosted Stdio Server";
+                    options.Version = "1.0.0";
+                });
+                services.AddMcpStdioTransport(options =>
+                {
+                    options.Name = "Hosted Stdio Server";
+                    options.Version = "1.0.0";
+                    options.UseStandardIO = false;
+                    options.InputStream = inputPipe.Reader.AsStream();
+                    options.OutputStream = outputPipe.Writer.AsStream();
+                });
+            })
+            .Build();
+
+        await host.StartAsync();
+
+        await WriteLineAsync(inputPipe.Writer, CreateInitializeRequestJson("hosted-stdio-init"));
+        var responseLine = await ReadLineAsync(outputPipe.Reader, TimeSpan.FromSeconds(5));
+
+        responseLine.Should().NotBeNull();
+
+        using var response = JsonDocument.Parse(responseLine!);
+        response.RootElement.GetProperty("id").GetString().Should().Be("hosted-stdio-init");
+        response.RootElement
+            .GetProperty("result")
+            .GetProperty("serverInfo")
+            .GetProperty("name")
+            .GetString()
+            .Should()
+            .Be("Hosted Stdio Server");
+
+        await host.StopAsync();
+    }
+
+    [Fact]
     public async Task AddMcpCore_WithBuilder_ShouldPreserveBuilderConfiguredServerOptions()
     {
         var services = new ServiceCollection();
@@ -306,5 +381,68 @@ public class McpServerRegistrationExtensionsTests
         );
 
         return new JsonRpcRequestMessage("2.0", requestId, "initialize", paramsElement);
+    }
+
+    private static string CreateInitializeRequestJson(string requestId)
+    {
+        return JsonSerializer.Serialize(
+            new
+            {
+                jsonrpc = "2.0",
+                id = requestId,
+                method = "initialize",
+                @params = new
+                {
+                    clientInfo = new { name = "Hosted Test Client", version = "1.0" },
+                    capabilities = new { },
+                    protocolVersion = McpServer.LatestProtocolVersion,
+                },
+            }
+        );
+    }
+
+    private static async Task WriteLineAsync(PipeWriter writer, string line)
+    {
+        await writer.WriteAsync(Encoding.UTF8.GetBytes(line + "\n"));
+        await writer.FlushAsync();
+    }
+
+    private static async Task<string?> ReadLineAsync(PipeReader reader, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+
+        while (true)
+        {
+            var result = await reader.ReadAsync(cts.Token);
+            var buffer = result.Buffer;
+
+            if (TryReadLine(ref buffer, out var line))
+            {
+                var message = Encoding.UTF8.GetString(line.ToArray());
+                reader.AdvanceTo(buffer.Start, buffer.End);
+                return message;
+            }
+
+            reader.AdvanceTo(buffer.Start, buffer.End);
+
+            if (result.IsCompleted)
+            {
+                return null;
+            }
+        }
+    }
+
+    private static bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
+    {
+        var position = buffer.PositionOf((byte)'\n');
+        if (position == null)
+        {
+            line = default;
+            return false;
+        }
+
+        line = buffer.Slice(0, position.Value);
+        buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
+        return true;
     }
 }

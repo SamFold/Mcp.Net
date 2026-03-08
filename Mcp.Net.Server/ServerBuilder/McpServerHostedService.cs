@@ -3,10 +3,13 @@ using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Server.Interfaces;
+using Mcp.Net.Server.Options;
+using Mcp.Net.Server.Transport.Stdio;
 using Mcp.Net.Server.Transport.Sse;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using SseConnectionManagerType = Mcp.Net.Server.Transport.Sse.SseTransportHost;
 
 namespace Mcp.Net.Server.ServerBuilder;
@@ -22,7 +25,11 @@ public class McpServerHostedService : IHostedService, IDisposable
     private readonly SseConnectionManagerType? _connectionManager;
     private readonly IHostApplicationLifetime _appLifetime;
     private readonly CancellationTokenSource _stoppingCts = new();
+    private readonly McpServer _server;
+    private readonly StdioServerOptions? _stdioOptions;
     private Task? _monitoringTask;
+    private Task? _stdioIngressTask;
+    private StdioTransport? _stdioTransport;
     private bool _disposed;
     private readonly ServerInfo _serverInfo;
 
@@ -37,17 +44,19 @@ public class McpServerHostedService : IHostedService, IDisposable
     )
     {
         ArgumentNullException.ThrowIfNull(server);
+        _server = server;
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _appLifetime = appLifetime ?? throw new ArgumentNullException(nameof(appLifetime));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _serverInfo = server.ServerInfo;
         _connectionManager = _serviceProvider.GetService<SseConnectionManagerType>();
+        _stdioOptions = _serviceProvider.GetService<IOptions<StdioServerOptions>>()?.Value;
     }
 
     /// <summary>
     /// Starts the MCP server when the host starts.
     /// </summary>
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting MCP server (version {Version})...", _serverInfo.Version);
 
@@ -55,6 +64,11 @@ public class McpServerHostedService : IHostedService, IDisposable
         {
             // Register application stopping callback
             _appLifetime.ApplicationStopping.Register(OnApplicationStopping);
+
+            if (_connectionManager == null && _stdioOptions != null)
+            {
+                await StartStdioTransportAsync(cancellationToken);
+            }
             
             // Start a background task to monitor server health
             _monitoringTask = MonitorServerHealthAsync(_stoppingCts.Token);
@@ -63,7 +77,6 @@ public class McpServerHostedService : IHostedService, IDisposable
             LogServerCapabilities();
             
             _logger.LogInformation("MCP server started successfully");
-            return Task.CompletedTask;
         }
         catch (Exception ex)
         {
@@ -95,6 +108,11 @@ public class McpServerHostedService : IHostedService, IDisposable
             {
                 _logger.LogWarning("Server monitoring task did not complete in time");
             }
+        }
+
+        if (_stdioTransport != null)
+        {
+            await StopStdioTransportAsync(cancellationToken);
         }
         
         // Clean up connection manager if needed
@@ -182,6 +200,80 @@ public class McpServerHostedService : IHostedService, IDisposable
         if (_connectionManager != null)
         {
             _logger.LogInformation("Server listening for SSE connections");
+        }
+
+        if (_stdioTransport != null)
+        {
+            _logger.LogInformation("Server listening on stdio");
+        }
+    }
+
+    private async Task StartStdioTransportAsync(CancellationToken cancellationToken)
+    {
+        _stdioOptions!.Validate();
+
+        var loggerFactory = _serviceProvider.GetRequiredService<ILoggerFactory>();
+        var inputStream = _stdioOptions.UseStandardIO
+            ? Console.OpenStandardInput()
+            : _stdioOptions.InputStream!;
+        var outputStream = _stdioOptions.UseStandardIO
+            ? Console.OpenStandardOutput()
+            : _stdioOptions.OutputStream!;
+
+        _stdioTransport = new StdioTransport(
+            "stdio",
+            inputStream,
+            outputStream,
+            loggerFactory.CreateLogger<StdioTransport>()
+        );
+        _stdioTransport.OnClose += () => _stoppingCts.Cancel();
+        _stdioTransport.OnError += _ => _stoppingCts.Cancel();
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await _server.ConnectAsync(_stdioTransport);
+
+        var ingressHost = new StdioIngressHost(
+            _server,
+            _stdioTransport,
+            loggerFactory.CreateLogger<StdioIngressHost>()
+        );
+        _stdioIngressTask = ingressHost.RunAsync(_stoppingCts.Token);
+    }
+
+    private async Task StopStdioTransportAsync(CancellationToken cancellationToken)
+    {
+        if (_stdioTransport != null)
+        {
+            try
+            {
+                await _stdioTransport.CloseAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error closing stdio transport");
+            }
+        }
+
+        if (_stdioIngressTask == null)
+        {
+            return;
+        }
+
+        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+        var completedTask = await Task.WhenAny(_stdioIngressTask, timeoutTask);
+        if (completedTask == timeoutTask)
+        {
+            _logger.LogWarning("Stdio ingress task did not complete in time");
+            return;
+        }
+
+        try
+        {
+            await _stdioIngressTask;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Stdio ingress task canceled");
         }
     }
     
