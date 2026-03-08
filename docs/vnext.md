@@ -36,7 +36,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Replacement transports now also cancel pending server-initiated client requests from the old connection, so reconnect handoff no longer leaves stale outbound requests waiting until timeout.
 - In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes.
 - Stdio ingress now preserves per-connection ordering for client-originated requests and notifications while still letting client responses flow immediately, so back-to-back `initialize` and `notifications/initialized` no longer drop readiness on stdio.
-- The full suite is green (`311/311`).
+- Hosted-service startup logs now report the configured server name and version instead of a hardcoded placeholder, keeping startup observability truthful.
+- The full suite is green (`312/312`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -59,8 +60,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 
 ## Current slice
 1. Resume the remaining `Mcp.Net.Server` review with focus on logging/debuggability and hidden mutable state.
-2. Identify one concrete issue in that area and pin it with a failing regression first when feasible.
-3. Keep the next change commit-sized and avoid reopening the completed stdio ingress ordering slice.
+2. Identify the next concrete issue in that area and pin it with a failing regression first when feasible.
+3. Keep the next change commit-sized after the hosted-service startup logging fix.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:

@@ -17,7 +17,6 @@ namespace Mcp.Net.Server.ServerBuilder;
 /// </summary>
 public class McpServerHostedService : IHostedService, IDisposable
 {
-    private readonly McpServer _server;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<McpServerHostedService> _logger;
     private readonly SseConnectionManagerType? _connectionManager;
@@ -25,7 +24,7 @@ public class McpServerHostedService : IHostedService, IDisposable
     private readonly CancellationTokenSource _stoppingCts = new();
     private Task? _monitoringTask;
     private bool _disposed;
-    private readonly ServerInfo _serverInfo = new ServerInfo { Name = "MCP Server", Version = "1.0.0" };
+    private readonly ServerInfo _serverInfo;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="McpServerHostedService"/> class.
@@ -37,10 +36,11 @@ public class McpServerHostedService : IHostedService, IDisposable
         ILogger<McpServerHostedService> logger
     )
     {
-        _server = server ?? throw new ArgumentNullException(nameof(server));
+        ArgumentNullException.ThrowIfNull(server);
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _appLifetime = appLifetime ?? throw new ArgumentNullException(nameof(appLifetime));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _serverInfo = server.ServerInfo;
         _connectionManager = _serviceProvider.GetService<SseConnectionManagerType>();
     }
 

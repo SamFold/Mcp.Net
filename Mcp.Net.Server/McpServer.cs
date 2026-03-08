@@ -248,6 +248,13 @@ public class McpServer : IMcpServer
 
     public static IReadOnlyList<string> SupportedProtocolVersions => s_supportedProtocolVersions;
 
+    internal ServerInfo ServerInfo => new()
+    {
+        Name = _serverInfo.Name,
+        Title = _serverInfo.Title,
+        Version = _serverInfo.Version,
+    };
+
     public string? NegotiatedProtocolVersion => GetSharedNegotiatedProtocolVersion();
 
     internal IConnectionManager ConnectionManager => _connectionManager;
