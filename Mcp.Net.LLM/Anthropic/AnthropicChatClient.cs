@@ -252,10 +252,16 @@ public sealed class AnthropicChatClient : IChatClient
             case JsonValue jsonValue:
                 return jsonValue.ToString();
             case JsonObject or JsonArray:
-                return value.ToJsonString();
+                return CloneStructuredValue(value);
             default:
                 return value.ToString();
         }
+    }
+
+    private static JsonElement CloneStructuredValue(JsonNode value)
+    {
+        using var document = JsonDocument.Parse(value.ToJsonString());
+        return document.RootElement.Clone();
     }
 
     private void AddMessageToHistory(LlmMessage message)

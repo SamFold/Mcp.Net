@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Attributes;
 using Mcp.Net.Core.Models.Content;
@@ -74,6 +76,41 @@ public class ToolInvocationFactoryTests
         Assert.Equal("HELLO WORLD", text.Text);
     }
 
+    [Fact]
+    public async Task CreateHandler_BindsNestedStructuredArguments_FromJsonElementValues()
+    {
+        var descriptor = GetDescriptor("structured.value");
+        var services = new ServiceCollection()
+            .AddSingleton(new McpServer(new ServerInfo { Name = "Test", Version = "1.0" }, new InMemoryConnectionManager(NullLoggerFactory.Instance), new ServerOptions(), NullLoggerFactory.Instance))
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .BuildServiceProvider();
+        var server = services.GetRequiredService<McpServer>();
+        var factory = new ToolInvocationFactory(
+            services,
+            services.GetRequiredService<ILoggerFactory>(),
+            NullLoggerFactory.Instance.CreateLogger<ToolInvocationFactory>()
+        );
+
+        var handler = factory.CreateHandler(server, descriptor);
+        var request = new ToolCallRequest
+        {
+            Name = "structured.value",
+            Arguments = new Dictionary<string, object?>
+            {
+                ["filter"] = JsonDocument
+                    .Parse("""{"status":"open","labels":["server","urgent"]}""")
+                    .RootElement.Clone(),
+                ["tags"] = JsonDocument.Parse("""["triage","backend"]""").RootElement.Clone(),
+            },
+        };
+
+        var result = await handler(request.GetArguments(), "session-1");
+
+        Assert.False(result.IsError);
+        var text = Assert.IsType<TextContent>(Assert.Single(result.Content));
+        Assert.Equal("open|server,urgent|triage,backend", text.Text);
+    }
+
     private ToolDescriptor GetDescriptor(string toolName)
     {
         var descriptors = _discoveryService.DiscoverTools(new[] { typeof(DefaultParameterTool).Assembly });
@@ -98,5 +135,34 @@ public class ToolInvocationFactoryTests
             await Task.Delay(1);
             return message.ToUpperInvariant();
         }
+
+        [McpTool("structured.value", "Reads nested structured input")]
+        public ToolCallResult ExecuteStructured(
+            [McpParameter(required: true)] StructuredFilter filter,
+            [McpParameter(required: true)] string[] tags
+        )
+        {
+            return new ToolCallResult
+            {
+                Content = new ContentBase[]
+                {
+                    new TextContent
+                    {
+                        Text =
+                            $"{filter.Status}|{string.Join(",", filter.Labels)}|{string.Join(",", tags)}",
+                    },
+                },
+                IsError = false,
+            };
+        }
+    }
+
+    private sealed class StructuredFilter
+    {
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = string.Empty;
+
+        [JsonPropertyName("labels")]
+        public string[] Labels { get; set; } = [];
     }
 }

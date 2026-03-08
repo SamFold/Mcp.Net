@@ -194,17 +194,22 @@ public sealed class OpenAiChatClient : IChatClient
 
         foreach (var property in doc.RootElement.EnumerateObject())
         {
-            result[property.Name] = property.Value.ValueKind switch
-            {
-                JsonValueKind.Number => property.Value.GetDouble(),
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
-                _ => property.Value.GetString() ?? string.Empty,
-            };
+            result[property.Name] = ConvertJsonValue(property.Value);
         }
 
         return result;
     }
+
+    private static object? ConvertJsonValue(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Number => value.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Object => value.Clone(),
+            JsonValueKind.Array => value.Clone(),
+            _ => value.GetString() ?? string.Empty,
+        };
 
     private void AppendToolResult(ToolInvocationResult? result)
     {
