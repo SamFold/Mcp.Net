@@ -14,6 +14,11 @@ namespace Mcp.Net.Server.Transport.Stdio;
 /// </summary>
 public class StdioTransport : ServerMessageTransportBase
 {
+    /// <summary>
+    /// Default logical session identifier for stdio transports.
+    /// </summary>
+    public const string DefaultSessionId = "stdio";
+
     private readonly Stream _inputStream;
     private readonly SemaphoreSlim _outboundWriteLock = new(1, 1);
     private readonly PipeWriter _writer;

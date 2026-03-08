@@ -39,40 +39,38 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Hosted-service startup logs now report the configured server name and version instead of a hardcoded placeholder, keeping startup observability truthful.
 - Hosted stdio DI registration now wires a real `IHostedService`, and the hosted server path now starts stdio transport/ingress using configured custom streams.
 - `AddMcpCore(Action<McpServerOptions>)` now preserves a configured server title through `initialize` instead of overwriting it with the server name.
-- The full suite is green (`314/314`).
+- Direct and hosted stdio startup paths now share the same stable logical session id, and the process-global stdio session-id counter is gone.
+- Focused stdio builder coverage and the broader `Mcp.Net.Tests.Server` slice are green for the latest change.
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
 - `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration.
 - `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions instead of falling back to defaults.
 - The concrete builder/DI default-copy inconsistencies identified in this review pass are now closed.
+- `Mcp.Net.LLM` provider clients now honor `ChatClientOptions.SystemPrompt` during construction, and the library-path agent system-prompt regression is covered for both OpenAI and Anthropic.
 
 ## Goal
-- Continue the `Mcp.Net.Server` review slice with logging/debuggability and hidden mutable state review.
+- Add deeper regression coverage that inspects the first outbound provider request payload for configured system prompts.
 
 ## Scope
 - In scope:
-  - review remaining logging/debuggability gaps after the hosted stdio DI and core title fixes
-  - identify one concrete hidden mutable state or weak observability issue
-  - pin it with a failing regression first when feasible
-  - keep the next change commit-sized
+  - add provider-level tests that verify the first outbound request carries the configured prompt
+  - keep coverage focused on prompt application and default fallback behavior
+  - avoid production changes unless the deeper test exposes another gap
 - Out of scope:
-  - broad stdio/session-id refactors unless they become the selected next slice
-  - full MCP logging primitive implementation
-  - broad non-review refactors
+  - unrelated `Mcp.Net.Server` review items
+  - broad LLM refactors beyond prompt application coverage
 
 ## Current slice
-1. Resume the remaining `Mcp.Net.Server` review with focus on logging/debuggability and hidden mutable state.
-2. Identify the next concrete issue in that area and pin it with a failing regression first when feasible.
-3. Keep the next change commit-sized after the core title fix.
+1. Add provider-level tests that assert the configured system prompt is present in the first outbound OpenAI and Anthropic request state.
+2. Add fallback tests that prove provider defaults still apply when `ChatClientOptions.SystemPrompt` is empty.
+3. Resume the broader review once that deeper coverage is in place.
 
 ## Next slices
-1. Resume the remaining `Mcp.Net.Server` review items:
-   - continue the logging/debuggability and hidden mutable state review after the core title fix
-   - decide whether to implement the MCP logging primitive after the review closes
+1. Resume the remaining `Mcp.Net.Server` review items after the LLM prompt-application coverage is closed.
 
 ## Open decisions
-- Should `SseServerBuilder` delegate all endpoint mapping to `UseMcpServer(options => ...)`, or own an explicit hosting path with the same behavior contract?
+- Should prompt application live in provider constructors, in `AgentFactory`, or both for defense in depth?
 
 ## Quality gates
 - Test first for non-trivial behavior changes.
@@ -82,5 +80,5 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 ## Verification checklist
 - Pin the next issue with a failing regression before implementation when feasible.
 - After implementation, run the focused regression or targeted test group for the affected behavior.
-- Run the relevant broader `Mcp.Net.Server` and integration test group.
-- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling, notification delivery, or session lifecycle behavior.
+- Run the relevant broader `Mcp.Net.LLM` and adjacent WebUI test group.
+- Run the full `Mcp.Net.Tests` suite if the fix changes shared client construction or session behavior.

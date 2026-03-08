@@ -221,7 +221,7 @@ public class McpServerHostedService : IHostedService, IDisposable
             : _stdioOptions.OutputStream!;
 
         _stdioTransport = new StdioTransport(
-            "stdio",
+            StdioTransport.DefaultSessionId,
             inputStream,
             outputStream,
             loggerFactory.CreateLogger<StdioTransport>()
