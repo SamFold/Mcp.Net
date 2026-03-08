@@ -1318,9 +1318,29 @@ public class McpServer : IMcpServer
 
         foreach (var sessionId in sessionIds)
         {
+            if (!IsSessionReady(sessionId))
+            {
+                _logger.LogDebug(
+                    "Skipping list_changed notification {Method} for session {SessionId} because the session is no longer ready.",
+                    method,
+                    sessionId
+                );
+                continue;
+            }
+
             try
             {
                 var transport = await ResolveTransportAsync(sessionId).ConfigureAwait(false);
+                if (!IsSessionReady(sessionId))
+                {
+                    _logger.LogDebug(
+                        "Skipping list_changed notification {Method} for session {SessionId} because the session lost readiness during broadcast.",
+                        method,
+                        sessionId
+                    );
+                    continue;
+                }
+
                 await transport.SendNotificationAsync(notification).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -1374,6 +1394,16 @@ public class McpServer : IMcpServer
         }
 
         return false;
+    }
+
+    private bool IsSessionReady(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return false;
+        }
+
+        return _readySessions.ContainsKey(sessionId);
     }
 
     private sealed record RequestExecutionContext(

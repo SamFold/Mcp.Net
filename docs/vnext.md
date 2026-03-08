@@ -34,7 +34,8 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Server-driven `list_changed` notifications now wait for real per-session lifecycle readiness (`notifications/initialized`) instead of treating protocol negotiation as sufficient.
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state until the new connection re-initializes.
 - Replacement transports now also cancel pending server-initiated client requests from the old connection, so reconnect handoff no longer leaves stale outbound requests waiting until timeout.
-- The full suite is green (`309/309`).
+- In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes.
+- The full suite is green (`310/310`).
 - The notification/completion/resource-refresh review items are now closed.
 - The `SseServerOptions` DI registration path now preserves routing and security settings from the provided options instance.
 - `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`.
@@ -56,14 +57,14 @@ Keep it focused on the next commit-sized change, not the whole backlog.
   - broad non-review refactors
 
 ## Current slice
-1. Continue the `Mcp.Net.Server` logging/debuggability and hidden mutable state review after the stale pending-request replacement fix.
+1. Continue the `Mcp.Net.Server` logging/debuggability and hidden mutable state review after the `list_changed` replacement-race fix.
 2. Identify the next concrete issue in that review area.
 3. Add a failing regression first when feasible.
 4. Keep the next change commit-sized.
 
 ## Next slices
 1. Resume the remaining `Mcp.Net.Server` review items:
-   - continue the logging/debuggability and hidden mutable state review after the pending-request replacement fix
+   - continue the logging/debuggability and hidden mutable state review after the `list_changed` replacement-race fix
    - decide whether to implement the MCP logging primitive after the review closes
 
 ## Open decisions
@@ -78,4 +79,4 @@ Keep it focused on the next commit-sized change, not the whole backlog.
 - Keep the next targeted regression failing until the production fix is in place.
 - After implementation, run the focused regression or targeted test group for the affected behavior.
 - Run the relevant broader `Mcp.Net.Server` and integration test group.
-- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling or session lifecycle behavior.
+- Run the full `Mcp.Net.Tests` suite if the fix changes shared request handling, notification delivery, or session lifecycle behavior.

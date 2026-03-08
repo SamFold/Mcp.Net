@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using Mcp.Net.Core.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Capabilities;
 using Mcp.Net.Core.Models.Content;
@@ -10,6 +11,7 @@ using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Core.Transport;
 using Moq;
 using Mcp.Net.Server.ConnectionManagers;
+using Mcp.Net.Server.Interfaces;
 using Microsoft.Extensions.Logging.Abstractions;
 using Mcp.Net.Server.Services;
 using Mcp.Net.Server.Models;
@@ -1281,6 +1283,63 @@ public class McpServerTests
         );
     }
 
+    [Fact]
+    public async Task RegisterTool_Should_NotNotify_ReplacementTransport_When_ListChanged_Broadcast_Is_Already_InFlight()
+    {
+        var innerConnectionManager = new InMemoryConnectionManager(NullLoggerFactory.Instance);
+        var connectionManager = new BlockingGetTransportConnectionManager(innerConnectionManager);
+        var server = new McpServer(
+            new ServerInfo { Name = "Test", Version = "1.0.0" },
+            connectionManager,
+            new ServerOptions
+            {
+                Capabilities = new ServerCapabilities
+                {
+                    Tools = new { listChanged = true },
+                },
+            },
+            NullLoggerFactory.Instance
+        );
+
+        var originalTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(originalTransport);
+
+        var initializeResponse = await server.ProcessJsonRpcRequest(
+            CreateInitializeRequest("init-original", McpServer.LatestProtocolVersion),
+            originalTransport.Id()
+        );
+
+        initializeResponse.Error.Should().BeNull();
+        await server.HandleNotificationAsync(
+            CreateNotificationContext(originalTransport.Id(), "notifications/initialized")
+        );
+
+        connectionManager.BlockNextTransportResolution(originalTransport.Id());
+
+        var registerTask = Task.Run(() =>
+            server.RegisterTool(
+                "replacement.race.tool",
+                "Tool registered while list_changed broadcast is in flight",
+                JsonSerializer.SerializeToElement(new { type = "object" }),
+                (_, _) => Task.FromResult(new ToolCallResult())
+            )
+        );
+
+        await connectionManager
+            .WaitForBlockedResolutionAsync()
+            .WaitAsync(TimeSpan.FromMilliseconds(500));
+
+        var replacementTransport = new MockTransport("shared-session");
+        await server.ConnectAsync(replacementTransport);
+
+        connectionManager.ReleaseBlockedResolution();
+        await registerTask.WaitAsync(TimeSpan.FromMilliseconds(500));
+
+        replacementTransport.SentNotifications.Should().BeEmpty(
+            "an in-flight list_changed broadcast must not target a replacement transport that has not re-initialized"
+        );
+    }
+
     private static JsonRpcRequestMessage CreateInitializeRequest(
         string requestId,
         string protocolVersion
@@ -1349,6 +1408,92 @@ public class McpServerTests
         }
 
         (await condition()).Should().BeTrue();
+    }
+
+    private sealed class BlockingGetTransportConnectionManager : IConnectionManager
+    {
+        private readonly IConnectionManager _inner;
+        private readonly object _sync = new();
+        private string? _blockedSessionId;
+        private TaskCompletionSource<bool>? _resolutionBlocked;
+        private TaskCompletionSource<bool>? _releaseResolution;
+
+        public BlockingGetTransportConnectionManager(IConnectionManager inner)
+        {
+            _inner = inner;
+        }
+
+        public void BlockNextTransportResolution(string sessionId)
+        {
+            lock (_sync)
+            {
+                _blockedSessionId = sessionId;
+                _resolutionBlocked = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
+                _releaseResolution = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
+            }
+        }
+
+        public Task WaitForBlockedResolutionAsync()
+        {
+            lock (_sync)
+            {
+                return _resolutionBlocked?.Task
+                    ?? throw new InvalidOperationException("No blocked resolution is configured.");
+            }
+        }
+
+        public void ReleaseBlockedResolution()
+        {
+            lock (_sync)
+            {
+                _releaseResolution?.TrySetResult(true);
+            }
+        }
+
+        public Task<ITransport?> GetTransportAsync(string sessionId)
+        {
+            TaskCompletionSource<bool>? resolutionBlocked = null;
+            Task? releaseResolution = null;
+
+            lock (_sync)
+            {
+                if (string.Equals(_blockedSessionId, sessionId, StringComparison.Ordinal))
+                {
+                    _blockedSessionId = null;
+                    resolutionBlocked = _resolutionBlocked;
+                    releaseResolution = _releaseResolution?.Task;
+                }
+            }
+
+            if (resolutionBlocked == null || releaseResolution == null)
+            {
+                return _inner.GetTransportAsync(sessionId);
+            }
+
+            return WaitAndResolveAsync(sessionId, resolutionBlocked, releaseResolution);
+        }
+
+        public Task RegisterTransportAsync(string sessionId, ITransport transport) =>
+            _inner.RegisterTransportAsync(sessionId, transport);
+
+        public Task<bool> RemoveTransportAsync(string sessionId) => _inner.RemoveTransportAsync(sessionId);
+
+        public Task CloseAllConnectionsAsync() => _inner.CloseAllConnectionsAsync();
+
+        private async Task<ITransport?> WaitAndResolveAsync(
+            string sessionId,
+            TaskCompletionSource<bool> resolutionBlocked,
+            Task releaseResolution
+        )
+        {
+            resolutionBlocked.TrySetResult(true);
+            await releaseResolution.ConfigureAwait(false);
+            return await _inner.GetTransportAsync(sessionId).ConfigureAwait(false);
+        }
     }
 
     private sealed class FailingStartTransport : IServerTransport

@@ -12,6 +12,7 @@ Update it when priorities, milestones, or major decisions change.
 3. MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes
 - Replacement transports now cancel pending server-initiated client requests from the old connection, so reconnect handoff does not leave stale outbound requests hanging until timeout
 - Replacement transports now clear inherited negotiated protocol, client capability, and readiness state so a new connection cannot reuse the previous session handshake implicitly
 - Server-driven `list_changed` notifications now wait for `notifications/initialized`, so protocol negotiation is no longer treated as equivalent to lifecycle readiness
@@ -67,3 +68,4 @@ Update it when priorities, milestones, or major decisions change.
 - The reconnect replacement startup gap is now closed by delaying session replacement until the new transport has started successfully.
 - The lifecycle-readiness gap is now closed by requiring `notifications/initialized` before server-driven `list_changed` broadcasts.
 - The stale pending client-request gap on transport replacement is now closed.
+- The in-flight `list_changed` replacement-race gap is now closed by re-checking readiness before notification delivery.
