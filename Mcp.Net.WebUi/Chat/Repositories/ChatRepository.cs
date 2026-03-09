@@ -171,6 +171,7 @@ public class ChatRepository : IChatRepository
                 Type = m.Type,
                 Content = m.Content,
                 Timestamp = m.Timestamp,
+                Metadata = m.Metadata,
             })
             .ToList();
     }

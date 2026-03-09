@@ -13,7 +13,7 @@ public class StubChatClient : IChatClient
     private readonly LlmProvider _provider;
     private readonly ChatClientOptions _options;
     private string _systemPrompt = "You are a helpful AI assistant.";
-    private readonly List<LlmMessage> _messageHistory = new();
+    private readonly List<string> _messageHistory = new();
 
     public StubChatClient(LlmProvider provider, ChatClientOptions options)
     {
@@ -34,27 +34,27 @@ public class StubChatClient : IChatClient
         _logger.LogInformation("Registered {Count} tools with stub chat client", tools.Count());
     }
 
-    public Task<IEnumerable<LlmResponse>> SendMessageAsync(LlmMessage message)
+    public Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
     {
-        _logger.LogInformation("[STUB] Received message: {Content}", message.Content);
-        _messageHistory.Add(message);
+        _logger.LogInformation("[STUB] Received message: {Content}", userMessage);
+        _messageHistory.Add(userMessage);
 
         var response =
-            $"[DEBUG] This is a stub response to your message: '{message.Content} at {DateTime.Now}";
+            $"[DEBUG] This is a stub response to your message: '{userMessage}' at {DateTime.Now}";
 
-        _messageHistory.Add(LlmMessage.FromAssistant(response));
+        _messageHistory.Add(response);
 
-        var llmResponse = new LlmResponse
-        {
-            Content = response,
-            Type = MessageType.Assistant,
-            Id = Guid.NewGuid().ToString(),
-        };
-
-        return Task.FromResult<IEnumerable<LlmResponse>>(new[] { llmResponse });
+        return Task.FromResult<ChatClientTurnResult>(
+            new ChatClientAssistantTurn(
+                Guid.NewGuid().ToString("n"),
+                _provider.ToString().ToLowerInvariant(),
+                _options.Model ?? "stub",
+                new AssistantContentBlock[] { new TextAssistantBlock(Guid.NewGuid().ToString("n"), response) }
+            )
+        );
     }
 
-    public Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
+    public Task<ChatClientTurnResult> SendToolResultsAsync(
         IEnumerable<ToolInvocationResult> toolResults
     )
     {
@@ -64,14 +64,17 @@ public class StubChatClient : IChatClient
         );
 
         // Return a stub response
-        var response = new LlmResponse
-        {
-            Type = MessageType.Assistant,
-            Content =
-                $"[DEBUG] This is a stub response to your tool results. {toolResults.Count()} tool(s) were called.",
-        };
+        var response =
+            $"[DEBUG] This is a stub response to your tool results. {toolResults.Count()} tool(s) were called.";
 
-        return Task.FromResult<IEnumerable<LlmResponse>>(new[] { response });
+        return Task.FromResult<ChatClientTurnResult>(
+            new ChatClientAssistantTurn(
+                Guid.NewGuid().ToString("n"),
+                _provider.ToString().ToLowerInvariant(),
+                _options.Model ?? "stub",
+                new AssistantContentBlock[] { new TextAssistantBlock(Guid.NewGuid().ToString("n"), response) }
+            )
+        );
     }
 
     public void ResetConversation()
@@ -91,23 +94,4 @@ public class StubChatClient : IChatClient
         return _systemPrompt;
     }
 
-    public void AddToolResultToHistory(ToolInvocationResult result)
-    {
-        _logger.LogInformation(
-            "[STUB] Adding tool result to history: {ToolName}, {ToolCallId}",
-            result.ToolName,
-            result.ToolCallId
-        );
-    }
-
-    public Task<List<LlmResponse>> GetLlmResponse()
-    {
-        var response = new LlmResponse
-        {
-            Type = MessageType.Assistant,
-            Content = "[DEBUG] This is a stub response from GetLlmResponse()",
-        };
-
-        return Task.FromResult(new List<LlmResponse> { response });
-    }
 }

@@ -1,5 +1,3 @@
-using Mcp.Net.LLM.Models;
-
 namespace Mcp.Net.WebUi.DTOs;
 
 /// <summary>
@@ -33,24 +31,7 @@ public class ChatMessageDto
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 
     /// <summary>
-    /// Creates a DTO from an LLM response
+    /// Structured metadata associated with this message.
     /// </summary>
-    public static ChatMessageDto FromLlmResponse(LlmResponse response, string sessionId)
-    {
-        return new ChatMessageDto
-        {
-            SessionId = sessionId,
-            Type = response.Type.ToString().ToLower(),
-            Content = response.Content,
-            Timestamp = DateTime.UtcNow,
-        };
-    }
-
-    /// <summary>
-    /// Creates an LLM message from this DTO
-    /// </summary>
-    public LlmMessage ToLlmMessage()
-    {
-        return new LlmMessage { Type = Enum.Parse<MessageType>(Type, true), Content = Content };
-    }
+    public Dictionary<string, object>? Metadata { get; set; }
 }

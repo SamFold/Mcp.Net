@@ -19,6 +19,11 @@ public class ToolExecutionDto
     public string ToolName { get; set; } = string.Empty;
 
     /// <summary>
+    /// The provider-issued tool call identifier.
+    /// </summary>
+    public string ToolCallId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Whether the execution was successful
     /// </summary>
     public bool Success { get; set; }
@@ -46,16 +51,20 @@ public class ToolExecutionDto
     /// <summary>
     /// Create a DTO from a tool execution event args
     /// </summary>
-    public static ToolExecutionDto FromEventArgs(ToolExecutionEventArgs args, string sessionId)
+    public static ToolExecutionDto FromEventArgs(
+        ToolCallActivityChangedEventArgs args,
+        string sessionId
+    )
     {
         return new ToolExecutionDto
         {
             SessionId = sessionId,
             ToolName = args.ToolName,
-            Success = args.Success,
+            ToolCallId = args.ToolCallId,
+            Success = args.ExecutionState == ToolCallExecutionState.Completed,
             ErrorMessage = args.ErrorMessage,
             Timestamp = DateTime.UtcNow,
-            Arguments = args.Invocation.Arguments,
+            Arguments = args.Arguments,
             Result = args.Result,
         };
     }

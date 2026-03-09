@@ -44,6 +44,7 @@ public sealed class OpenAiChatClient : IChatClient
     private readonly ChatCompletionOptions _completionOptions;
     private readonly IOpenAiChatCompletionInvoker _completionInvoker;
     private readonly List<ChatMessage> _history = new();
+    private readonly string _modelName;
     private string _systemPrompt =
         "You are a helpful assistant with access to various tools including calculators "
         + "and Warhammer 40k themed functions. Use these tools when appropriate.";
@@ -66,11 +67,11 @@ public sealed class OpenAiChatClient : IChatClient
             ? _systemPrompt
             : options.SystemPrompt;
 
-        var modelName = ResolveModelName(options);
-        _logger.LogInformation("Using OpenAI model: {Model}", modelName);
-        _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(modelName);
+        _modelName = ResolveModelName(options);
+        _logger.LogInformation("Using OpenAI model: {Model}", _modelName);
+        _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(_modelName);
 
-        _completionOptions = BuildCompletionOptions(modelName, options);
+        _completionOptions = BuildCompletionOptions(_modelName, options);
         _history.Add(new SystemChatMessage(_systemPrompt));
     }
 
@@ -141,50 +142,39 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 
-    private ChatMessage ConvertToChatMessage(LlmMessage message) =>
-        message.Type switch
-        {
-            MessageType.System => new SystemChatMessage(message.Content),
-            MessageType.User => new UserChatMessage(message.Content),
-            MessageType.Tool when message.ToolResult != null
-                => BuildToolChatMessage(message.ToolResult),
-            _ => throw new ArgumentOutOfRangeException(nameof(message.Type), message.Type, null),
-        };
-
     private ToolChatMessage BuildToolChatMessage(ToolInvocationResult result) =>
         new(result.ToolCallId, result.ToWireJson());
 
-    private IEnumerable<LlmResponse> HandleTextResponse(ChatCompletion completion)
-    {
-        _history.Add(new AssistantChatMessage(completion));
-        var responseText = completion.Content?.FirstOrDefault()?.Text ?? "No content available";
-        return new[]
-        {
-            new LlmResponse
-            {
-                Content = responseText,
-                Type = MessageType.Assistant,
-            },
-        };
-    }
-
-    private IEnumerable<LlmResponse> HandleToolCallResponse(ChatCompletion completion)
+    private ChatClientAssistantTurn BuildAssistantTurn(ChatCompletion completion)
     {
         _history.Add(new AssistantChatMessage(completion));
 
-        var invocations = completion.ToolCalls
-            .Select(BuildToolInvocation)
-            .ToList();
-
-        return new[]
+        var blocks = new List<AssistantContentBlock>();
+        var responseText = completion.Content?.FirstOrDefault()?.Text;
+        if (!string.IsNullOrWhiteSpace(responseText))
         {
-            new LlmResponse
-            {
-                Content = string.Empty,
-                ToolCalls = invocations,
-                Type = MessageType.Tool,
-            },
-        };
+            blocks.Add(new TextAssistantBlock(Guid.NewGuid().ToString("n"), responseText));
+        }
+
+        foreach (var toolCall in completion.ToolCalls)
+        {
+            var invocation = BuildToolInvocation(toolCall);
+            blocks.Add(
+                new ToolCallAssistantBlock(
+                    Guid.NewGuid().ToString("n"),
+                    invocation.Id,
+                    invocation.Name,
+                    invocation.Arguments
+                )
+            );
+        }
+
+        return new ChatClientAssistantTurn(
+            Guid.NewGuid().ToString("n"),
+            "openai",
+            _modelName,
+            blocks
+        );
     }
 
     private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argumentsJson)
@@ -221,11 +211,7 @@ public sealed class OpenAiChatClient : IChatClient
         _history.Add(new ToolChatMessage(result.ToolCallId, result.ToWireJson()));
     }
 
-    /// <summary>
-    /// Gets a response from OpenAI based on the current message history
-    /// </summary>
-    /// <returns>List of LlmResponse objects</returns>
-    public Task<IEnumerable<LlmResponse>> GetLlmResponse()
+    private Task<ChatClientTurnResult> GetTurnResultAsync()
     {
         try
         {
@@ -235,50 +221,45 @@ public sealed class OpenAiChatClient : IChatClient
                 _completionOptions
             );
 
-            // Handle different response types
-            IEnumerable<LlmResponse> response = completion.FinishReason switch
+            ChatClientTurnResult response = completion.FinishReason switch
             {
-                ChatFinishReason.Stop => HandleTextResponse(completion),
-                ChatFinishReason.ToolCalls => HandleToolCallResponse(completion),
-                _ => [new() { Content = $"Unexpected response: {completion.FinishReason}" }],
+                ChatFinishReason.Stop => BuildAssistantTurn(completion),
+                ChatFinishReason.ToolCalls => BuildAssistantTurn(completion),
+                _ => new ChatClientFailure(
+                    ChatErrorSource.Provider,
+                    $"Unexpected response: {completion.FinishReason}",
+                    Provider: "openai",
+                    Model: _modelName
+                ),
             };
 
-        return Task.FromResult(response);
+            return Task.FromResult(response);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling OpenAI API: {Message}", ex.Message);
-            return Task.FromResult<IEnumerable<LlmResponse>>(
-                [
-                    new()
-                    {
-                        Content = $"Error communicating with OpenAI: {ex.Message}",
-                        Type = Models.MessageType.System,
-                    },
-                ]
+            return Task.FromResult<ChatClientTurnResult>(
+                new ChatClientFailure(
+                    ChatErrorSource.Provider,
+                    $"Error communicating with OpenAI: {ex.Message}",
+                    Details: ex.ToString(),
+                    Provider: "openai",
+                    Model: _modelName
+                )
             );
         }
     }
 
-    public Task<IEnumerable<LlmResponse>> SendMessageAsync(LlmMessage message)
+    public Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
     {
-        // Handle tool responses differently - just add to history without making API call yet
-        if (message.Type == MessageType.Tool)
-        {
-            AppendToolResult(message.ToolResult);
-            return Task.FromResult(Enumerable.Empty<LlmResponse>());
-        }
-
-        // Standard message handling for non-tool messages
-        // Convert our message to OpenAI format and add to history
-        var chatMessage = ConvertToChatMessage(message);
+        var chatMessage = new UserChatMessage(userMessage);
         _history.Add(chatMessage);
-        _logger.LogDebug($"User message added to history (OpenAI): {message.Content}");
+        _logger.LogDebug("User message added to history (OpenAI): {Message}", userMessage);
 
-        return GetLlmResponse();
+        return GetTurnResultAsync();
     }
 
-    public async Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
+    public async Task<ChatClientTurnResult> SendToolResultsAsync(
         IEnumerable<ToolInvocationResult> toolResults
     )
     {
@@ -294,9 +275,7 @@ public sealed class OpenAiChatClient : IChatClient
         }
 
         _logger.LogDebug("Making single API call after adding all tool results");
-        var nextResponses = await GetLlmResponse();
-
-        return nextResponses;
+        return await GetTurnResultAsync();
     }
 
     public string GetSystemPrompt() => _systemPrompt;

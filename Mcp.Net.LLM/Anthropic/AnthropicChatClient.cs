@@ -119,7 +119,7 @@ public sealed class AnthropicChatClient : IChatClient
     /// Adds a tool result to the Anthropic message history without triggering an API request.
     /// </summary>
     /// <param name="result">The tool result returned from the MCP layer.</param>
-    public void AddToolResultToHistory(ToolInvocationResult? result)
+    private void AddToolResultToHistory(ToolInvocationResult? result)
     {
         if (result == null)
         {
@@ -145,8 +145,7 @@ public sealed class AnthropicChatClient : IChatClient
     /// <summary>
     /// Generates a response from Claude using the accumulated message history.
     /// </summary>
-    /// <returns>MCP-friendly response payloads containing either assistant text or tool calls.</returns>
-    public async Task<IEnumerable<LlmResponse>> GetLlmResponse()
+    private async Task<ChatClientTurnResult> GetTurnResultAsync()
     {
         try
         {
@@ -165,38 +164,44 @@ public sealed class AnthropicChatClient : IChatClient
 
             _messages.Add(new Message { Role = RoleType.Assistant, Content = assistantMessage });
 
-            return FlattenResponseContent(assistantMessage);
+            return BuildAssistantTurn(assistantMessage);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling Claude API: {Message}", ex.Message);
-            return new List<LlmResponse>
-            {
-                new LlmResponse { Content = $"Error: {ex.Message}", Type = MessageType.System },
-            };
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                $"Error: {ex.Message}",
+                Details: ex.ToString(),
+                Provider: "anthropic",
+                Model: _model
+            );
         }
     }
 
-    private IEnumerable<LlmResponse> FlattenResponseContent(IEnumerable<ContentBase> contentItems)
+    private ChatClientAssistantTurn BuildAssistantTurn(IEnumerable<ContentBase> contentItems)
     {
+        var blocks = new List<AssistantContentBlock>();
+
         foreach (var content in contentItems)
         {
             switch (content)
             {
                 case ToolUseContent toolUse:
-                    yield return new LlmResponse
+                    foreach (var invocation in ExtractToolCalls(toolUse))
                     {
-                        Content = string.Empty,
-                        ToolCalls = ExtractToolCalls(toolUse).ToList(),
-                        Type = MessageType.Tool,
-                    };
+                        blocks.Add(
+                            new ToolCallAssistantBlock(
+                                Guid.NewGuid().ToString("n"),
+                                invocation.Id,
+                                invocation.Name,
+                                invocation.Arguments
+                            )
+                        );
+                    }
                     break;
                 case TextContent text:
-                    yield return new LlmResponse
-                    {
-                        Content = text.Text,
-                        Type = MessageType.Assistant,
-                    };
+                    blocks.Add(new TextAssistantBlock(Guid.NewGuid().ToString("n"), text.Text));
                     break;
                 default:
                     _logger.LogWarning(
@@ -206,6 +211,13 @@ public sealed class AnthropicChatClient : IChatClient
                     break;
             }
         }
+
+        return new ChatClientAssistantTurn(
+            Guid.NewGuid().ToString("n"),
+            "anthropic",
+            _model,
+            blocks
+        );
     }
 
     private IEnumerable<ToolInvocation> ExtractToolCalls(ToolUseContent toolUseContent)
@@ -264,47 +276,30 @@ public sealed class AnthropicChatClient : IChatClient
         return document.RootElement.Clone();
     }
 
-    private void AddMessageToHistory(LlmMessage message)
+    /// <summary>
+    /// Sends a user message to Claude and returns the resulting response.
+    /// </summary>
+    public async Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
     {
-        switch (message.Type)
-        {
-            case MessageType.User:
-                _messages.Add(
-                    new Message
-                    {
-                        Role = RoleType.User,
-                        Content = new List<ContentBase>
-                        {
-                            new TextContent() { Text = message.Content },
-                        },
-                    }
-                );
-                _logger.LogDebug($"User message added to history (Anthropic): {message.Content}");
-                break;
+        _messages.Add(
+            new Message
+            {
+                Role = RoleType.User,
+                Content = new List<ContentBase>
+                {
+                    new TextContent { Text = userMessage },
+                },
+            }
+        );
 
-            case MessageType.Tool:
-                AddToolResultToHistory(message.ToolResult);
-                break;
-
-            case MessageType.System:
-                // We don't add system messages in the middle of a conversation
-                break;
-        }
+        _logger.LogDebug("User message added to history (Anthropic): {Message}", userMessage);
+        return await GetTurnResultAsync();
     }
 
     /// <summary>
-    /// Sends a user or tool message to Claude and returns the resulting responses.
-    /// </summary>
-    public async Task<IEnumerable<LlmResponse>> SendMessageAsync(LlmMessage message)
-    {
-        AddMessageToHistory(message);
-        return await GetLlmResponse();
-    }
-
-    /// <summary>
-    /// Appends tool execution results and requests the next assistant response batch.
-    /// </summary>
-    public async Task<IEnumerable<LlmResponse>> SendToolResultsAsync(
+     /// Appends tool execution results and requests the next assistant response batch.
+     /// </summary>
+    public async Task<ChatClientTurnResult> SendToolResultsAsync(
         IEnumerable<ToolInvocationResult> toolResults
     )
     {
@@ -320,9 +315,7 @@ public sealed class AnthropicChatClient : IChatClient
         }
 
         _logger.LogDebug("Making single API call after adding all tool results");
-        var nextResponses = await GetLlmResponse();
-
-        return nextResponses;
+        return await GetTurnResultAsync();
     }
 
     /// <summary>

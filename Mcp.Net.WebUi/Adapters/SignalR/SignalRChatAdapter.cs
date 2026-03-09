@@ -74,9 +74,9 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
 
         // Wire up event handlers
         _chatSession.SessionStarted += OnSessionStarted;
-        _chatSession.AssistantMessageReceived += OnAssistantMessageReceived;
-        _chatSession.ToolExecutionUpdated += OnToolExecutionUpdated;
-        _chatSession.ThinkingStateChanged += OnThinkingStateChanged;
+        _chatSession.TranscriptChanged += OnTranscriptChanged;
+        _chatSession.ToolCallActivityChanged += OnToolCallActivityChanged;
+        _chatSession.ActivityChanged += OnActivityChanged;
     }
 
     /// <summary>
@@ -264,42 +264,47 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         await _hubContext.Clients.Group(_sessionId).SendAsync("SessionStarted", _sessionId);
     }
 
-    private async void OnAssistantMessageReceived(object? sender, string message)
+    private async void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)
     {
+        if (args.ChangeKind != ChatTranscriptChangeKind.Added)
+        {
+            return;
+        }
+
+        if (args.Entry is UserChatEntry)
+        {
+            return;
+        }
+
+        var messageDto = ToMessageDto(args.Entry);
+
         _logger.LogDebug(
-            "Assistant message received in session {SessionId}: {MessagePreview}...",
+            "Transcript entry received in session {SessionId}: {EntryType}",
             _sessionId,
-            message.Substring(0, Math.Min(30, message.Length))
+            messageDto.Type
         );
 
-        var messageId = $"assistant_{Guid.NewGuid()}";
-
-        // Create a message DTO
-        var messageDto = new ChatMessageDto
-        {
-            SessionId = _sessionId,
-            Type = "assistant",
-            Content = message,
-            Id = messageId,
-        };
-
-        // Notify subscribers about the message (e.g. for storage)
         MessageReceived?.Invoke(
             this,
-            new ChatMessageEventArgs(_sessionId, messageId, message, "assistant")
+            new ChatMessageEventArgs(
+                _sessionId,
+                messageDto.Id,
+                messageDto.Content,
+                messageDto.Type,
+                messageDto.Metadata
+            )
         );
 
-        // Send message to clients via SignalR
         await _hubContext.Clients.Group(_sessionId).SendAsync("ReceiveMessage", messageDto);
     }
 
-    private async void OnToolExecutionUpdated(object? sender, ToolExecutionEventArgs args)
+    private async void OnToolCallActivityChanged(object? sender, ToolCallActivityChangedEventArgs args)
     {
         _logger.LogDebug(
             "Tool execution update for session {SessionId}: Tool {ToolName}, Success: {Success}",
             _sessionId,
             args.ToolName,
-            args.Success
+            args.ExecutionState == ToolCallExecutionState.Completed
         );
 
         var toolDto = ToolExecutionDto.FromEventArgs(args, _sessionId);
@@ -307,28 +312,27 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         await _hubContext.Clients.Group(_sessionId).SendAsync("ToolExecutionUpdated", toolDto);
     }
 
-    private async void OnThinkingStateChanged(object? sender, ThinkingStateEventArgs args)
+    private async void OnActivityChanged(object? sender, ChatSessionActivityChangedEventArgs args)
     {
         _logger.LogDebug(
-            "Thinking state changed for session {SessionId}: {IsThinking}, Context: {Context}",
+            "Activity changed for session {SessionId}: {Activity}",
             _sessionId,
-            args.IsThinking,
-            args.Context
+            args.Activity
         );
 
-        // Use the session ID from the event args (if available) or fall back to the adapter's session ID
         string sessionId = args.SessionId ?? _sessionId;
-
-        // Extract thinking context
-        string thinkingContext = args.Context;
-
-        // Simple, direct implementation - now that we've fixed the server-side event generation
-        // there shouldn't be any duplicates to filter
+        string thinkingContext = args.Activity switch
+        {
+            ChatSessionActivity.WaitingForProvider => "waiting-for-provider",
+            ChatSessionActivity.ExecutingTool => "executing-tool",
+            _ => "idle",
+        };
+        bool isThinking = args.Activity != ChatSessionActivity.Idle;
 
         // Send the thinking state change to all clients in the session group
         await _hubContext
             .Clients.Group(_sessionId)
-            .SendAsync("ThinkingStateChanged", sessionId, args.IsThinking, thinkingContext);
+            .SendAsync("ThinkingStateChanged", sessionId, isThinking, thinkingContext);
     }
 
     private async void OnPromptsUpdated(object? sender, IReadOnlyList<Prompt> prompts)
@@ -470,9 +474,9 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
 
         // Unwire events
         _chatSession.SessionStarted -= OnSessionStarted;
-        _chatSession.AssistantMessageReceived -= OnAssistantMessageReceived;
-        _chatSession.ToolExecutionUpdated -= OnToolExecutionUpdated;
-        _chatSession.ThinkingStateChanged -= OnThinkingStateChanged;
+        _chatSession.TranscriptChanged -= OnTranscriptChanged;
+        _chatSession.ToolCallActivityChanged -= OnToolCallActivityChanged;
+        _chatSession.ActivityChanged -= OnActivityChanged;
         _toolRegistry.ToolsUpdated -= OnToolsUpdated;
         _catalog.PromptsUpdated -= OnPromptsUpdated;
         _catalog.ResourcesUpdated -= OnResourcesUpdated;
@@ -536,5 +540,133 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
                     RequestId = requestId,
                 }
             );
+    }
+
+    private ChatMessageDto ToMessageDto(ChatTranscriptEntry entry)
+    {
+        var content = ToDisplayContent(entry);
+        return new ChatMessageDto
+        {
+            Id = entry.Id,
+            SessionId = _sessionId,
+            Type = ToMessageType(entry),
+            Content = content,
+            Timestamp = entry.Timestamp.UtcDateTime,
+            Metadata = ToMetadata(entry),
+        };
+    }
+
+    private static string ToMessageType(ChatTranscriptEntry entry) =>
+        entry switch
+        {
+            AssistantChatEntry => "assistant",
+            ToolResultChatEntry => "toolresult",
+            ErrorChatEntry => "error",
+            UserChatEntry => "user",
+            _ => entry.Kind.ToString().ToLowerInvariant(),
+        };
+
+    private static string ToDisplayContent(ChatTranscriptEntry entry) =>
+        entry switch
+        {
+            UserChatEntry user => user.Content,
+            AssistantChatEntry assistant => string.Join(
+                Environment.NewLine,
+                assistant.Blocks.Select(ToDisplayContent).Where(text => !string.IsNullOrWhiteSpace(text))
+            ),
+            ToolResultChatEntry toolResult => toolResult.Result.Text.Count > 0
+                ? string.Join(Environment.NewLine, toolResult.Result.Text)
+                : (toolResult.IsError ? "Tool execution failed" : "Tool execution completed"),
+            ErrorChatEntry error => error.Message,
+            _ => string.Empty,
+        };
+
+    private static string ToDisplayContent(AssistantContentBlock block) =>
+        block switch
+        {
+            TextAssistantBlock text => text.Text,
+            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
+                => reasoning.Text!,
+            ToolCallAssistantBlock toolCall => $"Calling tool: {toolCall.ToolName}",
+            _ => string.Empty,
+        };
+
+    private static Dictionary<string, object> ToMetadata(ChatTranscriptEntry entry)
+    {
+        var metadata = new Dictionary<string, object>
+        {
+            ["kind"] = entry.Kind.ToString().ToLowerInvariant(),
+        };
+
+        if (!string.IsNullOrWhiteSpace(entry.TurnId))
+        {
+            metadata["turnId"] = entry.TurnId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Provider))
+        {
+            metadata["provider"] = entry.Provider;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Model))
+        {
+            metadata["model"] = entry.Model;
+        }
+
+        switch (entry)
+        {
+            case AssistantChatEntry assistant:
+                metadata["blocks"] = assistant.Blocks.Select(ToMetadata).Cast<object>().ToList();
+                break;
+            case ToolResultChatEntry toolResult:
+                metadata["toolCallId"] = toolResult.ToolCallId;
+                metadata["toolName"] = toolResult.ToolName;
+                metadata["isError"] = toolResult.IsError;
+                break;
+            case ErrorChatEntry error:
+                metadata["source"] = error.Source.ToString().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(error.Code))
+                {
+                    metadata["code"] = error.Code;
+                }
+                if (!string.IsNullOrWhiteSpace(error.Details))
+                {
+                    metadata["details"] = error.Details;
+                }
+                break;
+        }
+
+        return metadata;
+    }
+
+    private static Dictionary<string, object> ToMetadata(AssistantContentBlock block)
+    {
+        var metadata = new Dictionary<string, object>
+        {
+            ["id"] = block.Id,
+            ["kind"] = block.Kind.ToString().ToLowerInvariant(),
+        };
+
+        switch (block)
+        {
+            case TextAssistantBlock text:
+                metadata["text"] = text.Text;
+                break;
+            case ReasoningAssistantBlock reasoning:
+                metadata["text"] = reasoning.Text ?? string.Empty;
+                metadata["visibility"] = reasoning.Visibility.ToString().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(reasoning.ReplayToken))
+                {
+                    metadata["replayToken"] = reasoning.ReplayToken;
+                }
+                break;
+            case ToolCallAssistantBlock toolCall:
+                metadata["toolCallId"] = toolCall.ToolCallId;
+                metadata["toolName"] = toolCall.ToolName;
+                metadata["arguments"] = toolCall.Arguments;
+                break;
+        }
+
+        return metadata;
     }
 }

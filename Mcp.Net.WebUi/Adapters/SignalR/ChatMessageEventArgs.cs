@@ -25,11 +25,23 @@ public class ChatMessageEventArgs : EventArgs
     /// </summary>
     public string Type { get; }
 
-    public ChatMessageEventArgs(string chatId, string messageId, string content, string type)
+    /// <summary>
+    /// Structured metadata associated with the message, when available.
+    /// </summary>
+    public Dictionary<string, object>? Metadata { get; }
+
+    public ChatMessageEventArgs(
+        string chatId,
+        string messageId,
+        string content,
+        string type,
+        Dictionary<string, object>? metadata = null
+    )
     {
         ChatId = chatId;
         MessageId = messageId;
         Content = content;
         Type = type;
+        Metadata = metadata;
     }
 }

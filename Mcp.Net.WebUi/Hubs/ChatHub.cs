@@ -538,6 +538,7 @@ public class ChatHub : Hub
                 Type = args.Type,
                 Content = args.Content,
                 Timestamp = DateTime.UtcNow,
+                Metadata = args.Metadata,
             };
 
             await _chatRepository.StoreMessageAsync(message);

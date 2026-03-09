@@ -9,18 +9,16 @@ namespace Mcp.Net.LLM.Core;
 
 /// <summary>
 /// Coordinates a conversation between an MCP server and an LLM.
-/// Responsible for raising UI events, forwarding user input to the provider,
-/// and executing tool calls returned by the LLM.
+/// Responsible for raising transcript and activity events, forwarding user input
+/// to the provider, and executing tool calls returned by the LLM.
 /// </summary>
 public class ChatSession : IChatSessionEvents
 {
-    private const string ThinkingContextInitialResponse = "initial-response";
-    private const string ThinkingContextToolResponse = "tool-response";
-
     private readonly IChatClient _llmClient;
     private readonly IMcpClient _mcpClient;
     private readonly IToolRegistry _toolRegistry;
     private readonly ILogger<ChatSession> _logger;
+    private readonly List<ChatTranscriptEntry> _transcript = new();
     private string? _sessionId;
     private DateTime _createdAt;
     private DateTime _lastActivityAt;
@@ -40,30 +38,15 @@ public class ChatSession : IChatSessionEvents
     /// </summary>
     public DateTime LastActivityAt => _lastActivityAt;
 
-    /// <summary>
-    /// Event raised when the session is started
-    /// </summary>
+    public IReadOnlyList<ChatTranscriptEntry> Transcript => _transcript;
+
     public event EventHandler? SessionStarted;
 
-    /// <summary>
-    /// Event raised when a user message is received
-    /// </summary>
-    public event EventHandler<string>? UserMessageReceived;
+    public event EventHandler<ChatTranscriptChangedEventArgs>? TranscriptChanged;
 
-    /// <summary>
-    /// Event raised when an assistant message is received
-    /// </summary>
-    public event EventHandler<string>? AssistantMessageReceived;
+    public event EventHandler<ChatSessionActivityChangedEventArgs>? ActivityChanged;
 
-    /// <summary>
-    /// Event raised when a tool execution state is updated
-    /// </summary>
-    public event EventHandler<ToolExecutionEventArgs>? ToolExecutionUpdated;
-
-    /// <summary>
-    /// Event raised when the thinking state changes
-    /// </summary>
-    public event EventHandler<ThinkingStateEventArgs>? ThinkingStateChanged;
+    public event EventHandler<ToolCallActivityChangedEventArgs>? ToolCallActivityChanged;
 
     /// <summary>
     /// Gets the underlying LLM client
@@ -79,9 +62,6 @@ public class ChatSession : IChatSessionEvents
         set => _sessionId = value;
     }
 
-    /// <summary>
-    /// Initializes a new instance of the ChatSession class
-    /// </summary>
     public ChatSession(
         IChatClient llmClient,
         IMcpClient mcpClient,
@@ -97,16 +77,6 @@ public class ChatSession : IChatSessionEvents
         _lastActivityAt = _createdAt;
     }
 
-    /// <summary>
-    /// Creates a new chat session based on an agent definition
-    /// </summary>
-    /// <param name="agent">The agent definition to use</param>
-    /// <param name="factory">The agent factory</param>
-    /// <param name="mcpClient">The MCP client</param>
-    /// <param name="toolRegistry">The tool registry</param>
-    /// <param name="logger">The logger</param>
-    /// <param name="userId">Optional user ID for user-specific API keys</param>
-    /// <returns>A new chat session configured with the agent's settings</returns>
     public static async Task<ChatSession> CreateFromAgentAsync(
         AgentDefinition agent,
         IAgentFactory factory,
@@ -116,30 +86,18 @@ public class ChatSession : IChatSessionEvents
         string? userId = null
     )
     {
-        // Create a chat client from the agent definition, optionally with user-specific API key
         var chatClient = string.IsNullOrEmpty(userId)
             ? await factory.CreateClientFromAgentDefinitionAsync(agent)
             : await factory.CreateClientFromAgentDefinitionAsync(agent, userId);
 
-        // Create a new chat session
-        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger);
-
-        // Associate the agent definition with the session
-        session.AgentDefinition = agent;
+        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger)
+        {
+            AgentDefinition = agent,
+        };
 
         return session;
     }
 
-    /// <summary>
-    /// Creates a new chat session using an agent from the agent manager
-    /// </summary>
-    /// <param name="agentId">The ID of the agent to use</param>
-    /// <param name="agentManager">The agent manager</param>
-    /// <param name="mcpClient">The MCP client</param>
-    /// <param name="toolRegistry">The tool registry</param>
-    /// <param name="logger">The logger</param>
-    /// <param name="userId">Optional user ID for user-specific API keys</param>
-    /// <returns>A new chat session configured with the agent's settings</returns>
     public static async Task<ChatSession> CreateFromAgentIdAsync(
         string agentId,
         IAgentManager agentManager,
@@ -149,249 +107,212 @@ public class ChatSession : IChatSessionEvents
         string? userId = null
     )
     {
-        // Get the agent definition
         var agent = await agentManager.GetAgentByIdAsync(agentId);
         if (agent == null)
         {
             throw new KeyNotFoundException($"Agent with ID {agentId} not found");
         }
 
-        // Create a chat client from the agent
         var chatClient = await agentManager.CreateChatClientAsync(agentId, userId);
-
-        // Create a new chat session
-        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger);
-
-        // Associate the agent definition with the session
-        session.AgentDefinition = agent;
+        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger)
+        {
+            AgentDefinition = agent,
+        };
 
         return session;
     }
 
-    /// <summary>
-    /// Starts the chat session and raises the SessionStarted event
-    /// </summary>
     public void StartSession()
     {
         SessionStarted?.Invoke(this, EventArgs.Empty);
         _logger.LogDebug("Chat session started");
     }
 
-    /// <summary>
-    /// Sends a user message to the LLM and processes the response
-    /// </summary>
-    /// <param name="message">The user message</param>
     public async Task SendUserMessageAsync(string message)
     {
-        // Update the last activity timestamp
         _lastActivityAt = DateTime.UtcNow;
+        var turnId = Guid.NewGuid().ToString("n");
 
-        // Notify subscribers of the user message
-        UserMessageReceived?.Invoke(this, message);
+        AppendTranscript(
+            new UserChatEntry(
+                Guid.NewGuid().ToString("n"),
+                DateTimeOffset.UtcNow,
+                message,
+                turnId
+            )
+        );
 
-        _logger.LogDebug("Getting initial response for user message");
-        var responseQueue = new Queue<LlmResponse>(await ProcessUserMessageAsync(message));
-        _logger.LogDebug("Initial response queue has {Count} items", responseQueue.Count);
+        var nextTurn = await RequestProviderAsync(() => _llmClient.SendMessageAsync(message), turnId);
 
-        while (responseQueue.Count > 0)
+        while (nextTurn is ChatClientAssistantTurn assistantTurn)
         {
-            var textResponses = new List<LlmResponse>();
-            var toolResponses = new List<LlmResponse>();
+            AppendTranscript(ToAssistantEntry(assistantTurn, turnId));
 
-            DrainResponseQueue(responseQueue, textResponses, toolResponses);
-
-            ProcessAssistantResponses(textResponses);
-
-            if (toolResponses.Count > 0)
+            var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
+            if (toolCalls.Count == 0)
             {
-                var toolResults = await ExecuteToolCallsAsync(toolResponses);
-                var followUpResponses = await SubmitToolResultsAsync(toolResults);
-
-                foreach (var response in followUpResponses)
-                {
-                    responseQueue.Enqueue(response);
-                }
+                break;
             }
 
-            _lastActivityAt = DateTime.UtcNow;
+            var toolResults = await ExecuteToolCallsAsync(toolCalls, turnId);
+            nextTurn = await RequestProviderAsync(
+                () => _llmClient.SendToolResultsAsync(toolResults),
+                turnId
+            );
         }
+
+        if (nextTurn is ChatClientFailure failure)
+        {
+            AppendTranscript(ToErrorEntry(failure, turnId));
+        }
+
+        _lastActivityAt = DateTime.UtcNow;
     }
 
-    private async Task<IEnumerable<LlmResponse>> SubmitToolResultsAsync(
-        IReadOnlyList<ToolInvocationResult> toolResults
+    private async Task<ChatClientTurnResult> RequestProviderAsync(
+        Func<Task<ChatClientTurnResult>> operation,
+        string turnId
     )
     {
-        _logger.LogDebug("Total of {Count} tool results to send", toolResults.Count);
-        SetThinkingState(true, ThinkingContextToolResponse);
+        SetActivity(ChatSessionActivity.WaitingForProvider, turnId);
 
         try
         {
-            var responses = await _llmClient.SendToolResultsAsync(toolResults);
-            return responses;
+            return await operation();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Provider request failed");
+
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                ex.Message,
+                Details: ex.ToString()
+            );
         }
         finally
         {
-            SetThinkingState(false, ThinkingContextToolResponse);
+            SetActivity(ChatSessionActivity.Idle, turnId);
         }
     }
 
-    private async Task<IEnumerable<LlmResponse>> ProcessUserMessageAsync(string userInput)
-    {
-        var userMessage = new LlmMessage { Type = MessageType.User, Content = userInput };
-
-        SetThinkingState(true, ThinkingContextInitialResponse);
-
-        try
-        {
-            var response = await _llmClient.SendMessageAsync(userMessage);
-            return response;
-        }
-        finally
-        {
-            SetThinkingState(false, ThinkingContextInitialResponse);
-        }
-    }
-
-    private static void DrainResponseQueue(
-        Queue<LlmResponse> queue,
-        ICollection<LlmResponse> assistantResponses,
-        ICollection<LlmResponse> toolResponses
-    )
-    {
-        while (queue.Count > 0)
-        {
-            var response = queue.Dequeue();
-            switch (response.Type)
-            {
-                case MessageType.Assistant:
-                    assistantResponses.Add(response);
-                    break;
-                case MessageType.Tool:
-                    toolResponses.Add(response);
-                    break;
-            }
-        }
-    }
-
-    private void ProcessAssistantResponses(IEnumerable<LlmResponse> assistantResponses)
-    {
-        foreach (var response in assistantResponses)
-        {
-            var content = response.Content ?? string.Empty;
-            if (content.Length > 0)
-            {
-                var preview = content.Length > 30 ? content.Substring(0, 30) : content;
-                _logger.LogDebug("Processing assistant message: {Preview}...", preview);
-            }
-            else
-            {
-                _logger.LogDebug("Processing assistant message (empty content)");
-            }
-
-            AssistantMessageReceived?.Invoke(this, content);
-        }
-    }
-
-    /// <summary>
-    /// Given a list of tool invocations, executes them against the MCP server and returns the results.
-    /// </summary>
     private async Task<List<ToolInvocationResult>> ExecuteToolCallsAsync(
-        IEnumerable<LlmResponse> toolResponses
+        IReadOnlyList<ToolCallAssistantBlock> toolCalls,
+        string turnId
     )
     {
-        _logger.LogDebug("Starting ExecuteToolCalls batch");
+        SetActivity(ChatSessionActivity.ExecutingTool, turnId);
 
-        var accumulatedResults = new List<ToolInvocationResult>();
-
-        foreach (var toolResponse in toolResponses)
+        try
         {
-            var toolCalls = toolResponse.ToolCalls;
-            _logger.LogDebug("Found {Count} tool calls to process in response", toolCalls.Count);
+            var results = new List<ToolInvocationResult>();
 
-            foreach (var invocation in toolCalls)
+            foreach (var toolCall in toolCalls)
             {
-                _logger.LogDebug(
-                    "Processing tool call {ToolName} ({ToolCallId})",
-                    invocation.Name,
-                    invocation.Id
-                );
-
-                accumulatedResults.Add(await ExecuteToolCall(invocation));
+                results.Add(await ExecuteToolCallAsync(toolCall, turnId));
             }
-        }
 
-        return accumulatedResults;
+            return results;
+        }
+        finally
+        {
+            SetActivity(ChatSessionActivity.Idle, turnId);
+        }
     }
 
-    /// <summary>
-    /// Executes the supplied tool invocation and returns a structured result payload.
-    /// </summary>
-    private async Task<ToolInvocationResult> ExecuteToolCall(ToolInvocation toolInvocation)
+    private async Task<ToolInvocationResult> ExecuteToolCallAsync(
+        ToolCallAssistantBlock toolCall,
+        string turnId
+    )
     {
-        _logger.LogDebug("Starting ExecuteToolCall for {ToolName}", toolInvocation.Name);
+        ToolCallActivityChanged?.Invoke(
+            this,
+            new ToolCallActivityChangedEventArgs(
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                ToolCallExecutionState.Queued,
+                toolCall.Arguments
+            )
+        );
 
-        var tool = _toolRegistry.GetToolByName(toolInvocation.Name);
+        var tool = _toolRegistry.GetToolByName(toolCall.ToolName);
         if (tool == null)
         {
-            _logger.LogError("Tool {ToolName} not found", toolInvocation.Name);
+            _logger.LogError("Tool {ToolName} not found", toolCall.ToolName);
 
-            var missingResult = CreateErrorResult(
-                toolInvocation,
-                "Tool not found in registry",
-                isError: true
+            var missingResult = CreateErrorResult(toolCall.ToolCallId, toolCall.ToolName, "Tool not found in registry");
+
+            ToolCallActivityChanged?.Invoke(
+                this,
+                new ToolCallActivityChangedEventArgs(
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    ToolCallExecutionState.Failed,
+                    toolCall.Arguments,
+                    missingResult,
+                    "Tool not found in registry"
+                )
             );
 
-            ToolExecutionUpdated?.Invoke(
-                this,
-                new ToolExecutionEventArgs(
-                    toolInvocation,
-                    ToolExecutionState.Failed,
-                    success: false,
-                    errorMessage: "Tool not found in registry",
-                    result: missingResult
+            AppendTranscript(
+                new ToolResultChatEntry(
+                    Guid.NewGuid().ToString("n"),
+                    DateTimeOffset.UtcNow,
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    missingResult,
+                    true,
+                    turnId
                 )
             );
 
             return missingResult;
         }
 
-        _logger.LogDebug(
-            "Calling tool {ToolName} with arguments: {@Arguments}",
-            tool.Name,
-            toolInvocation.Arguments
-        );
-
-        ToolExecutionUpdated?.Invoke(
+        ToolCallActivityChanged?.Invoke(
             this,
-            new ToolExecutionEventArgs(
-                toolInvocation,
-                ToolExecutionState.Starting,
-                success: true
+            new ToolCallActivityChangedEventArgs(
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                ToolCallExecutionState.Running,
+                toolCall.Arguments
             )
         );
 
         try
         {
-            var mcpResult = await _mcpClient.CallTool(tool.Name, toolInvocation.Arguments);
+            var mcpResult = await _mcpClient.CallTool(tool.Name, toolCall.Arguments);
             var invocationResult = ToolInvocationResult.FromMcpResult(
-                toolInvocation.Id,
-                toolInvocation.Name,
+                toolCall.ToolCallId,
+                toolCall.ToolName,
                 mcpResult
             );
 
-            var eventSuccess = !invocationResult.IsError;
-            var errorMessage = invocationResult.IsError
-                ? string.Join(Environment.NewLine, invocationResult.Text)
-                : null;
-
-            ToolExecutionUpdated?.Invoke(
+            ToolCallActivityChanged?.Invoke(
                 this,
-                new ToolExecutionEventArgs(
-                    toolInvocation,
-                    ToolExecutionState.Completed,
-                    success: eventSuccess,
-                    errorMessage: errorMessage,
-                    result: invocationResult
+                new ToolCallActivityChangedEventArgs(
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    invocationResult.IsError
+                        ? ToolCallExecutionState.Failed
+                        : ToolCallExecutionState.Completed,
+                    toolCall.Arguments,
+                    invocationResult,
+                    invocationResult.IsError
+                        ? string.Join(Environment.NewLine, invocationResult.Text)
+                        : null
+                )
+            );
+
+            AppendTranscript(
+                new ToolResultChatEntry(
+                    Guid.NewGuid().ToString("n"),
+                    DateTimeOffset.UtcNow,
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    invocationResult,
+                    invocationResult.IsError,
+                    turnId
                 )
             );
 
@@ -402,20 +323,33 @@ public class ChatSession : IChatSessionEvents
             _logger.LogError(
                 ex,
                 "Error executing tool {ToolName}: {ErrorMessage}",
-                toolInvocation.Name,
+                toolCall.ToolName,
                 ex.Message
             );
 
-            var errorResult = CreateErrorResult(toolInvocation, ex.Message, isError: true);
+            var errorResult = CreateErrorResult(toolCall.ToolCallId, toolCall.ToolName, ex.Message);
 
-            ToolExecutionUpdated?.Invoke(
+            ToolCallActivityChanged?.Invoke(
                 this,
-                new ToolExecutionEventArgs(
-                    toolInvocation,
-                    ToolExecutionState.Failed,
-                    success: false,
-                    errorMessage: ex.Message,
-                    result: errorResult
+                new ToolCallActivityChangedEventArgs(
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    ToolCallExecutionState.Failed,
+                    toolCall.Arguments,
+                    errorResult,
+                    ex.Message
+                )
+            );
+
+            AppendTranscript(
+                new ToolResultChatEntry(
+                    Guid.NewGuid().ToString("n"),
+                    DateTimeOffset.UtcNow,
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    errorResult,
+                    true,
+                    turnId
                 )
             );
 
@@ -423,34 +357,69 @@ public class ChatSession : IChatSessionEvents
         }
     }
 
-    private void SetThinkingState(bool isThinking, string context)
+    private void AppendTranscript(
+        ChatTranscriptEntry entry,
+        ChatTranscriptChangeKind changeKind = ChatTranscriptChangeKind.Added
+    )
+    {
+        _transcript.Add(entry);
+        TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
+    }
+
+    private void SetActivity(ChatSessionActivity activity, string turnId)
     {
         _logger.LogDebug(
-            "Setting thinking state to {State} ({Context})",
-            isThinking,
-            context
+            "Setting chat activity to {Activity} for turn {TurnId}",
+            activity,
+            turnId
         );
 
-        ThinkingStateChanged?.Invoke(
+        ActivityChanged?.Invoke(
             this,
-            new ThinkingStateEventArgs(isThinking, context, _sessionId)
+            new ChatSessionActivityChangedEventArgs(activity, turnId, _sessionId)
         );
     }
 
+    private static AssistantChatEntry ToAssistantEntry(
+        ChatClientAssistantTurn turn,
+        string turnId
+    ) =>
+        new(
+            turn.Id,
+            DateTimeOffset.UtcNow,
+            turn.Blocks,
+            turnId,
+            turn.Provider,
+            turn.Model
+        );
+
+    private static ErrorChatEntry ToErrorEntry(ChatClientFailure failure, string turnId) =>
+        new(
+            Guid.NewGuid().ToString("n"),
+            DateTimeOffset.UtcNow,
+            failure.Source,
+            failure.Message,
+            failure.Code,
+            failure.Details,
+            null,
+            failure.IsRetryable,
+            turnId,
+            failure.Provider,
+            failure.Model
+        );
+
     private static ToolInvocationResult CreateErrorResult(
-        ToolInvocation invocation,
-        string message,
-        bool isError
+        string toolCallId,
+        string toolName,
+        string message
     )
     {
-        var text = string.IsNullOrWhiteSpace(message)
-            ? Array.Empty<string>()
-            : new[] { message };
+        var text = string.IsNullOrWhiteSpace(message) ? Array.Empty<string>() : new[] { message };
 
         return new ToolInvocationResult(
-            invocation.Id,
-            invocation.Name,
-            isError,
+            toolCallId,
+            toolName,
+            true,
             text,
             structured: null,
             resourceLinks: Array.Empty<ToolResultResourceLink>(),

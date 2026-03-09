@@ -34,15 +34,13 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var responses = await client.SendMessageAsync(
-            new LlmMessage { Type = MessageType.User, Content = "hi" }
-        );
+        var response = await client.SendMessageAsync("hi");
 
         // Assert
-        responses.Should().HaveCount(1);
-        var response = responses.Single();
-        response.Type.Should().Be(MessageType.Assistant);
-        response.Content.Should().Be("Hello from Claude");
+        response.Should().BeOfType<ChatClientAssistantTurn>();
+        var assistantTurn = (ChatClientAssistantTurn)response;
+        assistantTurn.Blocks.Should().ContainSingle();
+        assistantTurn.Blocks[0].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be("Hello from Claude");
     }
 
     [Fact]
@@ -66,19 +64,14 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var responses = await client.SendMessageAsync(
-            new LlmMessage { Type = MessageType.User, Content = "find weather" }
-        );
+        var response = await client.SendMessageAsync("find weather");
 
         // Assert
-        responses.Should().HaveCount(1);
-        var response = responses.Single();
-        response.Type.Should().Be(MessageType.Tool);
-        response.ToolCalls.Should().HaveCount(1);
-
-        var invocation = response.ToolCalls.Single();
-        invocation.Id.Should().Be("toolu_1");
-        invocation.Name.Should().Be("search");
+        response.Should().BeOfType<ChatClientAssistantTurn>();
+        var assistantTurn = (ChatClientAssistantTurn)response;
+        var invocation = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().Single();
+        invocation.ToolCallId.Should().Be("toolu_1");
+        invocation.ToolName.Should().Be("search");
         invocation.Arguments.Should().ContainKey("query").WhoseValue.Should().Be("weather");
         invocation.Arguments.Should().ContainKey("includeForecast").WhoseValue.Should().Be(true);
     }
@@ -115,12 +108,11 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var responses = await client.SendMessageAsync(
-            new LlmMessage { Type = MessageType.User, Content = "find nested arguments" }
-        );
+        var response = await client.SendMessageAsync("find nested arguments");
 
         // Assert
-        var invocation = responses.Single().ToolCalls.Single();
+        response.Should().BeOfType<ChatClientAssistantTurn>();
+        var invocation = ((ChatClientAssistantTurn)response).Blocks.OfType<ToolCallAssistantBlock>().Single();
         invocation.Arguments.Should().ContainKey("query").WhoseValue.Should().Be("bugs");
         JsonSerializer.Serialize(invocation.Arguments["filter"])
             .Should()
@@ -131,7 +123,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_FailedRequest_ShouldReturnSystemError()
+    public async Task SendMessageAsync_FailedRequest_ShouldReturnProviderFailure()
     {
         // Arrange
         var options = new ChatClientOptions
@@ -144,15 +136,13 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var responses = await client.SendMessageAsync(
-            new LlmMessage { Type = MessageType.User, Content = "hello" }
-        );
+        var response = await client.SendMessageAsync("hello");
 
         // Assert
-        responses.Should().HaveCount(1);
-        var response = responses.Single();
-        response.Type.Should().Be(MessageType.System);
-        response.Content.Should().Contain("boom");
+        response.Should().BeOfType<ChatClientFailure>();
+        var failure = (ChatClientFailure)response;
+        failure.Source.Should().Be(ChatErrorSource.Provider);
+        failure.Message.Should().Contain("boom");
     }
 
     [Fact]
@@ -172,7 +162,7 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+        await client.SendMessageAsync("hello");
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
@@ -195,7 +185,7 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+        await client.SendMessageAsync("hello");
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();

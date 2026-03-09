@@ -18,7 +18,7 @@ Use it to see which component or system tracks are active and where each next sl
 - `Mcp.Net.Client`: `docs/vnext/client.md`
   - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
 - `Mcp.Net.LLM`: `docs/vnext/llm.md`
-  - Current slice: fix nested object and array tool arguments in the provider adapters.
+  - Current slice: replace the text-first chat contracts with the block-based transcript/event model and typed provider outputs.
 
 ## On-Demand Tracks
 

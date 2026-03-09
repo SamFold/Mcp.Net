@@ -33,7 +33,7 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+        await client.SendMessageAsync("hello");
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
@@ -59,7 +59,7 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendMessageAsync(new LlmMessage { Type = MessageType.User, Content = "hello" });
+        await client.SendMessageAsync("hello");
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
