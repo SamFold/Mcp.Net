@@ -1,6 +1,7 @@
 using Mcp.Net.LLM.Agents;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Chat.Extensions;
@@ -286,19 +287,6 @@ public class ChatController : ControllerBase
 
             // Get or create an adapter
             var adapter = await GetOrCreateAdapterAsync(sessionId);
-
-            // Create message for storage
-            var storedMessage = new StoredChatMessage
-            {
-                Id = message.Id ?? Guid.NewGuid().ToString(),
-                SessionId = sessionId,
-                Type = "user",
-                Content = message.Content,
-                Timestamp = DateTime.UtcNow,
-            };
-
-            // Store the message
-            await _chatRepository.StoreMessageAsync(storedMessage);
 
             // Check if this is the first message in the session
             bool isFirstMessage = await _chatRepository.IsFirstMessageAsync(sessionId);
@@ -663,6 +651,9 @@ public class ChatController : ControllerBase
                 // Subscribe to message events
                 newAdapter.MessageReceived += OnChatMessageReceived;
 
+                var transcript = await _chatRepository.GetTranscriptEntriesAsync(sid);
+                await newAdapter.LoadHistoryAsync(transcript);
+
                 // Start the adapter
                 newAdapter.Start();
 
@@ -678,18 +669,7 @@ public class ChatController : ControllerBase
     {
         try
         {
-            // Store the message
-            var message = new StoredChatMessage
-            {
-                Id = args.MessageId,
-                SessionId = args.ChatId,
-                Type = args.Type,
-                Content = args.Content,
-                Timestamp = DateTime.UtcNow,
-                Metadata = args.Metadata,
-            };
-
-            await _chatRepository.StoreMessageAsync(message);
+            await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
 
             // Also update the session metadata with LastUpdatedAt
             var metadata = await _chatRepository.GetChatMetadataAsync(args.ChatId);
@@ -697,8 +677,7 @@ public class ChatController : ControllerBase
             {
                 // Update LastUpdatedAt
                 metadata.LastUpdatedAt = DateTime.UtcNow;
-                metadata.LastMessagePreview =
-                    args.Content.Length > 50 ? args.Content.Substring(0, 47) + "..." : args.Content;
+                metadata.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(args.Entry);
 
                 // Update in repository
                 await _chatRepository.UpdateChatMetadataAsync(metadata);

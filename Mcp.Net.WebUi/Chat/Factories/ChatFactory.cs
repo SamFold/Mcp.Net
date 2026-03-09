@@ -5,6 +5,7 @@ using Mcp.Net.LLM.Catalog;
 using Mcp.Net.LLM.Completions;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.LLM.Tools;
 using Mcp.Net.LLM.Elicitation;
 using System.Collections.Concurrent;
@@ -42,6 +43,7 @@ public class ChatFactory : IChatFactory
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
     private readonly IMcpClientBuilderConfigurator _authConfigurator;
+    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
     private readonly ConcurrentDictionary<string, IMcpClient> _sessionClients = new();
     private readonly ConcurrentDictionary<string, Action<JsonRpcNotificationMessage>> _toolNotificationHandlers = new();
@@ -56,7 +58,8 @@ public class ChatFactory : IChatFactory
         LlmClientFactory clientFactory,
         DefaultLlmSettings defaultSettings,
         IConfiguration configuration,
-        IMcpClientBuilderConfigurator authConfigurator
+        IMcpClientBuilderConfigurator authConfigurator,
+        IChatTranscriptReplayTransformer replayTransformer
     )
     {
         _logger = logger;
@@ -67,6 +70,7 @@ public class ChatFactory : IChatFactory
         _defaultSettings = defaultSettings;
         _configuration = configuration;
         _authConfigurator = authConfigurator;
+        _replayTransformer = replayTransformer;
     }
 
     /// <summary>
@@ -105,7 +109,8 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger
+            chatSessionLogger,
+            _replayTransformer
         );
 
         // Create adapter logger
@@ -154,7 +159,8 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger
+            chatSessionLogger,
+            _replayTransformer
         );
 
         // Create adapter logger

@@ -2,6 +2,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging;
 
@@ -18,6 +19,7 @@ public class ChatSession : IChatSessionEvents
     private readonly IMcpClient _mcpClient;
     private readonly IToolRegistry _toolRegistry;
     private readonly ILogger<ChatSession> _logger;
+    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly List<ChatTranscriptEntry> _transcript = new();
     private string? _sessionId;
     private DateTime _createdAt;
@@ -66,13 +68,15 @@ public class ChatSession : IChatSessionEvents
         IChatClient llmClient,
         IMcpClient mcpClient,
         IToolRegistry toolRegistry,
-        ILogger<ChatSession> logger
+        ILogger<ChatSession> logger,
+        IChatTranscriptReplayTransformer? replayTransformer = null
     )
     {
         _llmClient = llmClient;
         _mcpClient = mcpClient;
         _toolRegistry = toolRegistry;
         _logger = logger;
+        _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
         _createdAt = DateTime.UtcNow;
         _lastActivityAt = _createdAt;
     }
@@ -126,6 +130,28 @@ public class ChatSession : IChatSessionEvents
     {
         SessionStarted?.Invoke(this, EventArgs.Empty);
         _logger.LogDebug("Chat session started");
+    }
+
+    public Task LoadTranscriptAsync(IReadOnlyList<ChatTranscriptEntry> transcript)
+    {
+        ArgumentNullException.ThrowIfNull(transcript);
+
+        _transcript.Clear();
+        _transcript.AddRange(transcript);
+
+        if (_transcript.Count > 0)
+        {
+            _createdAt = _transcript[0].Timestamp.UtcDateTime;
+            _lastActivityAt = _transcript[^1].Timestamp.UtcDateTime;
+        }
+
+        var replayTranscript = _replayTransformer.Transform(
+            _transcript,
+            _llmClient.GetReplayTarget()
+        );
+        _llmClient.LoadReplayTranscript(replayTranscript);
+
+        return Task.CompletedTask;
     }
 
     public async Task SendUserMessageAsync(string message)

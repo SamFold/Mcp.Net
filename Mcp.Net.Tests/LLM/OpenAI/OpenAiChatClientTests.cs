@@ -97,6 +97,52 @@ public class OpenAiChatClientTests
             .Be("""["triage","backend"]""");
     }
 
+    [Fact]
+    public async Task LoadReplayTranscript_ShouldIncludePriorHistoryInFirstOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        client.LoadReplayTranscript(
+            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
+                client.GetReplayTarget(),
+                new ChatTranscriptEntry[]
+                {
+                    new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "Earlier user", "turn-1"),
+                    new AssistantChatEntry(
+                        "assistant-1",
+                        DateTimeOffset.UtcNow.AddMinutes(-1),
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "Earlier answer") },
+                        "turn-1",
+                        "openai",
+                        "gpt-5"
+                    ),
+                }
+            )
+        );
+
+        await client.SendMessageAsync("New question");
+
+        completionInvoker.CapturedMessages.Should().NotBeNull();
+        completionInvoker.CapturedMessages!.Should().HaveCount(4);
+        completionInvoker.CapturedMessages[1].Should().BeOfType<UserChatMessage>();
+        completionInvoker.CapturedMessages[2].Should().BeOfType<AssistantChatMessage>();
+        completionInvoker.CapturedMessages[3].Should().BeOfType<UserChatMessage>();
+        completionInvoker.CapturedMessages[2].Content.Single().Text.Should().Be("Earlier answer");
+        completionInvoker.CapturedMessages[3].Content.Single().Text.Should().Be("New question");
+    }
+
     private static string ExtractSystemPrompt(IReadOnlyList<ChatMessage> messages)
     {
         messages[0].Should().BeOfType<SystemChatMessage>();

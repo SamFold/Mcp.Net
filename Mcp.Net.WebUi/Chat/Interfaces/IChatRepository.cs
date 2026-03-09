@@ -40,9 +40,14 @@ public interface IChatRepository
     Task<List<ChatMessageDto>> GetChatMessagesAsync(string chatId);
 
     /// <summary>
-    /// Store a message in a chat session
+    /// Get the typed transcript entries for a chat session
     /// </summary>
-    Task StoreMessageAsync(StoredChatMessage message);
+    Task<IReadOnlyList<ChatTranscriptEntry>> GetTranscriptEntriesAsync(string chatId);
+
+    /// <summary>
+    /// Append a transcript entry to a chat session
+    /// </summary>
+    Task AppendTranscriptEntryAsync(string chatId, ChatTranscriptEntry entry);
 
     /// <summary>
     /// Clear all messages from a chat session

@@ -12,6 +12,14 @@
   - transcript entries: `User`, `Assistant`, `ToolResult`, `Error`
   - assistant blocks: `Text`, `Reasoning`, `ToolCall`
   - typed replay/history transforms are now considered required architecture
+- `Mcp.Net.LLM` now has a provider-agnostic transcript replay transformer with coverage for:
+  - same-model opaque reasoning token preservation
+  - same-provider cross-model reasoning degradation
+  - cross-provider reasoning safety defaults
+  - synthetic tool-result repair for unmatched assistant tool calls
+- Persisted chat history now stores typed `ChatTranscriptEntry` records instead of flat `StoredChatMessage` rows.
+- `ChatSession` resume now rehydrates both its in-memory transcript and provider client history through the replay transformer and provider-specific replay loaders.
+- The Web UI adapter bootstrap path now loads persisted transcript before session start, stores all runtime transcript entries including `User`, and no longer injects a fake `system` history message on prompt updates.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 
 ## Goal
@@ -37,16 +45,15 @@
 
 ## Current slice
 
-1. Replace the current `ChatSession` message/event contracts with the block-based transcript model described in `docs/llm-chat-session-item-model.md`.
-2. Replace `LlmResponse`/`MessageType` with typed provider outputs that can express reasoning, text, tool calls, and typed failures directly.
-3. Add focused regressions for transcript entry emission, tool result/error handling, and same-model replay safety.
-4. Migrate the Web UI adapter and persisted message shape in the same slice instead of adding compatibility shims.
+1. Harden provider-specific replay mapping with captured probe fixtures, including model-switch, cross-provider handoff, and Anthropic reasoning replay cases.
+2. Decide whether the remaining Web UI transport DTOs should also become discriminated transcript-entry models now that persistence/runtime state is typed.
+3. Keep the transcript semantics stable while the next streaming block-delta shape is introduced.
 
 ## Next slices
 
 1. Add streaming block-delta support on top of the new transcript model without changing transcript semantics.
-2. Harden replay transforms for model-switch and cross-provider handoff cases using captured probe fixtures and targeted integration tests.
-3. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
+2. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
+3. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay/streaming behavior has settled.
 
 ## Open decisions
 

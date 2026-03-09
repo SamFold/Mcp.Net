@@ -1,5 +1,6 @@
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.DTOs;
 using Mcp.Net.WebUi.Infrastructure.Notifications;
@@ -160,47 +161,44 @@ public class ChatRepository : IChatRepository
     /// </summary>
     public async Task<List<ChatMessageDto>> GetChatMessagesAsync(string chatId)
     {
-        var storedMessages = await _historyManager.GetSessionMessagesAsync(chatId);
-
-        // Convert to DTOs
-        return storedMessages
-            .Select(m => new ChatMessageDto
-            {
-                Id = m.Id,
-                SessionId = m.SessionId,
-                Type = m.Type,
-                Content = m.Content,
-                Timestamp = m.Timestamp,
-                Metadata = m.Metadata,
-            })
+        var transcript = await _historyManager.GetSessionTranscriptAsync(chatId);
+        return transcript
+            .Select(entry => ChatTranscriptEntryMapper.ToMessageDto(chatId, entry))
             .ToList();
     }
 
     /// <summary>
-    /// Store a message in a chat session
+    /// Get the typed transcript for a chat session
     /// </summary>
-    public async Task StoreMessageAsync(StoredChatMessage message)
+    public Task<IReadOnlyList<ChatTranscriptEntry>> GetTranscriptEntriesAsync(string chatId)
+    {
+        return _historyManager.GetSessionTranscriptAsync(chatId);
+    }
+
+    /// <summary>
+    /// Append a transcript entry to a chat session
+    /// </summary>
+    public async Task AppendTranscriptEntryAsync(string chatId, ChatTranscriptEntry entry)
     {
         _logger.LogInformation(
-            "[REPOSITORY] StoreMessageAsync called for session {ChatId}",
-            message.SessionId
+            "[REPOSITORY] AppendTranscriptEntryAsync called for session {ChatId}",
+            chatId
         );
 
         try
         {
-            // Store the message
-            await _historyManager.AddMessageAsync(message);
+            await _historyManager.AddTranscriptEntryAsync(chatId, entry);
             _logger.LogInformation(
-                "[REPOSITORY] Stored message in history for session {ChatId}",
-                message.SessionId
+                "[REPOSITORY] Stored transcript entry in history for session {ChatId}",
+                chatId
             );
         }
         catch (Exception ex)
         {
             _logger.LogError(
                 ex,
-                "Failed to store message in history for session {ChatId}",
-                message.SessionId
+                "Failed to store transcript entry in history for session {ChatId}",
+                chatId
             );
             throw;
         }
@@ -211,8 +209,7 @@ public class ChatRepository : IChatRepository
     /// </summary>
     public async Task ClearChatMessagesAsync(string chatId)
     {
-        // Clear messages in history
-        await _historyManager.ClearSessionMessagesAsync(chatId);
+        await _historyManager.ClearSessionTranscriptAsync(chatId);
         _logger.LogInformation("[REPOSITORY] Cleared messages for session {ChatId}", chatId);
     }
 

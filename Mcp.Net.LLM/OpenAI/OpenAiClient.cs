@@ -5,6 +5,7 @@ using System.Text.Json;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging;
 using OpenAI;
@@ -72,7 +73,7 @@ public sealed class OpenAiChatClient : IChatClient
         _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(_modelName);
 
         _completionOptions = BuildCompletionOptions(_modelName, options);
-        _history.Add(new SystemChatMessage(_systemPrompt));
+        InitializeHistory();
     }
 
     private static string ResolveModelName(ChatClientOptions options) =>
@@ -211,6 +212,18 @@ public sealed class OpenAiChatClient : IChatClient
         _history.Add(new ToolChatMessage(result.ToolCallId, result.ToWireJson()));
     }
 
+    private void InitializeHistory()
+    {
+        _history.Clear();
+        _history.Add(new SystemChatMessage(_systemPrompt));
+    }
+
+    public void ResetConversation()
+    {
+        _logger.LogInformation("Resetting conversation history for OpenAI chat client");
+        InitializeHistory();
+    }
+
     private Task<ChatClientTurnResult> GetTurnResultAsync()
     {
         try
@@ -280,6 +293,31 @@ public sealed class OpenAiChatClient : IChatClient
 
     public string GetSystemPrompt() => _systemPrompt;
 
+    public ReplayTarget GetReplayTarget() => new("openai", _modelName);
+
+    public void LoadReplayTranscript(ProviderReplayTranscript replayTranscript)
+    {
+        ArgumentNullException.ThrowIfNull(replayTranscript);
+
+        InitializeHistory();
+
+        foreach (var entry in replayTranscript.Entries)
+        {
+            switch (entry)
+            {
+                case UserChatEntry user:
+                    _history.Add(new UserChatMessage(user.Content));
+                    break;
+                case AssistantChatEntry assistant:
+                    AppendAssistantReplayEntry(assistant);
+                    break;
+                case ToolResultChatEntry toolResult:
+                    AppendToolResult(toolResult.Result);
+                    break;
+            }
+        }
+    }
+
     /// <summary>
     /// Sets or updates the system prompt for the chat session
     /// </summary>
@@ -297,6 +335,41 @@ public sealed class OpenAiChatClient : IChatClient
         else
         {
             _history.Insert(0, new SystemChatMessage(systemPrompt));
+        }
+    }
+
+    private void AppendAssistantReplayEntry(AssistantChatEntry assistant)
+    {
+        var textBlocks = assistant
+            .Blocks.OfType<TextAssistantBlock>()
+            .Select(block => block.Text)
+            .Concat(
+                assistant
+                    .Blocks.OfType<ReasoningAssistantBlock>()
+                    .Where(block => !string.IsNullOrWhiteSpace(block.Text))
+                    .Select(block => block.Text!)
+            )
+            .ToList();
+
+        if (textBlocks.Count > 0)
+        {
+            _history.Add(new AssistantChatMessage(string.Join(Environment.NewLine, textBlocks)));
+        }
+
+        var toolCalls = assistant
+            .Blocks.OfType<ToolCallAssistantBlock>()
+            .Select(block =>
+                ChatToolCall.CreateFunctionToolCall(
+                    block.ToolCallId,
+                    block.ToolName,
+                    BinaryData.FromString(JsonSerializer.Serialize(block.Arguments))
+                )
+            )
+            .ToList();
+
+        if (toolCalls.Count > 0)
+        {
+            _history.Add(new AssistantChatMessage(toolCalls));
         }
     }
 }

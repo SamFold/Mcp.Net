@@ -15,7 +15,7 @@ public static class ChatRepositoryExtensions
     /// <returns>True if this is the first message in the session</returns>
     public static async Task<bool> IsFirstMessageAsync(this IChatRepository repository, string sessionId)
     {
-        var messages = await repository.GetChatMessagesAsync(sessionId);
-        return messages.Count == 0 || (messages.Count == 1 && messages[0].Type == "user");
+        var transcript = await repository.GetTranscriptEntriesAsync(sessionId);
+        return transcript.Count == 0;
     }
 }

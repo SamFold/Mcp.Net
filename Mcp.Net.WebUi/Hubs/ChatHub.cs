@@ -4,6 +4,7 @@ using System.Linq;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Chat.Extensions;
@@ -91,19 +92,6 @@ public class ChatHub : Hub
 
             // Mark the adapter as active
             _adapterManager.MarkAdapterAsActive(sessionId);
-
-            // Create a message to store in history
-            var chatMessage = new StoredChatMessage
-            {
-                Id = Guid.NewGuid().ToString(),
-                SessionId = sessionId,
-                Type = "user",
-                Content = message,
-                Timestamp = DateTime.UtcNow,
-            };
-
-            // Store the message
-            await _chatRepository.StoreMessageAsync(chatMessage);
 
             // Check if this is the first message in the session
             bool isFirstMessage = await _chatRepository.IsFirstMessageAsync(sessionId);
@@ -397,16 +385,6 @@ public class ChatHub : Hub
                 );
             }
 
-            // Notify clients
-            var message = new ChatMessageDto
-            {
-                SessionId = sessionId,
-                Type = "system",
-                Content = "System prompt has been updated.",
-                Id = $"system_{Guid.NewGuid()}",
-            };
-
-            await Clients.Group(sessionId).SendAsync("ReceiveMessage", message);
             await Clients.Group(sessionId).SendAsync("SystemPromptUpdated", systemPrompt);
         }
         catch (Exception ex)
@@ -515,6 +493,9 @@ public class ChatHub : Hub
                 // Subscribe to message events
                 newAdapter.MessageReceived += OnChatMessageReceived;
 
+                var transcript = await _chatRepository.GetTranscriptEntriesAsync(sid);
+                await newAdapter.LoadHistoryAsync(transcript);
+
                 // Start the adapter
                 newAdapter.Start();
 
@@ -530,18 +511,7 @@ public class ChatHub : Hub
     {
         try
         {
-            // Store the message
-            var message = new StoredChatMessage
-            {
-                Id = args.MessageId,
-                SessionId = args.ChatId,
-                Type = args.Type,
-                Content = args.Content,
-                Timestamp = DateTime.UtcNow,
-                Metadata = args.Metadata,
-            };
-
-            await _chatRepository.StoreMessageAsync(message);
+            await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
 
             // Don't try to notify clients directly from the ChatHub event handler
             // Just update the metadata in the repository
@@ -550,8 +520,7 @@ public class ChatHub : Hub
             {
                 // Update LastUpdatedAt and LastMessagePreview
                 metadata.LastUpdatedAt = DateTime.UtcNow;
-                metadata.LastMessagePreview =
-                    args.Content.Length > 50 ? args.Content.Substring(0, 47) + "..." : args.Content;
+                metadata.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(args.Entry);
 
                 // Update in repository
                 await _chatRepository.UpdateChatMetadataAsync(metadata);

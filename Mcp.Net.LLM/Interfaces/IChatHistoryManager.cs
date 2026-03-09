@@ -33,22 +33,22 @@ public interface IChatHistoryManager
     Task DeleteSessionAsync(string sessionId);
 
     /// <summary>
-    /// Get all messages for a chat session
+    /// Get the persisted transcript for a chat session
     /// </summary>
-    Task<List<StoredChatMessage>> GetSessionMessagesAsync(string sessionId);
+    Task<IReadOnlyList<ChatTranscriptEntry>> GetSessionTranscriptAsync(string sessionId);
 
     /// <summary>
-    /// Add a new message to a chat session
+    /// Append a transcript entry to a chat session
     /// </summary>
-    Task AddMessageAsync(StoredChatMessage message);
+    Task AddTranscriptEntryAsync(string sessionId, ChatTranscriptEntry entry);
 
     /// <summary>
-    /// Add multiple messages to a chat session
+    /// Append multiple transcript entries to a chat session
     /// </summary>
-    Task AddMessagesAsync(List<StoredChatMessage> messages);
+    Task AddTranscriptEntriesAsync(string sessionId, IReadOnlyList<ChatTranscriptEntry> entries);
 
     /// <summary>
-    /// Clear all messages from a chat session
+    /// Clear the persisted transcript for a chat session
     /// </summary>
-    Task ClearSessionMessagesAsync(string sessionId);
+    Task ClearSessionTranscriptAsync(string sessionId);
 }

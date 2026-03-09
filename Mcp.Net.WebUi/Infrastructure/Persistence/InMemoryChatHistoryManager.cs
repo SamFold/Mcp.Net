@@ -1,5 +1,6 @@
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.WebUi.Chat;
 
 namespace Mcp.Net.WebUi.Infrastructure.Persistence;
 
@@ -10,7 +11,7 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
 {
     private readonly ILogger<InMemoryChatHistoryManager> _logger;
     private readonly Dictionary<string, List<ChatSessionMetadata>> _userSessions = new();
-    private readonly Dictionary<string, List<StoredChatMessage>> _sessionMessages = new();
+    private readonly Dictionary<string, List<ChatTranscriptEntry>> _sessionTranscript = new();
     private readonly SemaphoreSlim _lock = new(1);
 
     public InMemoryChatHistoryManager(ILogger<InMemoryChatHistoryManager> logger)
@@ -92,10 +93,13 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
                         CreatedAt = session.CreatedAt,
                         LastUpdatedAt = session.LastUpdatedAt,
                         Model = session.Model,
-                        Provider = session.Provider,
-                        SystemPrompt = session.SystemPrompt,
-                        LastMessagePreview = session.LastMessagePreview,
-                    };
+                    Provider = session.Provider,
+                    SystemPrompt = session.SystemPrompt,
+                    LastMessagePreview = session.LastMessagePreview,
+                    AgentId = session.AgentId,
+                    AgentName = session.AgentName,
+                    UserId = session.UserId,
+                };
                 }
             }
 
@@ -176,9 +180,9 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
             );
 
             // Initialize empty message list
-            _sessionMessages[metadata.Id] = new List<StoredChatMessage>();
+            _sessionTranscript[metadata.Id] = new List<ChatTranscriptEntry>();
             _logger.LogInformation(
-                "[HISTORY] Initialized empty message list for session {SessionId}",
+                "[HISTORY] Initialized empty transcript for session {SessionId}",
                 metadata.Id
             );
 
@@ -352,23 +356,23 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
             }
 
             // Remove messages
-            if (_sessionMessages.ContainsKey(sessionId))
+            if (_sessionTranscript.ContainsKey(sessionId))
             {
                 _logger.LogInformation(
-                    "[HISTORY] Found messages for session {SessionId}, removing...",
+                    "[HISTORY] Found transcript for session {SessionId}, removing...",
                     sessionId
                 );
-                _sessionMessages.Remove(sessionId);
+                _sessionTranscript.Remove(sessionId);
                 found = true;
                 _logger.LogInformation(
-                    "[HISTORY] Removed messages for chat session {SessionId}",
+                    "[HISTORY] Removed transcript for chat session {SessionId}",
                     sessionId
                 );
             }
             else
             {
                 _logger.LogInformation(
-                    "[HISTORY] No messages found for session {SessionId}",
+                    "[HISTORY] No transcript found for session {SessionId}",
                     sessionId
                 );
             }
@@ -398,32 +402,31 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         }
     }
 
-    public async Task<List<StoredChatMessage>> GetSessionMessagesAsync(string sessionId)
+    public async Task<IReadOnlyList<ChatTranscriptEntry>> GetSessionTranscriptAsync(string sessionId)
     {
         _logger.LogInformation(
-            "[HISTORY] GetSessionMessagesAsync for session {SessionId}",
+            "[HISTORY] GetSessionTranscriptAsync for session {SessionId}",
             sessionId
         );
         await _lock.WaitAsync();
         try
         {
-            if (!_sessionMessages.TryGetValue(sessionId, out var messages))
+            if (!_sessionTranscript.TryGetValue(sessionId, out var transcript))
             {
                 _logger.LogInformation(
-                    "[HISTORY] No messages found for session {SessionId}",
+                    "[HISTORY] No transcript found for session {SessionId}",
                     sessionId
                 );
-                return new List<StoredChatMessage>();
+                return Array.Empty<ChatTranscriptEntry>();
             }
 
             _logger.LogInformation(
-                "[HISTORY] Found {Count} messages for session {SessionId}",
-                messages.Count,
+                "[HISTORY] Found {Count} transcript entries for session {SessionId}",
+                transcript.Count,
                 sessionId
             );
 
-            // Return a copy to prevent external modification
-            return messages.OrderBy(m => m.Timestamp).ToList();
+            return transcript.OrderBy(entry => entry.Timestamp).ToList();
         }
         finally
         {
@@ -431,88 +434,69 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         }
     }
 
-    public async Task AddMessageAsync(StoredChatMessage message)
+    public async Task AddTranscriptEntryAsync(string sessionId, ChatTranscriptEntry entry)
     {
         _logger.LogInformation(
-            "[HISTORY] AddMessageAsync for session {SessionId}, message type: {Type}",
-            message.SessionId,
-            message.Type
+            "[HISTORY] AddTranscriptEntryAsync for session {SessionId}, entry kind: {Kind}",
+            sessionId,
+            entry.Kind
         );
 
         await _lock.WaitAsync();
         try
         {
-            // Ensure the session has a message list
-            if (!_sessionMessages.TryGetValue(message.SessionId, out var messages))
+            if (!_sessionTranscript.TryGetValue(sessionId, out var transcript))
             {
                 _logger.LogInformation(
-                    "[HISTORY] Creating new message list for session {SessionId}",
-                    message.SessionId
+                    "[HISTORY] Creating new transcript list for session {SessionId}",
+                    sessionId
                 );
-                messages = new List<StoredChatMessage>();
-                _sessionMessages[message.SessionId] = messages;
+                transcript = new List<ChatTranscriptEntry>();
+                _sessionTranscript[sessionId] = transcript;
             }
             else
             {
                 _logger.LogInformation(
-                    "[HISTORY] Session {SessionId} already has {Count} messages",
-                    message.SessionId,
-                    messages.Count
+                    "[HISTORY] Session {SessionId} already has {Count} transcript entries",
+                    sessionId,
+                    transcript.Count
                 );
             }
 
-            // Generate a message ID if not provided
-            if (string.IsNullOrEmpty(message.Id))
-            {
-                message.Id = Guid.NewGuid().ToString();
-                _logger.LogInformation("[HISTORY] Generated message ID: {MessageId}", message.Id);
-            }
-
-            // Add the message
-            messages.Add(message);
+            transcript.Add(entry);
             _logger.LogInformation(
-                "[HISTORY] Added message {MessageId} to session {SessionId}, now has {Count} messages",
-                message.Id,
-                message.SessionId,
-                messages.Count
+                "[HISTORY] Added transcript entry {EntryId} to session {SessionId}, now has {Count} entries",
+                entry.Id,
+                sessionId,
+                transcript.Count
             );
 
-            // Log brief message content for debugging
-            var contentPreview =
-                message.Content?.Length > 30
-                    ? message.Content.Substring(0, 27) + "..."
-                    : message.Content ?? "";
             _logger.LogInformation(
-                "[HISTORY] Message content preview: '{ContentPreview}'",
-                contentPreview
+                "[HISTORY] Transcript preview: '{ContentPreview}'",
+                ChatTranscriptEntryMapper.ToPreview(entry, 30)
             );
 
-            // Update session metadata
             bool sessionFound = false;
             foreach (var userEntry in _userSessions)
             {
                 var userId = userEntry.Key;
                 var sessions = userEntry.Value;
 
-                var session = sessions.FirstOrDefault(s => s.Id == message.SessionId);
+                var session = sessions.FirstOrDefault(s => s.Id == sessionId);
                 if (session != null)
                 {
                     sessionFound = true;
                     _logger.LogInformation(
-                        "[HISTORY] Updating session metadata for message in user {UserId}",
+                        "[HISTORY] Updating session metadata for transcript entry in user {UserId}",
                         userId
                     );
 
                     session.LastUpdatedAt = DateTime.UtcNow;
-                    var oldPreview = session.LastMessagePreview;
-                    session.LastMessagePreview =
-                        message.Content?.Length > 50
-                            ? message.Content.Substring(0, 47) + "..."
-                            : message.Content ?? "";
+                    session.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(entry);
 
                     _logger.LogInformation(
                         "[HISTORY] Updated last message preview for session {SessionId}: '{NewPreview}'",
-                        message.SessionId,
+                        sessionId,
                         session.LastMessagePreview
                     );
                 }
@@ -521,8 +505,8 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
             if (!sessionFound)
             {
                 _logger.LogWarning(
-                    "[HISTORY] Message added to session {SessionId}, but session metadata not found in any user's sessions",
-                    message.SessionId
+                    "[HISTORY] Transcript entry added to session {SessionId}, but session metadata not found in any user's sessions",
+                    sessionId
                 );
             }
         }
@@ -532,9 +516,12 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         }
     }
 
-    public async Task AddMessagesAsync(List<StoredChatMessage> messages)
+    public async Task AddTranscriptEntriesAsync(
+        string sessionId,
+        IReadOnlyList<ChatTranscriptEntry> entries
+    )
     {
-        if (messages.Count == 0)
+        if (entries.Count == 0)
         {
             return;
         }
@@ -542,56 +529,33 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         await _lock.WaitAsync();
         try
         {
-            // Group messages by session ID
-            var messagesBySession = messages.GroupBy(m => m.SessionId);
-
-            foreach (var group in messagesBySession)
+            if (!_sessionTranscript.TryGetValue(sessionId, out var transcript))
             {
-                var sessionId = group.Key;
-
-                // Ensure the session has a message list
-                if (!_sessionMessages.TryGetValue(sessionId, out var sessionMessages))
-                {
-                    sessionMessages = new List<StoredChatMessage>();
-                    _sessionMessages[sessionId] = sessionMessages;
-                }
-
-                // Add messages
-                foreach (var message in group)
-                {
-                    // Generate a message ID if not provided
-                    if (string.IsNullOrEmpty(message.Id))
-                    {
-                        message.Id = Guid.NewGuid().ToString();
-                    }
-
-                    sessionMessages.Add(message);
-                }
-
-                // Update session metadata
-                var lastMessage = group.OrderByDescending(m => m.Timestamp).FirstOrDefault();
-                if (lastMessage != null)
-                {
-                    foreach (var sessions in _userSessions.Values)
-                    {
-                        var session = sessions.FirstOrDefault(s => s.Id == sessionId);
-                        if (session != null)
-                        {
-                            session.LastUpdatedAt = DateTime.UtcNow;
-                            session.LastMessagePreview =
-                                lastMessage.Content?.Length > 50
-                                    ? lastMessage.Content.Substring(0, 47) + "..."
-                                    : lastMessage.Content ?? "";
-                        }
-                    }
-                }
-
-                _logger.LogDebug(
-                    "Added {Count} messages to session {SessionId}",
-                    group.Count(),
-                    sessionId
-                );
+                transcript = new List<ChatTranscriptEntry>();
+                _sessionTranscript[sessionId] = transcript;
             }
+
+            foreach (var entry in entries)
+            {
+                transcript.Add(entry);
+            }
+
+            var lastEntry = entries.OrderBy(entry => entry.Timestamp).Last();
+            foreach (var sessions in _userSessions.Values)
+            {
+                var session = sessions.FirstOrDefault(s => s.Id == sessionId);
+                if (session != null)
+                {
+                    session.LastUpdatedAt = DateTime.UtcNow;
+                    session.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(lastEntry);
+                }
+            }
+
+            _logger.LogDebug(
+                "Added {Count} transcript entries to session {SessionId}",
+                entries.Count,
+                sessionId
+            );
         }
         finally
         {
@@ -599,32 +563,32 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         }
     }
 
-    public async Task ClearSessionMessagesAsync(string sessionId)
+    public async Task ClearSessionTranscriptAsync(string sessionId)
     {
         _logger.LogInformation(
-            "[HISTORY] ClearSessionMessagesAsync for session {SessionId}",
+            "[HISTORY] ClearSessionTranscriptAsync for session {SessionId}",
             sessionId
         );
         await _lock.WaitAsync();
         try
         {
-            if (_sessionMessages.TryGetValue(sessionId, out var messages))
+            if (_sessionTranscript.TryGetValue(sessionId, out var transcript))
             {
                 _logger.LogInformation(
-                    "[HISTORY] Found {Count} messages for session {SessionId}, clearing...",
-                    messages.Count,
+                    "[HISTORY] Found {Count} transcript entries for session {SessionId}, clearing...",
+                    transcript.Count,
                     sessionId
                 );
-                messages.Clear();
+                transcript.Clear();
                 _logger.LogInformation(
-                    "[HISTORY] Cleared all messages for session {SessionId}",
+                    "[HISTORY] Cleared transcript for session {SessionId}",
                     sessionId
                 );
             }
             else
             {
                 _logger.LogWarning(
-                    "[HISTORY] Attempted to clear messages for non-existent session {SessionId}",
+                    "[HISTORY] Attempted to clear transcript for non-existent session {SessionId}",
                     sessionId
                 );
             }

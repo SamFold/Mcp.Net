@@ -8,6 +8,7 @@ using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 using Microsoft.Extensions.Logging;
 using Tool = Anthropic.SDK.Common.Tool;
 
@@ -154,9 +155,9 @@ public sealed class AnthropicChatClient : IChatClient
                 Model = _model,
                 MaxTokens = 1024,
                 Temperature = 1.0m,
-                Messages = _messages,
-                Tools = _anthropicTools,
-                System = _systemMessages,
+                Messages = _messages.ToList(),
+                Tools = _anthropicTools.ToList(),
+                System = _systemMessages.ToList(),
             };
 
             var content = await _messagesClient.GetResponseContentAsync(parameters);
@@ -325,4 +326,67 @@ public sealed class AnthropicChatClient : IChatClient
     {
         return _systemPrompt;
     }
+
+    public ReplayTarget GetReplayTarget() => new("anthropic", _model);
+
+    public void LoadReplayTranscript(ProviderReplayTranscript replayTranscript)
+    {
+        ArgumentNullException.ThrowIfNull(replayTranscript);
+
+        _messages.Clear();
+
+        foreach (var entry in replayTranscript.Entries)
+        {
+            switch (entry)
+            {
+                case UserChatEntry user:
+                    _messages.Add(
+                        new Message
+                        {
+                            Role = RoleType.User,
+                            Content = new List<ContentBase>
+                            {
+                                new TextContent { Text = user.Content },
+                            },
+                        }
+                    );
+                    break;
+                case AssistantChatEntry assistant:
+                    _messages.Add(
+                        new Message
+                        {
+                            Role = RoleType.Assistant,
+                            Content = assistant.Blocks.Select(ToReplayContent).ToList(),
+                        }
+                    );
+                    break;
+                case ToolResultChatEntry toolResult:
+                    AddToolResultToHistory(toolResult.Result);
+                    break;
+            }
+        }
+    }
+
+    private static ContentBase ToReplayContent(AssistantContentBlock block) =>
+        block switch
+        {
+            TextAssistantBlock text => new TextContent { Text = text.Text },
+            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
+                => new ThinkingContent
+                {
+                    Thinking = reasoning.Text!,
+                    Signature = reasoning.ReplayToken ?? string.Empty,
+                },
+            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.ReplayToken)
+                => new RedactedThinkingContent { Data = reasoning.ReplayToken! },
+            ToolCallAssistantBlock toolCall => new ToolUseContent
+            {
+                Id = toolCall.ToolCallId,
+                Name = toolCall.ToolName,
+                Input = JsonNode.Parse(JsonSerializer.Serialize(toolCall.Arguments)),
+            },
+            _ => throw new InvalidOperationException(
+                $"Unsupported assistant replay block type '{block.GetType().Name}'."
+            ),
+        };
 }

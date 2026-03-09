@@ -6,6 +6,7 @@ using Mcp.Net.LLM.Extensions;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.LLM.Tools;
 using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
@@ -150,6 +151,7 @@ public class WebUiStartup
     private void ConfigureApplicationServices(WebApplicationBuilder builder)
     {
         builder.Services.AddSingleton<IChatHistoryManager, InMemoryChatHistoryManager>();
+        builder.Services.AddSingleton<IChatTranscriptReplayTransformer, ChatTranscriptReplayTransformer>();
         builder.Services.AddSingleton<SessionNotifier>();
         builder.Services.AddSingleton<IChatRepository, ChatRepository>();
         builder.Services.AddSingleton<IChatFactory, ChatFactory>();

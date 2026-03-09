@@ -1,5 +1,6 @@
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 
 namespace Mcp.Net.LLM.Interfaces;
 
@@ -18,4 +19,8 @@ public interface IChatClient
         throw new NotImplementedException("Not supported by this client type");
 
     string GetSystemPrompt();
+
+    ReplayTarget GetReplayTarget();
+
+    void LoadReplayTranscript(ProviderReplayTranscript replayTranscript);
 }

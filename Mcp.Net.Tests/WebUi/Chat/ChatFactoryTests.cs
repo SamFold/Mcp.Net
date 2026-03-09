@@ -6,6 +6,7 @@ using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.LLM.Elicitation;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
@@ -80,7 +81,8 @@ public class ChatFactoryTests
             llmFactory,
             defaultSettings,
             configuration,
-            authConfigurator.Object
+            authConfigurator.Object,
+            new ChatTranscriptReplayTransformer()
         );
     }
 

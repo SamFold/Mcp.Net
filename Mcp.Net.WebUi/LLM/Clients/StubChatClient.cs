@@ -1,6 +1,7 @@
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 
 namespace Mcp.Net.WebUi.LLM.Clients;
 
@@ -94,4 +95,34 @@ public class StubChatClient : IChatClient
         return _systemPrompt;
     }
 
+    public ReplayTarget GetReplayTarget() =>
+        new(_provider.ToString().ToLowerInvariant(), _options.Model ?? "stub");
+
+    public void LoadReplayTranscript(ProviderReplayTranscript replayTranscript)
+    {
+        ArgumentNullException.ThrowIfNull(replayTranscript);
+
+        _messageHistory.Clear();
+        foreach (var entry in replayTranscript.Entries)
+        {
+            switch (entry)
+            {
+                case UserChatEntry user:
+                    _messageHistory.Add(user.Content);
+                    break;
+                case AssistantChatEntry assistant:
+                    foreach (var block in assistant.Blocks.OfType<TextAssistantBlock>())
+                    {
+                        _messageHistory.Add(block.Text);
+                    }
+                    break;
+                case ToolResultChatEntry toolResult:
+                    foreach (var line in toolResult.Result.Text)
+                    {
+                        _messageHistory.Add(line);
+                    }
+                    break;
+            }
+        }
+    }
 }

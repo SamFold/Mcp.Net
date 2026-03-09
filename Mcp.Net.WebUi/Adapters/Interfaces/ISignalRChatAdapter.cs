@@ -40,7 +40,7 @@ public interface ISignalRChatAdapter : IDisposable
     /// <summary>
     /// Load conversation history from stored messages
     /// </summary>
-    Task LoadHistoryAsync(List<StoredChatMessage> messages);
+    Task LoadHistoryAsync(IReadOnlyList<ChatTranscriptEntry> transcript);
 
     /// <summary>
     /// Get the LLM client used by this session

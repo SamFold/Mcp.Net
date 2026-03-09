@@ -8,6 +8,7 @@ using Mcp.Net.LLM.Core;
 using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+using Mcp.Net.LLM.Replay;
 using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -249,5 +250,51 @@ public class ChatSessionTests
         await session.SendUserMessageAsync("Hi there");
 
         activities.Should().ContainInOrder(ChatSessionActivity.WaitingForProvider, ChatSessionActivity.Idle);
+    }
+
+    [Fact]
+    public async Task LoadTranscriptAsync_ShouldPopulateTranscriptAndReplayClientHistory()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var replayTransformer = new Mock<IChatTranscriptReplayTransformer>();
+
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "hello", "turn-1"),
+            new AssistantChatEntry(
+                "assistant-1",
+                DateTimeOffset.UtcNow.AddMinutes(-1),
+                new AssistantContentBlock[] { new TextAssistantBlock("text-1", "hi") },
+                "turn-1",
+                "openai",
+                "gpt-5"
+            ),
+        };
+
+        var replayTarget = new ReplayTarget("openai", "gpt-5");
+        var replayTranscript = new ProviderReplayTranscript(replayTarget, transcript);
+
+        llmClient.Setup(c => c.GetReplayTarget()).Returns(replayTarget);
+        replayTransformer
+            .Setup(t => t.Transform(
+                It.Is<IReadOnlyList<ChatTranscriptEntry>>(entries => entries.SequenceEqual(transcript)),
+                replayTarget
+            ))
+            .Returns(replayTranscript);
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance,
+            replayTransformer.Object
+        );
+
+        await session.LoadTranscriptAsync(transcript);
+
+        session.Transcript.Should().Equal(transcript);
+        llmClient.Verify(c => c.LoadReplayTranscript(replayTranscript), Times.Once);
     }
 }

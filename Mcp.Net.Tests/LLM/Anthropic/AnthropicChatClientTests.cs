@@ -195,6 +195,92 @@ public class AnthropicChatClientTests
             .Contain(client.GetSystemPrompt());
     }
 
+    [Fact]
+    public async Task LoadReplayTranscript_ShouldIncludePriorHistoryInOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        client.LoadReplayTranscript(
+            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
+                client.GetReplayTarget(),
+                new ChatTranscriptEntry[]
+                {
+                    new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-3), "Use the tool", "turn-1"),
+                    new AssistantChatEntry(
+                        "assistant-1",
+                        DateTimeOffset.UtcNow.AddMinutes(-2),
+                        new AssistantContentBlock[]
+                        {
+                            new TextAssistantBlock("text-1", "Checking"),
+                            new ToolCallAssistantBlock(
+                                "tool-1",
+                                "toolu_1",
+                                "search",
+                                new Dictionary<string, object?> { ["query"] = "weather" }
+                            ),
+                        },
+                        "turn-1",
+                        "anthropic",
+                        "claude-sonnet-4-5-20250929"
+                    ),
+                    new ToolResultChatEntry(
+                        "tool-result-1",
+                        DateTimeOffset.UtcNow.AddMinutes(-1),
+                        "toolu_1",
+                        "search",
+                        new ToolInvocationResult(
+                            "toolu_1",
+                            "search",
+                            false,
+                            new[] { "sunny" },
+                            structured: null,
+                            resourceLinks: Array.Empty<ToolResultResourceLink>(),
+                            metadata: null
+                        ),
+                        false,
+                        "turn-1"
+                    ),
+                }
+            )
+        );
+
+        await client.SendMessageAsync("continue");
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Messages.Should().HaveCount(4);
+        messageClient.LastParameters.Messages[0].Role.Should().Be(RoleType.User);
+        messageClient.LastParameters.Messages[1].Role.Should().Be(RoleType.Assistant);
+        messageClient.LastParameters.Messages[2].Role.Should().Be(RoleType.User);
+        messageClient.LastParameters.Messages[3].Role.Should().Be(RoleType.User);
+
+        var assistantContent = messageClient.LastParameters.Messages[1].Content;
+        assistantContent.OfType<ToolUseContent>().Should().ContainSingle();
+        assistantContent
+            .OfType<TextContent>()
+            .Select(content => content.Text)
+            .Should()
+            .ContainSingle()
+            .Which.Should().Be("Checking");
+
+        var toolResultContent = messageClient.LastParameters.Messages[2]
+            .Content
+            .Single()
+            .Should()
+            .BeOfType<ToolResultContent>()
+            .Which;
+        toolResultContent.ToolUseId.Should().Be("toolu_1");
+        toolResultContent.Content.Should().ContainSingle();
+    }
+
     private sealed class StubAnthropicMessageClient : IAnthropicMessageClient
     {
         private readonly Queue<IReadOnlyList<ContentBase>> _responses;
