@@ -278,12 +278,12 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
             return;
         }
 
-        var messageDto = ChatTranscriptEntryMapper.ToMessageDto(_sessionId, args.Entry);
+        var messageDto = ChatTranscriptEntryMapper.ToDto(_sessionId, args.Entry);
 
         _logger.LogDebug(
             "Transcript entry received in session {SessionId}: {EntryType}",
             _sessionId,
-            messageDto.Type
+            messageDto.GetType().Name
         );
 
         MessageReceived?.Invoke(

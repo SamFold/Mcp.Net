@@ -275,14 +275,14 @@ public class ChatController : ControllerBase
     [HttpPost("sessions/{sessionId}/messages")]
     public async Task<IActionResult> SendMessage(
         string sessionId,
-        [FromBody] ChatMessageDto message
+        [FromBody] UserMessageRequestDto? message
     )
     {
         try
         {
-            if (message.Type != "user")
+            if (message == null || string.IsNullOrWhiteSpace(message.Content))
             {
-                return BadRequest(new { error = "Only user messages can be sent" });
+                return BadRequest(new { error = "Message content is required" });
             }
 
             // Get or create an adapter

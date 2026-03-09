@@ -159,11 +159,11 @@ public class ChatRepository : IChatRepository
     /// <summary>
     /// Get all messages for a chat session
     /// </summary>
-    public async Task<List<ChatMessageDto>> GetChatMessagesAsync(string chatId)
+    public async Task<List<ChatTranscriptEntryDto>> GetChatMessagesAsync(string chatId)
     {
         var transcript = await _historyManager.GetSessionTranscriptAsync(chatId);
         return transcript
-            .Select(entry => ChatTranscriptEntryMapper.ToMessageDto(chatId, entry))
+            .Select(entry => ChatTranscriptEntryMapper.ToDto(chatId, entry))
             .ToList();
     }
 

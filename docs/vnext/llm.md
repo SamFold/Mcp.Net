@@ -23,6 +23,7 @@
 - Anthropic assistant turns now capture `ThinkingContent` and `RedactedThinkingContent` into transcript reasoning blocks, and Anthropic replay uses visibility-aware fallbacks so missing signatures degrade to portable text instead of emitting invalid thinking payloads.
 - OpenAI replay now rebuilds mixed assistant text-plus-tool-call history as a single assistant message via the SDK `ChatCompletion` mock factory instead of splitting it into two assistant messages.
 - Replay/provider tests now use the captured Anthropic reasoning probe fixture for same-provider cross-model degradation, cross-provider handoff safety, and Anthropic thinking round-trips.
+- The remaining Web UI chat transport now uses discriminated transcript-entry DTOs for REST history and `ReceiveMessage`, and the controller send-message route now takes a dedicated user-message request DTO instead of the old flat `ChatMessageDto`.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 
 ## Goal
@@ -48,8 +49,8 @@
 
 ## Current slice
 
-1. Decide whether the remaining Web UI transport DTOs should also become discriminated transcript-entry models now that persistence/runtime state and replay semantics are typed.
-2. Keep the transcript semantics stable while the next streaming block-delta shape is introduced.
+1. Keep transcript semantics stable while the next streaming block-delta shape is introduced.
+2. Decide whether transient activity transport such as `ToolExecutionUpdated` and `ThinkingStateChanged` should remain separate ephemeral UI events or move to typed activity DTOs alongside the transcript model.
 3. Extend the probe corpus when real mixed reasoning-plus-tool-call payloads become available so replay coverage can move from synthetic ordering cases to captured provider outputs.
 
 ## Next slices

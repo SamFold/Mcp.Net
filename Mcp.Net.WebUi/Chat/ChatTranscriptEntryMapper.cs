@@ -5,18 +5,57 @@ namespace Mcp.Net.WebUi.Chat;
 
 internal static class ChatTranscriptEntryMapper
 {
-    public static ChatMessageDto ToMessageDto(string sessionId, ChatTranscriptEntry entry)
+    public static ChatTranscriptEntryDto ToDto(string sessionId, ChatTranscriptEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        return new ChatMessageDto
+        return entry switch
         {
-            Id = entry.Id,
-            SessionId = sessionId,
-            Type = ToMessageType(entry),
-            Content = ToDisplayContent(entry),
-            Timestamp = entry.Timestamp.UtcDateTime,
-            Metadata = ToMetadata(entry),
+            UserChatEntry user => new UserChatTranscriptEntryDto(
+                user.Id,
+                sessionId,
+                user.Timestamp.UtcDateTime,
+                user.Content,
+                user.TurnId
+            ),
+            AssistantChatEntry assistant => new AssistantChatTranscriptEntryDto(
+                assistant.Id,
+                sessionId,
+                assistant.Timestamp.UtcDateTime,
+                assistant.Blocks.Select(ToDto).ToArray(),
+                assistant.TurnId,
+                assistant.Provider,
+                assistant.Model
+            ),
+            ToolResultChatEntry toolResult => new ToolResultChatTranscriptEntryDto(
+                toolResult.Id,
+                sessionId,
+                toolResult.Timestamp.UtcDateTime,
+                toolResult.ToolCallId,
+                toolResult.ToolName,
+                toolResult.Result,
+                toolResult.IsError,
+                toolResult.TurnId,
+                toolResult.Provider,
+                toolResult.Model
+            ),
+            ErrorChatEntry error => new ErrorChatTranscriptEntryDto(
+                error.Id,
+                sessionId,
+                error.Timestamp.UtcDateTime,
+                error.Source.ToString().ToLowerInvariant(),
+                error.Message,
+                error.Code,
+                error.Details,
+                error.RelatedEntryId,
+                error.IsRetryable,
+                error.TurnId,
+                error.Provider,
+                error.Model
+            ),
+            _ => throw new InvalidOperationException(
+                $"Unsupported transcript entry type '{entry.GetType().Name}'."
+            ),
         };
     }
 
@@ -30,16 +69,6 @@ internal static class ChatTranscriptEntryMapper
 
         return content[..(maxLength - 3)] + "...";
     }
-
-    private static string ToMessageType(ChatTranscriptEntry entry) =>
-        entry switch
-        {
-            AssistantChatEntry => "assistant",
-            ToolResultChatEntry => "toolresult",
-            ErrorChatEntry => "error",
-            UserChatEntry => "user",
-            _ => entry.Kind.ToString().ToLowerInvariant(),
-        };
 
     private static string ToDisplayContent(ChatTranscriptEntry entry) =>
         entry switch
@@ -66,82 +95,24 @@ internal static class ChatTranscriptEntryMapper
             _ => string.Empty,
         };
 
-    private static Dictionary<string, object> ToMetadata(ChatTranscriptEntry entry)
-    {
-        var metadata = new Dictionary<string, object>
+    private static AssistantContentBlockDto ToDto(AssistantContentBlock block) =>
+        block switch
         {
-            ["kind"] = entry.Kind.ToString().ToLowerInvariant(),
+            TextAssistantBlock text => new TextAssistantContentBlockDto(text.Id, text.Text),
+            ReasoningAssistantBlock reasoning => new ReasoningAssistantContentBlockDto(
+                reasoning.Id,
+                reasoning.Text,
+                reasoning.Visibility.ToString().ToLowerInvariant(),
+                reasoning.ReplayToken
+            ),
+            ToolCallAssistantBlock toolCall => new ToolCallAssistantContentBlockDto(
+                toolCall.Id,
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                toolCall.Arguments
+            ),
+            _ => throw new InvalidOperationException(
+                $"Unsupported assistant content block type '{block.GetType().Name}'."
+            ),
         };
-
-        if (!string.IsNullOrWhiteSpace(entry.TurnId))
-        {
-            metadata["turnId"] = entry.TurnId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.Provider))
-        {
-            metadata["provider"] = entry.Provider;
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.Model))
-        {
-            metadata["model"] = entry.Model;
-        }
-
-        switch (entry)
-        {
-            case AssistantChatEntry assistant:
-                metadata["blocks"] = assistant.Blocks.Select(ToMetadata).Cast<object>().ToList();
-                break;
-            case ToolResultChatEntry toolResult:
-                metadata["toolCallId"] = toolResult.ToolCallId;
-                metadata["toolName"] = toolResult.ToolName;
-                metadata["isError"] = toolResult.IsError;
-                break;
-            case ErrorChatEntry error:
-                metadata["source"] = error.Source.ToString().ToLowerInvariant();
-                if (!string.IsNullOrWhiteSpace(error.Code))
-                {
-                    metadata["code"] = error.Code;
-                }
-                if (!string.IsNullOrWhiteSpace(error.Details))
-                {
-                    metadata["details"] = error.Details;
-                }
-                break;
-        }
-
-        return metadata;
-    }
-
-    private static Dictionary<string, object> ToMetadata(AssistantContentBlock block)
-    {
-        var metadata = new Dictionary<string, object>
-        {
-            ["id"] = block.Id,
-            ["kind"] = block.Kind.ToString().ToLowerInvariant(),
-        };
-
-        switch (block)
-        {
-            case TextAssistantBlock text:
-                metadata["text"] = text.Text;
-                break;
-            case ReasoningAssistantBlock reasoning:
-                metadata["text"] = reasoning.Text ?? string.Empty;
-                metadata["visibility"] = reasoning.Visibility.ToString().ToLowerInvariant();
-                if (!string.IsNullOrWhiteSpace(reasoning.ReplayToken))
-                {
-                    metadata["replayToken"] = reasoning.ReplayToken;
-                }
-                break;
-            case ToolCallAssistantBlock toolCall:
-                metadata["toolCallId"] = toolCall.ToolCallId;
-                metadata["toolName"] = toolCall.ToolName;
-                metadata["arguments"] = toolCall.Arguments;
-                break;
-        }
-
-        return metadata;
-    }
 }

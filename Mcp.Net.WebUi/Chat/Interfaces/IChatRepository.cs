@@ -37,7 +37,7 @@ public interface IChatRepository
     /// <summary>
     /// Get all messages for a chat session
     /// </summary>
-    Task<List<ChatMessageDto>> GetChatMessagesAsync(string chatId);
+    Task<List<ChatTranscriptEntryDto>> GetChatMessagesAsync(string chatId);
 
     /// <summary>
     /// Get the typed transcript entries for a chat session

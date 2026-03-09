@@ -79,7 +79,7 @@ Authentication is controlled through the `McpServer` section in `appsettings.jso
 
 - `POST /api/chat/sessions` - Create a new chat session
 - `DELETE /api/chat/sessions/{sessionId}` - End a chat session
-- `POST /api/chat/sessions/{sessionId}/messages` - Send a message to a chat session
+- `POST /api/chat/sessions/{sessionId}/messages` - Send a user message to a chat session (`UserMessageRequestDto`)
 - `GET /api/tools` - Get all available tools
 - `GET /api/tools/enabled` - Get all enabled tools
 - `POST /api/tools/enabled` - Enable specific tools by name
@@ -96,7 +96,7 @@ The SignalR hub is available at `/chatHub` and provides the following methods:
 
 ### Server to Client
 - `SessionStarted(string sessionId)` - Notifies when a session has started
-- `ReceiveMessage(ChatMessageDto message)` - Delivers new messages
+- `ReceiveMessage(ChatTranscriptEntryDto entry)` - Delivers new transcript entries with typed assistant blocks and typed tool/error payloads
 - `ToolExecutionUpdated(ToolExecutionDto toolExecution)` - Notifies about tool execution updates
 - `ThinkingStateChanged(bool isThinking, string context)` - Notifies when thinking state changes
 - `ReceiveError(string errorMessage)` - Delivers error messages
