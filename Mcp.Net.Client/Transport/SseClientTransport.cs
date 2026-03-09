@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Exceptions;
 using Mcp.Net.Core.JsonRpc;
@@ -30,6 +31,9 @@ public class SseClientTransport : ClientTransportBase
     private readonly Uri _endpointUri;
     private readonly string? _apiKey;
     private readonly OAuthTokenManager _tokenManager;
+    private readonly ConcurrentDictionary<string, RequestResponseRoute> _requestResponseRoutes = new();
+    private readonly ConcurrentDictionary<string, JsonRpcResponseMessage> _deferredGetResponses =
+        new();
 
     private Task? _sseListenTask;
     private HttpResponseMessage? _sseResponse;
@@ -37,6 +41,13 @@ public class SseClientTransport : ClientTransportBase
     private string? _sessionId;
     private string? _negotiatedProtocolVersion;
     private int _remoteCloseScheduled;
+
+    private enum RequestResponseRoute
+    {
+        AwaitingPostResponse,
+        AllowGetFallback,
+        PreferPostResponse,
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SseClientTransport"/> class.
@@ -236,6 +247,8 @@ public class SseClientTransport : ClientTransportBase
             TaskCreationOptions.RunContinuationsAsynchronously
         );
         PendingRequests[id] = tcs;
+        _requestResponseRoutes[id] = RequestResponseRoute.AwaitingPostResponse;
+        _deferredGetResponses.TryRemove(id, out _);
 
         var requestMessage = new JsonRpcRequestMessage("2.0", id, method, parameters);
         try
@@ -248,6 +261,7 @@ public class SseClientTransport : ClientTransportBase
             if (completedTask == timeoutTask)
             {
                 PendingRequests.TryRemove(id, out _);
+                ClearRequestRoutingState(id);
                 if (timeoutTask.IsCanceled)
                 {
                     throw new OperationCanceledException(
@@ -264,6 +278,7 @@ public class SseClientTransport : ClientTransportBase
         catch
         {
             PendingRequests.TryRemove(id, out _);
+            ClearRequestRoutingState(id);
             throw;
         }
     }
@@ -400,7 +415,7 @@ public class SseClientTransport : ClientTransportBase
 
             if (!string.IsNullOrWhiteSpace(requestId))
             {
-                if (await TryProcessApplicationJsonResponseAsync(response))
+                if (await TryProcessApplicationJsonResponseAsync(response, requestId))
                 {
                     return;
                 }
@@ -408,7 +423,10 @@ public class SseClientTransport : ClientTransportBase
                 if (TryStartPostResponseSseReader(response, requestId))
                 {
                     disposeResponse = false;
+                    return;
                 }
+
+                AllowGetFallbackForRequest(requestId);
             }
         }
         finally
@@ -420,7 +438,10 @@ public class SseClientTransport : ClientTransportBase
         }
     }
 
-    private async Task<bool> TryProcessApplicationJsonResponseAsync(HttpResponseMessage response)
+    private async Task<bool> TryProcessApplicationJsonResponseAsync(
+        HttpResponseMessage response,
+        string requestId
+    )
     {
         if (!HasContentType(response, "application/json"))
         {
@@ -433,6 +454,7 @@ public class SseClientTransport : ClientTransportBase
             return false;
         }
 
+        PreferPostResponseForRequest(requestId);
         ProcessJsonRpcMessage(body);
         return true;
     }
@@ -444,12 +466,15 @@ public class SseClientTransport : ClientTransportBase
             return false;
         }
 
+        PreferPostResponseForRequest(requestId);
         _ = Task.Run(() => ListenToPostResponseEventsAsync(response, requestId));
         return true;
     }
 
     private async Task ListenToPostResponseEventsAsync(HttpResponseMessage response, string requestId)
     {
+        var reachedRemoteEndOfStream = false;
+
         try
         {
             using (response)
@@ -465,6 +490,7 @@ public class SseClientTransport : ClientTransportBase
                     var line = await reader.ReadLineAsync();
                     if (line == null)
                     {
+                        reachedRemoteEndOfStream = true;
                         break;
                     }
 
@@ -494,6 +520,11 @@ public class SseClientTransport : ClientTransportBase
                         dataBuilder.Append(line.Substring(6));
                     }
                 }
+            }
+
+            if (reachedRemoteEndOfStream)
+            {
+                CancelPendingPostScopedRequestOnStreamEnd(requestId);
             }
         }
         catch (OperationCanceledException)
@@ -769,7 +800,7 @@ public class SseClientTransport : ClientTransportBase
                     {
                         var payload = dataBuilder.ToString();
                         Logger.LogTrace("Processing SSE payload: {Payload}", payload);
-                        ProcessJsonRpcMessage(payload);
+                        ProcessOptionalGetStreamJsonRpcMessage(payload);
                         dataBuilder.Clear();
                     }
 
@@ -890,7 +921,15 @@ public class SseClientTransport : ClientTransportBase
             Interlocked.Exchange(ref _remoteCloseScheduled, 0);
             _sessionId = null;
             _negotiatedProtocolVersion = null;
+            _requestResponseRoutes.Clear();
+            _deferredGetResponses.Clear();
         }
+    }
+
+    protected override void ProcessResponse(JsonRpcResponseMessage response)
+    {
+        base.ProcessResponse(response);
+        ClearRequestRoutingState(response.Id);
     }
 
     private void EnsureActiveSession()
@@ -920,6 +959,141 @@ public class SseClientTransport : ClientTransportBase
         {
             throw new InvalidOperationException("SSE session has not been established.");
         }
+    }
+
+    private void ProcessOptionalGetStreamJsonRpcMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        try
+        {
+            using var _ = JsonDocument.Parse(message);
+        }
+        catch (JsonException ex)
+        {
+            string truncatedMessage =
+                message.Length > 100 ? message.Substring(0, 97) + "..." : message;
+            Logger.LogError(ex, "Invalid JSON message: {TruncatedMessage}", truncatedMessage);
+            RaiseOnError(new Exception($"Invalid JSON message: {ex.Message}", ex));
+            return;
+        }
+
+        try
+        {
+            if (MessageParser.IsJsonRpcRequest(message))
+            {
+                var requestMessage = MessageParser.DeserializeRequest(message);
+                ProcessRequest(requestMessage);
+            }
+            else if (MessageParser.IsJsonRpcResponse(message))
+            {
+                var responseMessage = MessageParser.DeserializeResponse(message);
+                ProcessOptionalGetStreamResponse(responseMessage);
+            }
+            else if (MessageParser.IsJsonRpcNotification(message))
+            {
+                var notificationMessage = MessageParser.DeserializeNotification(message);
+                ProcessNotification(notificationMessage);
+            }
+            else
+            {
+                Logger.LogWarning(
+                    "Received unexpected message format: {Message}",
+                    message.Length > 100 ? message.Substring(0, 97) + "..." : message
+                );
+            }
+        }
+        catch (JsonException ex)
+        {
+            string truncatedMessage =
+                message.Length > 100 ? message.Substring(0, 97) + "..." : message;
+            Logger.LogError(ex, "Invalid JSON message: {TruncatedMessage}", truncatedMessage);
+            RaiseOnError(new Exception($"Invalid JSON message: {ex.Message}", ex));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error processing message");
+            RaiseOnError(ex);
+        }
+    }
+
+    private void ProcessOptionalGetStreamResponse(JsonRpcResponseMessage response)
+    {
+        if (_requestResponseRoutes.TryGetValue(response.Id, out var route))
+        {
+            switch (route)
+            {
+                case RequestResponseRoute.AwaitingPostResponse:
+                    Logger.LogDebug(
+                        "Deferring GET-stream response for request {RequestId} until POST response routing is known.",
+                        response.Id
+                    );
+                    _deferredGetResponses[response.Id] = response;
+                    return;
+                case RequestResponseRoute.PreferPostResponse:
+                    Logger.LogDebug(
+                        "Ignoring GET-stream response for request {RequestId} because the request is bound to its POST response path.",
+                        response.Id
+                    );
+                    return;
+                case RequestResponseRoute.AllowGetFallback:
+                    break;
+            }
+        }
+
+        ProcessResponse(response);
+    }
+
+    private void AllowGetFallbackForRequest(string requestId)
+    {
+        _requestResponseRoutes[requestId] = RequestResponseRoute.AllowGetFallback;
+
+        if (
+            _deferredGetResponses.TryRemove(requestId, out var deferredResponse)
+            && PendingRequests.ContainsKey(requestId)
+        )
+        {
+            Logger.LogDebug(
+                "Replaying deferred GET-stream response for request {RequestId} after POST response fell back to legacy GET delivery.",
+                requestId
+            );
+            ProcessResponse(deferredResponse);
+        }
+    }
+
+    private void PreferPostResponseForRequest(string requestId)
+    {
+        _requestResponseRoutes[requestId] = RequestResponseRoute.PreferPostResponse;
+        _deferredGetResponses.TryRemove(requestId, out _);
+    }
+
+    private void CancelPendingPostScopedRequestOnStreamEnd(string requestId)
+    {
+        if (!PendingRequests.TryRemove(requestId, out var pendingRequest))
+        {
+            return;
+        }
+
+        Logger.LogDebug(
+            "POST-scoped SSE response stream ended before request {RequestId} received a response.",
+            requestId
+        );
+        ClearRequestRoutingState(requestId);
+        pendingRequest.TrySetException(
+            new OperationCanceledException(
+                "POST-scoped SSE response stream ended before the request received a response.",
+                CancellationTokenSource.Token
+            )
+        );
+    }
+
+    private void ClearRequestRoutingState(string requestId)
+    {
+        _requestResponseRoutes.TryRemove(requestId, out _);
+        _deferredGetResponses.TryRemove(requestId, out _);
     }
 
     private static string? ExtractHeader(HttpResponseHeaders headers, string name) =>

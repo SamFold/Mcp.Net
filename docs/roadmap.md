@@ -16,6 +16,7 @@ Update it when priorities, milestones, or major decisions change.
 5. Broader MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- Fresh POST requests no longer complete from the optional GET SSE stream once the client can determine that the request is bound to a POST response path, while legacy no-body POST flows still fall back to GET for current server compatibility
 - HTTP client startup now tolerates POST-only Streamable HTTP servers by treating GET SSE as optional during startup and allowing `initialize` before a session header exists
 - HTTP client POST requests now complete from spec-compliant Streamable HTTP response bodies, including both inline `application/json` responses and POST-scoped `text/event-stream` responses
 - In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes
@@ -68,7 +69,7 @@ Update it when priorities, milestones, or major decisions change.
 - The currently active tracks are `docs/vnext/client.md`, `docs/vnext/server.md`, and `docs/vnext/llm.md`.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
-- The next active client review area is Streamable HTTP spec alignment for routing in-flight POST request responses away from the optional GET SSE stream.
+- The next active client review area is Streamable HTTP reconnect, retry, and stale-state cleanup, including session-expiry handling after HTTP 404.
 - The next active server review area remains logging/debuggability and hidden mutable state.
 - The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
 - The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.

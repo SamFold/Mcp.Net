@@ -291,6 +291,64 @@ public class SseClientTransportTests
     }
 
     [Fact]
+    public async Task SendRequestAsync_ShouldFailPromptly_WhenPostScopedSseStreamEndsBeforeResponse()
+    {
+        var sseStream = new TestSseStream();
+        var postResponseStream = new TestSseStream();
+        var streamHandler = new TestMessageHandler();
+        var requestHandler = new TestMessageHandler();
+
+        streamHandler.EnqueueResponse(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-sse-eof");
+            response.Content = new StreamContent(sseStream);
+            return response;
+        });
+
+        requestHandler.EnqueueResponse(request =>
+        {
+            request.Method.Should().Be(HttpMethod.Post);
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-post-sse-eof");
+            response.Content = new StreamContent(postResponseStream);
+            response.Content.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+            return response;
+        });
+
+        using var streamClient = new HttpClient(streamHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        using var requestClient = new HttpClient(requestHandler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/"),
+        };
+        var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
+        await transport.StartAsync();
+
+        try
+        {
+            var requestTask = transport.SendRequestAsync("tools/list", new { });
+
+            await postResponseStream.CompleteAsync();
+
+            await FluentActions.Awaiting(async () =>
+                    await requestTask.WaitAsync(TimeSpan.FromSeconds(1))
+                )
+                .Should()
+                .ThrowAsync<OperationCanceledException>();
+        }
+        finally
+        {
+            await sseStream.CompleteAsync();
+            await transport.CloseAsync();
+        }
+    }
+
+    [Fact]
     public async Task Initialize_ShouldNotRequireGetSse_WhenServerUsesPostOnlyStreamableHttp()
     {
         var streamHandler = new TestMessageHandler();
@@ -391,7 +449,7 @@ public class SseClientTransportTests
         client.NegotiatedProtocolVersion.Should().Be(McpClient.LatestProtocolVersion);
     }
 
-    [Fact(Skip = "Pending next slice: fresh POST request responses should not complete from the optional GET SSE stream.")]
+    [Fact]
     public async Task SendRequestAsync_ShouldIgnoreGetStreamAsNormalResponsePath_ForNewInflightRequest()
     {
         var sseStream = new TestSseStream();
@@ -403,6 +461,7 @@ public class SseClientTransportTests
         var getResponseProcessed = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
+        var observedResponses = new ConcurrentQueue<(string Id, string? Source)>();
         var releasePostResponse = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -457,10 +516,16 @@ public class SseClientTransportTests
         var transport = new SseClientTransport(requestClient, streamClient, NullLogger.Instance);
         transport.OnResponse += response =>
         {
-            if (
-                response.Result is JsonElement resultElement
+            var source = response.Result is JsonElement resultElement
                 && resultElement.TryGetProperty("source", out var sourceElement)
-                && sourceElement.GetString() == "get"
+                    ? sourceElement.GetString()
+                    : null;
+            observedResponses.Enqueue((response.Id, source));
+
+            if (
+                response.Result is JsonElement getResultElement
+                && getResultElement.TryGetProperty("source", out var getSourceElement)
+                && getSourceElement.GetString() == "get"
             )
             {
                 getResponseProcessed.TrySetResult();
@@ -483,13 +548,28 @@ public class SseClientTransportTests
                 }
             );
             await sseStream.WriteEventAsync($"data: {getResponsePayload}\n\n");
-            await getResponseProcessed.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            var prematureCompletion = await Task.WhenAny(
+                requestTask,
+                Task.Delay(TimeSpan.FromMilliseconds(100))
+            );
+            prematureCompletion.Should().NotBe(
+                requestTask,
+                "fresh POST requests should not complete from the optional GET SSE stream"
+            );
+            getResponseProcessed.Task.IsCompleted.Should().BeFalse();
 
             releasePostResponse.TrySetResult();
 
             var result = await requestTask.WaitAsync(TimeSpan.FromSeconds(1));
             var resultElement = result.Should().BeOfType<JsonElement>().Subject;
             resultElement.GetProperty("source").GetString().Should().Be("post");
+            getResponseProcessed.Task.IsCompleted.Should().BeFalse();
+
+            var recordedResponses = observedResponses.ToArray();
+            recordedResponses.Should().ContainSingle();
+            recordedResponses[0].Id.Should().Be(requestId);
+            recordedResponses[0].Source.Should().Be("post");
         }
         finally
         {

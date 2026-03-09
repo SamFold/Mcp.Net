@@ -16,7 +16,7 @@ Use it to see which component or system tracks are active and where each next sl
 - `Mcp.Net.Server`: `docs/vnext/server.md`
   - Current slice: continue the logging/debuggability and hidden mutable state review.
 - `Mcp.Net.Client`: `docs/vnext/client.md`
-  - Current slice: align optional GET SSE listening with 2025-11-25 Streamable HTTP so in-flight request responses are no longer treated as GET-stream traffic.
+  - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
 - `Mcp.Net.LLM`: `docs/vnext/llm.md`
   - Current slice: fix nested object and array tool arguments in the provider adapters.
 

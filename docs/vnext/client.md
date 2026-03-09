@@ -5,7 +5,8 @@
 - The current `Mcp.Net.Client` review has identified a transport-level spec gap in the HTTP client path.
 - `SseClientTransport` now completes client requests from successful POST response bodies when the server replies with either `application/json` or a POST-scoped `text/event-stream`.
 - `SseClientTransport` no longer requires a GET SSE stream or a pre-initialize session header in order to send the initial `initialize` request, so POST-only Streamable HTTP startup is now possible.
-- The client remains compatible with the current in-repo server shape because the background GET SSE listener is still available, but that listener is still too central to the request-response model relative to the 2025-11-25 Streamable HTTP rules.
+- The client still remains compatible with the current in-repo server shape because legacy no-body POST request handling can still fall back to the optional GET SSE stream when needed.
+- Fresh POST requests no longer treat the optional GET SSE stream as their normal response path once the client can determine that the request is POST-scoped.
 - Existing client and integration coverage now proves the transport can consume spec-compliant POST responses in both supported response modes, while preserving the current session and negotiated-protocol header behavior.
 
 ## Goal
@@ -27,15 +28,15 @@
 
 ## Current slice
 
-1. Add regressions proving the optional GET SSE stream is not the normal response path for new in-flight client requests once POST response handling is available.
-2. Tighten `SseClientTransport` so POST-initiated requests prefer their own HTTP response bodies and the GET stream remains for server-initiated traffic unless resuming a previous stream.
-3. Preserve compatibility with the current in-repo server shape while keeping the change narrow and avoiding reconnect, retry, or deprecated 2024-11-05 fallback work in the same slice.
+1. Add regressions around broken or closed Streamable HTTP SSE flows so reconnect and stale-state behavior is pinned before implementation.
+2. Review HTTP stream retry and cancellation behavior, especially where optional GET SSE, POST-scoped SSE, and timed-out requests can leave stale deferred state behind.
+3. Pin the expected client behavior when a sessioned request returns HTTP `404`, including the boundary between transport reset and protocol re-initialization.
 
 ## Next slices
 
-1. Review reconnect, retry, and stale-state cleanup for HTTP streams, including session-expiry handling after HTTP 404 and protocol-correct cancellation behavior.
-2. Add backwards-compatibility fallback for deprecated 2024-11-05 HTTP+SSE servers if cross-version interoperability remains a product requirement.
-3. Revisit whether the 2025-11-25 behavior should remain an in-place evolution of `SseClientTransport` or become a distinct transport once compatibility requirements are clearer.
+1. Add backwards-compatibility fallback for deprecated 2024-11-05 HTTP+SSE servers if cross-version interoperability remains a product requirement.
+2. Revisit whether the 2025-11-25 behavior should remain an in-place evolution of `SseClientTransport` or become a distinct transport once compatibility requirements are clearer.
+3. Review negotiated protocol-version defaults and headers so the client’s advertised latest revision matches the intended Streamable HTTP support level.
 
 ## Open decisions
 
