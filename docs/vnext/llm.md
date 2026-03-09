@@ -20,6 +20,9 @@
 - Persisted chat history now stores typed `ChatTranscriptEntry` records instead of flat `StoredChatMessage` rows.
 - `ChatSession` resume now rehydrates both its in-memory transcript and provider client history through the replay transformer and provider-specific replay loaders.
 - The Web UI adapter bootstrap path now loads persisted transcript before session start, stores all runtime transcript entries including `User`, and no longer injects a fake `system` history message on prompt updates.
+- Anthropic assistant turns now capture `ThinkingContent` and `RedactedThinkingContent` into transcript reasoning blocks, and Anthropic replay uses visibility-aware fallbacks so missing signatures degrade to portable text instead of emitting invalid thinking payloads.
+- OpenAI replay now rebuilds mixed assistant text-plus-tool-call history as a single assistant message via the SDK `ChatCompletion` mock factory instead of splitting it into two assistant messages.
+- Replay/provider tests now use the captured Anthropic reasoning probe fixture for same-provider cross-model degradation, cross-provider handoff safety, and Anthropic thinking round-trips.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 
 ## Goal
@@ -45,9 +48,9 @@
 
 ## Current slice
 
-1. Harden provider-specific replay mapping with captured probe fixtures, including model-switch, cross-provider handoff, and Anthropic reasoning replay cases.
-2. Decide whether the remaining Web UI transport DTOs should also become discriminated transcript-entry models now that persistence/runtime state is typed.
-3. Keep the transcript semantics stable while the next streaming block-delta shape is introduced.
+1. Decide whether the remaining Web UI transport DTOs should also become discriminated transcript-entry models now that persistence/runtime state and replay semantics are typed.
+2. Keep the transcript semantics stable while the next streaming block-delta shape is introduced.
+3. Extend the probe corpus when real mixed reasoning-plus-tool-call payloads become available so replay coverage can move from synthetic ordering cases to captured provider outputs.
 
 ## Next slices
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -15,6 +16,48 @@ namespace Mcp.Net.Tests.LLM.Anthropic;
 
 public class AnthropicChatClientTests
 {
+    [Fact]
+    public async Task SendMessageAsync_ProbeReasoningResponse_ShouldReturnReasoningAndTextBlocksInOrder()
+    {
+        var fixture = AnthropicReasoningFixture.Load();
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-6",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[]
+            {
+                new ThinkingContent
+                {
+                    Thinking = fixture.Thinking,
+                    Signature = fixture.Signature,
+                },
+                new TextContent { Text = fixture.Text },
+            }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var response = await client.SendMessageAsync("Count r characters");
+
+        response.Should().BeOfType<ChatClientAssistantTurn>();
+        var assistantTurn = (ChatClientAssistantTurn)response;
+        assistantTurn.Blocks.Should().HaveCount(2);
+        assistantTurn
+            .Blocks[0]
+            .Should()
+            .BeEquivalentTo(
+                new ReasoningAssistantBlock(
+                    assistantTurn.Blocks[0].Id,
+                    fixture.Thinking,
+                    ReasoningVisibility.Visible,
+                    fixture.Signature
+                )
+            );
+        assistantTurn.Blocks[1].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be(fixture.Text);
+    }
+
     [Fact]
     public async Task SendMessageAsync_TextResponse_ShouldReturnAssistantMessage()
     {
@@ -279,6 +322,96 @@ public class AnthropicChatClientTests
             .Which;
         toolResultContent.ToolUseId.Should().Be("toolu_1");
         toolResultContent.Content.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task LoadReplayTranscript_VisibleReasoningWithoutReplayToken_ShouldReplayAsTextContent()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-6",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        client.LoadReplayTranscript(
+            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
+                client.GetReplayTarget(),
+                new ChatTranscriptEntry[]
+                {
+                    new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "Count r characters", "turn-1"),
+                    new AssistantChatEntry(
+                        "assistant-1",
+                        DateTimeOffset.UtcNow.AddMinutes(-1),
+                        new AssistantContentBlock[]
+                        {
+                            new ReasoningAssistantBlock(
+                                "reasoning-1",
+                                "Let me count first.",
+                                ReasoningVisibility.Visible
+                            ),
+                            new TextAssistantBlock("text-1", "There are three."),
+                        },
+                        "turn-1",
+                        "anthropic",
+                        "claude-sonnet-4-6"
+                    ),
+                }
+            )
+        );
+
+        await client.SendMessageAsync("continue");
+
+        var assistantContent = messageClient.LastParameters!.Messages[1].Content;
+        assistantContent.Should().HaveCount(2);
+        assistantContent.Should().AllSatisfy(content => content.Should().BeOfType<TextContent>());
+        assistantContent
+            .OfType<TextContent>()
+            .Select(content => content.Text)
+            .Should()
+            .ContainInOrder("Let me count first.", "There are three.");
+    }
+
+    private sealed record AnthropicReasoningFixture(string Thinking, string Signature, string Text)
+    {
+        public static AnthropicReasoningFixture Load()
+        {
+            using var document = JsonDocument.Parse(
+                File.ReadAllText(FindRepoRootFile("artifacts/llm-probe/anthropic-reasoning.json"))
+            );
+
+            var payloadContent = document
+                .RootElement[0]
+                .GetProperty("Payload")
+                .GetProperty("Content");
+
+            return new AnthropicReasoningFixture(
+                payloadContent[0].GetProperty("Thinking").GetString()!,
+                payloadContent[0].GetProperty("Signature").GetString()!,
+                payloadContent[1].GetProperty("Text").GetString()!
+            );
+        }
+    }
+
+    private static string FindRepoRootFile(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Mcp.Net.sln")))
+            {
+                return Path.Combine(directory.FullName, relativePath);
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the repository root.");
     }
 
     private sealed class StubAnthropicMessageClient : IAnthropicMessageClient

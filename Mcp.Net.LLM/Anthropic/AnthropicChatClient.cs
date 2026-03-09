@@ -188,6 +188,28 @@ public sealed class AnthropicChatClient : IChatClient
         {
             switch (content)
             {
+                case ThinkingContent thinking:
+                    blocks.Add(
+                        new ReasoningAssistantBlock(
+                            Guid.NewGuid().ToString("n"),
+                            thinking.Thinking,
+                            ReasoningVisibility.Visible,
+                            string.IsNullOrWhiteSpace(thinking.Signature) ? null : thinking.Signature
+                        )
+                    );
+                    break;
+                case RedactedThinkingContent redactedThinking:
+                    blocks.Add(
+                        new ReasoningAssistantBlock(
+                            Guid.NewGuid().ToString("n"),
+                            null,
+                            ReasoningVisibility.Redacted,
+                            string.IsNullOrWhiteSpace(redactedThinking.Data)
+                                ? null
+                                : redactedThinking.Data
+                        )
+                    );
+                    break;
                 case ToolUseContent toolUse:
                     foreach (var invocation in ExtractToolCalls(toolUse))
                     {
@@ -352,11 +374,21 @@ public sealed class AnthropicChatClient : IChatClient
                     );
                     break;
                 case AssistantChatEntry assistant:
+                    var replayContent = assistant
+                        .Blocks.Select(ToReplayContent)
+                        .OfType<ContentBase>()
+                        .ToList();
+
+                    if (replayContent.Count == 0)
+                    {
+                        break;
+                    }
+
                     _messages.Add(
                         new Message
                         {
                             Role = RoleType.Assistant,
-                            Content = assistant.Blocks.Select(ToReplayContent).ToList(),
+                            Content = replayContent,
                         }
                     );
                     break;
@@ -367,18 +399,34 @@ public sealed class AnthropicChatClient : IChatClient
         }
     }
 
-    private static ContentBase ToReplayContent(AssistantContentBlock block) =>
+    private static ContentBase? ToReplayContent(AssistantContentBlock block) =>
         block switch
         {
             TextAssistantBlock text => new TextContent { Text = text.Text },
-            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
+            ReasoningAssistantBlock
+            {
+                Visibility: ReasoningVisibility.Visible,
+                Text: { Length: > 0 } text,
+                ReplayToken: { Length: > 0 } signature,
+            }
                 => new ThinkingContent
                 {
-                    Thinking = reasoning.Text!,
-                    Signature = reasoning.ReplayToken ?? string.Empty,
+                    Thinking = text,
+                    Signature = signature,
                 },
-            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.ReplayToken)
-                => new RedactedThinkingContent { Data = reasoning.ReplayToken! },
+            ReasoningAssistantBlock
+            {
+                Visibility: ReasoningVisibility.Visible,
+                Text: { Length: > 0 } text,
+            } => new TextContent { Text = text },
+            ReasoningAssistantBlock
+            {
+                Visibility: ReasoningVisibility.Redacted,
+                ReplayToken: { Length: > 0 } data,
+            } => new RedactedThinkingContent { Data = data },
+            ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
+                => new TextContent { Text = reasoning.Text! },
+            ReasoningAssistantBlock => null,
             ToolCallAssistantBlock toolCall => new ToolUseContent
             {
                 Id = toolCall.ToolCallId,

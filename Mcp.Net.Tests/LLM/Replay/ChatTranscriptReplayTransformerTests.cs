@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
@@ -133,6 +135,79 @@ public class ChatTranscriptReplayTransformerTests
     }
 
     [Fact]
+    public void Transform_AnthropicProbeReasoning_ToDifferentAnthropicModel_ShouldConvertThinkingToText()
+    {
+        var fixture = AnthropicReasoningFixture.Load();
+        var transformer = new ChatTranscriptReplayTransformer();
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new AssistantChatEntry(
+                "assistant-1",
+                Timestamp(0),
+                new AssistantContentBlock[]
+                {
+                    new ReasoningAssistantBlock(
+                        "reasoning-1",
+                        fixture.Thinking,
+                        ReasoningVisibility.Visible,
+                        fixture.Signature
+                    ),
+                    new TextAssistantBlock("text-1", fixture.Text),
+                },
+                "turn-1",
+                "anthropic",
+                "claude-sonnet-4-6"
+            ),
+        };
+
+        var replay = transformer.Transform(
+            transcript,
+            new ReplayTarget("anthropic", "claude-sonnet-4-5-20250929")
+        );
+
+        var assistant = replay.Entries.OfType<AssistantChatEntry>().Single();
+        assistant.Blocks.Should().HaveCount(2);
+        assistant.Blocks.Should().AllSatisfy(block => block.Should().BeOfType<TextAssistantBlock>());
+        assistant
+            .Blocks.Select(block => ((TextAssistantBlock)block).Text)
+            .Should()
+            .ContainInOrder(fixture.Thinking, fixture.Text);
+    }
+
+    [Fact]
+    public void Transform_AnthropicProbeReasoning_ToOpenAi_ShouldDropThinkingAndKeepText()
+    {
+        var fixture = AnthropicReasoningFixture.Load();
+        var transformer = new ChatTranscriptReplayTransformer();
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new AssistantChatEntry(
+                "assistant-1",
+                Timestamp(0),
+                new AssistantContentBlock[]
+                {
+                    new ReasoningAssistantBlock(
+                        "reasoning-1",
+                        fixture.Thinking,
+                        ReasoningVisibility.Visible,
+                        fixture.Signature
+                    ),
+                    new TextAssistantBlock("text-1", fixture.Text),
+                },
+                "turn-1",
+                "anthropic",
+                "claude-sonnet-4-6"
+            ),
+        };
+
+        var replay = transformer.Transform(transcript, new ReplayTarget("openai", "gpt-5"));
+
+        var assistant = replay.Entries.OfType<AssistantChatEntry>().Single();
+        assistant.Blocks.Should().ContainSingle();
+        assistant.Blocks[0].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be(fixture.Text);
+    }
+
+    [Fact]
     public void Transform_UnmatchedAssistantToolCall_ShouldSynthesizeErrorToolResult()
     {
         var transformer = new ChatTranscriptReplayTransformer();
@@ -174,4 +249,42 @@ public class ChatTranscriptReplayTransformerTests
 
     private static DateTimeOffset Timestamp(int minutes) =>
         new(2026, 3, 9, 10, minutes, 0, TimeSpan.Zero);
+
+    private sealed record AnthropicReasoningFixture(string Thinking, string Signature, string Text)
+    {
+        public static AnthropicReasoningFixture Load()
+        {
+            using var document = JsonDocument.Parse(
+                File.ReadAllText(FindRepoRootFile("artifacts/llm-probe/anthropic-reasoning.json"))
+            );
+
+            var payloadContent = document
+                .RootElement[0]
+                .GetProperty("Payload")
+                .GetProperty("Content");
+
+            return new AnthropicReasoningFixture(
+                payloadContent[0].GetProperty("Thinking").GetString()!,
+                payloadContent[0].GetProperty("Signature").GetString()!,
+                payloadContent[1].GetProperty("Text").GetString()!
+            );
+        }
+    }
+
+    private static string FindRepoRootFile(string relativePath)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Mcp.Net.sln")))
+            {
+                return Path.Combine(directory.FullName, relativePath);
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the repository root.");
+    }
 }

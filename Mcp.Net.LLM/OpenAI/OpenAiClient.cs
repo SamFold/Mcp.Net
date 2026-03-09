@@ -340,21 +340,9 @@ public sealed class OpenAiChatClient : IChatClient
 
     private void AppendAssistantReplayEntry(AssistantChatEntry assistant)
     {
-        var textBlocks = assistant
-            .Blocks.OfType<TextAssistantBlock>()
-            .Select(block => block.Text)
-            .Concat(
-                assistant
-                    .Blocks.OfType<ReasoningAssistantBlock>()
-                    .Where(block => !string.IsNullOrWhiteSpace(block.Text))
-                    .Select(block => block.Text!)
-            )
+        var textParts = assistant
+            .Blocks.SelectMany(ToReplayTextParts)
             .ToList();
-
-        if (textBlocks.Count > 0)
-        {
-            _history.Add(new AssistantChatMessage(string.Join(Environment.NewLine, textBlocks)));
-        }
 
         var toolCalls = assistant
             .Blocks.OfType<ToolCallAssistantBlock>()
@@ -367,9 +355,60 @@ public sealed class OpenAiChatClient : IChatClient
             )
             .ToList();
 
-        if (toolCalls.Count > 0)
+        if (textParts.Count == 0 && toolCalls.Count == 0)
+        {
+            return;
+        }
+
+        if (toolCalls.Count == 0)
+        {
+            _history.Add(new AssistantChatMessage(textParts));
+            return;
+        }
+
+        if (textParts.Count == 0)
         {
             _history.Add(new AssistantChatMessage(toolCalls));
+            return;
+        }
+
+        _history.Add(
+            new AssistantChatMessage(CreateReplayChatCompletion(assistant, textParts, toolCalls))
+        );
+    }
+
+    private static IEnumerable<ChatMessageContentPart> ToReplayTextParts(AssistantContentBlock block)
+    {
+        switch (block)
+        {
+            case TextAssistantBlock text:
+                yield return ChatMessageContentPart.CreateTextPart(text.Text);
+                yield break;
+
+            case ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text):
+                yield return ChatMessageContentPart.CreateTextPart(reasoning.Text!);
+                yield break;
         }
     }
+
+    private ChatCompletion CreateReplayChatCompletion(
+        AssistantChatEntry assistant,
+        IReadOnlyList<ChatMessageContentPart> textParts,
+        IReadOnlyList<ChatToolCall> toolCalls
+    ) =>
+        OpenAIChatModelFactory.ChatCompletion(
+            assistant.Id,
+            ChatFinishReason.ToolCalls,
+            new ChatMessageContent(textParts),
+            refusal: null,
+            toolCalls,
+            ChatMessageRole.Assistant,
+            functionCall: null,
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            assistant.Timestamp,
+            assistant.Model ?? _modelName,
+            systemFingerprint: null,
+            usage: null!
+        );
 }
