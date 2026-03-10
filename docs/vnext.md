@@ -9,7 +9,7 @@ Use it to see which component or system tracks are active and where each next sl
 - Update the relevant track file or files before substantial implementation when the planned slice changes.
 - Update the same track file or files again after completing a slice so they point at the next commit-sized step for that area.
 - Keep each track narrow enough that one agent can execute it as a coherent vertical slice.
-- Use `docs/roadmap.md` for the broader sequence and cross-track prioritization.
+- Use `docs/roadmap.md` and the detailed project roadmaps under `docs/roadmap/` for the broader sequence and cross-track prioritization.
 
 ## Active Tracks
 
@@ -18,7 +18,7 @@ Use it to see which component or system tracks are active and where each next sl
 - `Mcp.Net.Client`: `docs/vnext/client.md`
   - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
 - `Mcp.Net.LLM`: `docs/vnext/llm.md`
-  - Current slice: replace the text-first chat contracts with the block-based transcript/event model and typed provider outputs.
+  - Current slice: add shared max-output-token handling, remove adapter-owned prompt defaults, and make Anthropic honor shared temperature; then session cancellation and tool-registration follow-ons.
 
 ## On-Demand Tracks
 

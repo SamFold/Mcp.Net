@@ -1,94 +1,48 @@
 # Roadmap (Mcp.Net)
 
-This document tracks the medium-term sequence of work across the repo.
-Update it when priorities, milestones, or major decisions change.
+This file is the repo-level entry point for medium-term planning.
+Use it to see which project roadmaps are active, how they are sequenced, and where cross-project coordination is needed.
+
+## How To Use This Index
+
+- Keep detailed medium-term planning in project files under `docs/roadmap/`.
+- Update the relevant roadmap file or files when priorities, milestones, or major decisions change.
+- If work spans multiple projects, update each affected roadmap and call out the dependency, or use `docs/roadmap/cross-cutting.md` when no single project should own the lane.
+- Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Start the `Mcp.Net.Client` Streamable HTTP spec-alignment review slice
+1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Wire real provider streaming into the new `Mcp.Net.LLM` assistant-turn transcript update seam
+3. Finish the remaining `Mcp.Net.LLM` provider-parity slice, starting with shared option cleanup for max-output tokens, prompt ownership, and Anthropic temperature now that `Usage` and `StopReason` propagation is in place
 
-## Near-term roadmap
-1. `Mcp.Net.Client`: Streamable HTTP request-response spec alignment for 2025-11-25
-2. `Mcp.Net.Server`: logging/debuggability and hidden mutable state review
-3. `Mcp.Net.LLM`: implement provider-specific streaming for OpenAI and Anthropic on top of the assistant-turn update seam so one in-flight assistant entry can receive block-level updates end to end
-4. `Mcp.Net.LLM`: extend the probe corpus and regression coverage for mixed reasoning, text, and tool-call streaming payloads
-5. `Mcp.Net.LLM`: make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions
-6. MCP server review closure and cleanup
-7. Broader MCP spec alignment work across server, client, and LLM integrations
+## Active Project Roadmaps
 
-## Recently completed
-- `Mcp.Net.LLM` and `Mcp.Net.WebUi` now have the first streaming-ready transcript update seam:
-  - `IChatClient` accepts typed in-flight assistant turn updates
-  - `ChatSession` updates one assistant transcript entry in place by transcript `Id`
-  - SignalR emits durable `UpdateMessage` events for transcript updates
-  - persisted transcript storage upserts updated entries instead of appending duplicates
-- The previous `Mcp.Net.LLM` roadmap milestones for the block-based transcript rewrite, discriminated Web UI transport migration, and replay/history transform seam are now complete and the next LLM slice moves to provider-side streaming
-- `Mcp.Net.LLM` now has a concrete next-generation `ChatSession` transcript/event spec in `docs/llm-chat-session-item-model.md`, replacing the earlier flat five-kind item proposal with:
-  - transcript entries: `User`, `Assistant`, `ToolResult`, `Error`
-  - assistant blocks: `Text`, `Reasoning`, `ToolCall`
-  - explicit replay/history transform requirements
-- Fresh POST requests no longer complete from the optional GET SSE stream once the client can determine that the request is bound to a POST response path, while legacy no-body POST flows still fall back to GET for current server compatibility
-- HTTP client startup now tolerates POST-only Streamable HTTP servers by treating GET SSE as optional during startup and allowing `initialize` before a session header exists
-- HTTP client POST requests now complete from spec-compliant Streamable HTTP response bodies, including both inline `application/json` responses and POST-scoped `text/event-stream` responses
-- In-flight `list_changed` broadcasts now re-check session readiness before delivery, so a replacement transport cannot inherit a stale ready-session snapshot before it re-initializes
-- Replacement transports now cancel pending server-initiated client requests from the old connection, so reconnect handoff does not leave stale outbound requests hanging until timeout
-- Replacement transports now clear inherited negotiated protocol, client capability, and readiness state so a new connection cannot reuse the previous session handshake implicitly
-- Server-driven `list_changed` notifications now wait for `notifications/initialized`, so protocol negotiation is no longer treated as equivalent to lifecycle readiness
-- Reconnect replacement now starts before registration, so a failed replacement startup no longer evicts the existing live transport for that session
-- `ConnectAsync` now rolls back startup-failed transports so a `StartAsync` exception does not leave a dead transport registered in the connection manager
-- Hosted SSE connections now use a single authoritative registration path, removing duplicate transport registration and duplicate close-subscription state on initial connect
-- Transport errors now converge on the close path, so fatal send failures clear session-scoped negotiated state and remove the broken transport instead of leaving stale active-session state behind
-- `initialize` now suppresses the unimplemented `logging` capability even when callers set `ServerCapabilities.Logging`, so capability advertisement stays truthful
-- SSE and stdio server transports now serialize outbound writes per connection so overlapping responses, requests, and notifications cannot enter the shared writer concurrently
-- SSE and stdio client transports now raise `OnClose` when the remote side ends the connection, and pending client requests now fail promptly with cancellation semantics instead of hanging or surfacing a false timeout
-- Added integration coverage proving outbound server-initiated elicitation cancels promptly on disconnect for both SSE and stdio
-- Server-initiated elicitation now honors per-session client capability negotiation instead of sending requests to sessions that never advertised `elicitation`
-- `AddMcpStdioTransport(McpServerBuilder)` now preserves builder-configured server identity and instructions during DI registration
-- `AddMcpStdioTransport(StdioServerOptions)` now preserves configured stdio and shared server option values during DI registration
-- `AddMcpCore(McpServerBuilder)` now preserves builder-configured server identity and instructions in the DI-registered `McpServerOptions`
-- `AddMcpSseTransport(SseServerOptions)` now preserves routing and security settings instead of dropping them during DI registration
-- Hosted SSE builder path now honors configured MCP and health endpoints
-- Hosted SSE requests now reuse middleware-authenticated request state instead of authenticating twice
-- Server-driven `notifications/.../list_changed` broadcasts now fire for post-initialize tool, prompt, and resource mutations
-- LLM and WebUI refresh listeners now accept the spec notification names and refresh-path coverage is in place
-- `HandleRequestAsync` now preserves cancellation tokens through resource, prompt, and completion execution
-- True non-tool request cancellation now propagates as cancellation instead of being normalized to `InternalError`
-- Completion handlers now receive a request-context snapshot with session, transport, and metadata
-- Prompt and resource handlers now receive a request-context snapshot with session, transport, and metadata
+- `Mcp.Net.Client`: `docs/roadmap/client.md`
+  - Current focus: reconnect, retry, stale-state cleanup, and HTTP `404` session-expiry behavior for Streamable HTTP request and SSE flows.
+- `Mcp.Net.Server`: `docs/roadmap/server.md`
+  - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
+- `Mcp.Net.LLM`: `docs/roadmap/llm.md`
+  - Current focus: option cleanup first, specifically max-output tokens, prompt ownership, and Anthropic temperature; then cancellation, tool-registration idempotency, and unresolved LLM review follow-ons.
+- Cross-cutting: `docs/roadmap/cross-cutting.md`
+  - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 
-## Server stability themes
-- Keep all session-scoped state isolated by connection/session
-- Prefer one authoritative routing path per transport
-- Add regression coverage for every production bug we fix
-- Keep auth, origin validation, and teardown behavior consistent across hosting paths
-- Keep refresh/list-changed behavior spec-aligned so connected clients do not drift stale
-- Preserve request cancellation and request metadata until the final handler boundary
-- Preserve client capability negotiation per session before issuing server-initiated client-feature requests
-- Serialize outbound writes per transport so responses, requests, and notifications cannot corrupt one another on a shared connection
-- Keep capability advertisement truthful so `initialize` does not promise primitives the server does not implement
+## Current cross-project dependencies
 
-## Broader roadmap
-1. MCP server review closure and cleanup
-2. MCP spec alignment work across server, client, and LLM integrations
-3. Improved examples and diagnostics for OAuth, elicitation, completion, and tool execution
-4. Continued integration coverage for SSE and stdio parity
+- `Mcp.Net.LLM` session cancellation depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, so the LLM cancellation slice is not purely local.
+- The completed `Mcp.Net.LLM` `Usage` and `StopReason` slice already touched `Mcp.Net.WebUi`; the next option-cleanup slice should stay local unless shared request contracts broaden.
+- `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
+
+## On-Demand Roadmaps
+
+- Create additional files under `docs/roadmap/` when a project needs an independent medium-term lane.
+- Recommended names:
+  - `core.md`
+  - `webui.md`
+  - `examples.md`
+  - `tests.md`
 
 ## Notes
-- `docs/vnext.md` is the repo-level index for active component and system tracks under `docs/vnext/`.
-- Each `docs/vnext/*.md` file holds the next commit-sized slice for one component, subsystem, or cross-cutting lane.
-- This file is for the broader sequence of upcoming work across those tracks.
-- The currently active tracks are `docs/vnext/client.md`, `docs/vnext/server.md`, and `docs/vnext/llm.md`.
-- The active `Mcp.Net.LLM` lane is now provider streaming on top of the new transcript/update seam, not another compatibility-first adapter patch pass.
-- The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
-- The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
-- The next active client review area is Streamable HTTP reconnect, retry, and stale-state cleanup, including session-expiry handling after HTTP 404.
-- The next active server review area remains logging/debuggability and hidden mutable state.
-- The logging-capability truthfulness gap is now closed by suppressing unimplemented `logging` from advertised server capabilities.
-- The transport-error hidden-state gap is now closed by forcing fatal transport errors through the normal close cleanup path.
-- The hosted SSE duplicate-registration hidden-state gap is now closed by removing the redundant host-side registration before `McpServer.ConnectAsync`.
-- The transport-startup rollback gap is now closed by cleaning up registration when `ConnectAsync` fails during `StartAsync`.
-- The reconnect replacement startup gap is now closed by delaying session replacement until the new transport has started successfully.
-- The lifecycle-readiness gap is now closed by requiring `notifications/initialized` before server-driven `list_changed` broadcasts.
-- The stale pending client-request gap on transport replacement is now closed.
-- The in-flight `list_changed` replacement-race gap is now closed by re-checking readiness before notification delivery.
+
+- `docs/roadmap/README.md` describes the roadmap file pattern.
+- `docs/vnext.md` is the repo-level index for commit-sized execution slices.
+- The currently active medium-term lanes are `docs/roadmap/client.md`, `docs/roadmap/server.md`, `docs/roadmap/llm.md`, and `docs/roadmap/cross-cutting.md`.

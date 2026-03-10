@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Anthropic.SDK;
 using Anthropic.SDK.Messaging;
@@ -10,7 +11,15 @@ namespace Mcp.Net.LLM.Anthropic;
 /// </summary>
 internal interface IAnthropicMessageClient
 {
-    Task<IReadOnlyList<ContentBase>> GetResponseContentAsync(MessageParameters parameters);
+    Task<MessageResponse> GetResponseAsync(
+        MessageParameters parameters,
+        CancellationToken cancellationToken = default
+    );
+
+    IAsyncEnumerable<MessageResponse> StreamResponseAsync(
+        MessageParameters parameters,
+        CancellationToken cancellationToken = default
+    );
 }
 
 /// <summary>
@@ -30,9 +39,14 @@ internal sealed class AnthropicMessageClient : IAnthropicMessageClient
         _client = client;
     }
 
-    public async Task<IReadOnlyList<ContentBase>> GetResponseContentAsync(MessageParameters parameters)
-    {
-        var response = await _client.Messages.GetClaudeMessageAsync(parameters);
-        return response.Content ?? new List<ContentBase>();
-    }
+    public Task<MessageResponse> GetResponseAsync(
+        MessageParameters parameters,
+        CancellationToken cancellationToken = default
+    )
+        => _client.Messages.GetClaudeMessageAsync(parameters, cancellationToken);
+
+    public IAsyncEnumerable<MessageResponse> StreamResponseAsync(
+        MessageParameters parameters,
+        CancellationToken cancellationToken = default
+    ) => _client.Messages.StreamClaudeMessageAsync(parameters, cancellationToken);
 }

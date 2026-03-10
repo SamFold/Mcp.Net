@@ -16,6 +16,57 @@ namespace Mcp.Net.Tests.LLM.OpenAI;
 public class OpenAiChatClientTests
 {
     [Fact]
+    public async Task SendMessageAsync_ShouldPopulateUsageAndStopReasonOnAssistantTurn()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+
+#pragma warning disable OPENAI001
+        var completionInvoker = new ReturningChatCompletionInvoker(
+            OpenAIChatModelFactory.ChatCompletion(
+                finishReason: ChatFinishReason.Stop,
+                content: new ChatMessageContent([ChatMessageContentPart.CreateTextPart("Hello")]),
+                role: ChatMessageRole.Assistant,
+                createdAt: DateTimeOffset.UtcNow,
+                model: "gpt-5",
+                usage: OpenAIChatModelFactory.ChatTokenUsage(
+                    outputTokenCount: 12,
+                    inputTokenCount: 8,
+                    totalTokenCount: 20,
+                    outputTokenDetails: OpenAIChatModelFactory.ChatOutputTokenUsageDetails(
+                        reasoningTokenCount: 4
+                    ),
+                    inputTokenDetails: OpenAIChatModelFactory.ChatInputTokenUsageDetails(
+                        cachedTokenCount: 3
+                    )
+                )
+            )
+        );
+#pragma warning restore OPENAI001
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var result = await client.SendMessageAsync("hello");
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.StopReason.Should().Be("stop");
+        var usage = assistantTurn.Usage;
+        usage.Should().NotBeNull();
+        usage!.InputTokens.Should().Be(8);
+        usage.OutputTokens.Should().Be(12);
+        usage.TotalTokens.Should().Be(20);
+        usage.AdditionalCounts.Should().Contain("cachedInputTokens", 3);
+        usage.AdditionalCounts.Should().Contain("reasoningOutputTokens", 4);
+    }
+
+    [Fact]
     public async Task SendMessageAsync_WithConfiguredSystemPrompt_ShouldIncludePromptInFirstOutboundRequest()
     {
         // Arrange
@@ -238,7 +289,20 @@ public class OpenAiChatClientTests
         var updateTimestamp = DateTimeOffset.UtcNow;
         var completionInvoker = new StreamingChatCompletionInvoker(
             CreateTextUpdate("stream-1", "Hel", updateTimestamp),
-            CreateTextUpdate("stream-1", "lo", updateTimestamp, ChatFinishReason.Stop)
+            CreateTextUpdate(
+                "stream-1",
+                "lo",
+                updateTimestamp,
+                ChatFinishReason.Stop,
+                OpenAIChatModelFactory.ChatTokenUsage(
+                    outputTokenCount: 2,
+                    inputTokenCount: 6,
+                    totalTokenCount: 8,
+                    outputTokenDetails: OpenAIChatModelFactory.ChatOutputTokenUsageDetails(
+                        reasoningTokenCount: 1
+                    )
+                )
+            )
         );
 
         var client = new OpenAiChatClient(
@@ -262,9 +326,18 @@ public class OpenAiChatClientTests
         streamedTurns.Select(turn => ((TextAssistantBlock)turn.Blocks.Single()).Text)
             .Should()
             .ContainInOrder("Hel", "Hello");
+        streamedTurns[^1].StopReason.Should().Be("stop");
+        var streamedUsage = streamedTurns[^1].Usage;
+        streamedUsage.Should().NotBeNull();
+        streamedUsage!.InputTokens.Should().Be(6);
+        streamedUsage.OutputTokens.Should().Be(2);
+        streamedUsage.TotalTokens.Should().Be(8);
+        streamedUsage.AdditionalCounts.Should().Contain("reasoningOutputTokens", 1);
 
         var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
         assistantTurn.Id.Should().Be(streamedTurns[0].Id);
+        assistantTurn.StopReason.Should().Be("stop");
+        assistantTurn.Usage.Should().BeEquivalentTo(streamedTurns[^1].Usage);
         assistantTurn.Blocks.Should().ContainSingle();
         assistantTurn.Blocks[0]
             .Should()
@@ -293,7 +366,12 @@ public class OpenAiChatClientTests
                 "search",
                 """er"}""",
                 updateTimestamp,
-                ChatFinishReason.ToolCalls
+                ChatFinishReason.ToolCalls,
+                OpenAIChatModelFactory.ChatTokenUsage(
+                    outputTokenCount: 5,
+                    inputTokenCount: 10,
+                    totalTokenCount: 15
+                )
             )
         );
 
@@ -325,6 +403,9 @@ public class OpenAiChatClientTests
 
         var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
         assistantTurn.Id.Should().Be(finalStreamedTurn.Id);
+        assistantTurn.StopReason.Should().Be("tool_calls");
+        assistantTurn.Usage.Should().NotBeNull();
+        assistantTurn.Usage!.TotalTokens.Should().Be(15);
         assistantTurn.Blocks.Should().HaveCount(2);
         assistantTurn.Blocks[1]
             .Should()
@@ -376,6 +457,29 @@ public class OpenAiChatClientTests
             CapturedMessages = messages.ToList();
             throw new InvalidOperationException("Streaming capture not expected");
         }
+    }
+
+    private sealed class ReturningChatCompletionInvoker : IOpenAiChatCompletionInvoker
+    {
+        private readonly ChatCompletion _completion;
+
+        public ReturningChatCompletionInvoker(ChatCompletion completion)
+        {
+            _completion = completion;
+        }
+
+        public ChatCompletion CompleteChat(
+            ChatClient client,
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions options
+        ) => _completion;
+
+        public IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteChatStreamingAsync(
+            ChatClient client,
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions options,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException("Streaming completion not expected");
     }
 
     private sealed class StreamingChatCompletionInvoker : IOpenAiChatCompletionInvoker
@@ -439,7 +543,8 @@ public class OpenAiChatClientTests
         string id,
         string text,
         DateTimeOffset createdAt,
-        ChatFinishReason? finishReason = null
+        ChatFinishReason? finishReason = null,
+        ChatTokenUsage? usage = null
     ) =>
         OpenAIChatModelFactory.StreamingChatCompletionUpdate(
             id,
@@ -454,7 +559,7 @@ public class OpenAiChatClientTests
             createdAt,
             "gpt-5",
             null,
-            null!
+            usage!
         );
 
     private static StreamingChatCompletionUpdate CreateToolUpdate(
@@ -463,7 +568,8 @@ public class OpenAiChatClientTests
         string toolName,
         string argumentsFragment,
         DateTimeOffset createdAt,
-        ChatFinishReason? finishReason = null
+        ChatFinishReason? finishReason = null,
+        ChatTokenUsage? usage = null
     ) =>
         OpenAIChatModelFactory.StreamingChatCompletionUpdate(
             id,
@@ -486,6 +592,6 @@ public class OpenAiChatClientTests
             createdAt,
             "gpt-5",
             null,
-            null!
+            usage!
         );
 }

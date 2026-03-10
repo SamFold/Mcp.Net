@@ -13,7 +13,9 @@ public sealed record ChatClientAssistantTurn(
     string Id,
     string Provider,
     string Model,
-    IReadOnlyList<AssistantContentBlock> Blocks
+    IReadOnlyList<AssistantContentBlock> Blocks,
+    string? StopReason = null,
+    ChatUsage? Usage = null
 ) : ChatClientTurnResult;
 
 public sealed record ChatClientFailure(

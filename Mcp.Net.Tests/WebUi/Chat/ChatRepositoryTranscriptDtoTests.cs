@@ -43,7 +43,14 @@ public class ChatRepositoryTranscriptDtoTests
                 },
                 "turn-1",
                 "anthropic",
-                "claude-sonnet-4-6"
+                "claude-sonnet-4-6",
+                "end_turn",
+                new ChatUsage(
+                    11,
+                    7,
+                    18,
+                    new Dictionary<string, int> { ["cacheCreationInputTokens"] = 4 }
+                )
             ),
             new ToolResultChatEntry(
                 "tool-result-1",
@@ -95,6 +102,10 @@ public class ChatRepositoryTranscriptDtoTests
         assistant.SessionId.Should().Be("session-1");
         assistant.Provider.Should().Be("anthropic");
         assistant.Model.Should().Be("claude-sonnet-4-6");
+        assistant.StopReason.Should().Be("end_turn");
+        assistant.Usage.Should().NotBeNull();
+        assistant.Usage!.TotalTokens.Should().Be(18);
+        assistant.Usage.AdditionalCounts.Should().Contain("cacheCreationInputTokens", 4);
         assistant.Blocks.Should().HaveCount(3);
         assistant.Blocks[0]
             .Should()
@@ -119,7 +130,8 @@ public class ChatRepositoryTranscriptDtoTests
             .Should()
             .Contain("\"kind\":\"assistant\"")
             .And.Contain("\"kind\":\"reasoning\"")
-            .And.Contain("\"kind\":\"toolCall\"");
+            .And.Contain("\"kind\":\"toolCall\"")
+            .And.Contain("\"StopReason\":\"end_turn\"");
     }
 
     private static SessionNotifier CreateNotifier() =>

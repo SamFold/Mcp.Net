@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using Anthropic.SDK.Messaging;
 using FluentAssertions;
@@ -68,12 +69,17 @@ public class AnthropicChatClientTests
             Model = "claude-sonnet-4-5-20250929",
         };
 
-        var content = new ContentBase[]
-        {
-            new TextContent { Text = "Hello from Claude" },
-        };
-
-        var messageClient = new StubAnthropicMessageClient(content);
+        var messageClient = new StubAnthropicMessageClient(
+            new MessageResponse
+            {
+                Content = new List<ContentBase>
+                {
+                    new TextContent { Text = "Hello from Claude" },
+                },
+                StopReason = "end_turn",
+                Usage = CreateUsage(inputTokens: 11, outputTokens: 7, cacheCreationInputTokens: 4),
+            }
+        );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
@@ -84,6 +90,12 @@ public class AnthropicChatClientTests
         var assistantTurn = (ChatClientAssistantTurn)response;
         assistantTurn.Blocks.Should().ContainSingle();
         assistantTurn.Blocks[0].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be("Hello from Claude");
+        assistantTurn.StopReason.Should().Be("end_turn");
+        assistantTurn.Usage.Should().NotBeNull();
+        assistantTurn.Usage!.InputTokens.Should().Be(11);
+        assistantTurn.Usage.OutputTokens.Should().Be(7);
+        assistantTurn.Usage.TotalTokens.Should().Be(18);
+        assistantTurn.Usage.AdditionalCounts.Should().Contain("cacheCreationInputTokens", 4);
     }
 
     [Fact]
@@ -376,6 +388,201 @@ public class AnthropicChatClientTests
             .ContainInOrder("Let me count first.", "There are three.");
     }
 
+    [Fact]
+    public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldReportReasoningAndTextSnapshotsInOrder()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-6",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            responses: Array.Empty<IReadOnlyList<ContentBase>>(),
+            streamingResponses:
+            [
+                new MessageResponse[]
+                {
+                    CreateMessageStart(CreateUsage(inputTokens: 15, cacheReadInputTokens: 3)),
+                    CreateContentBlockStart("thinking"),
+                    CreateThinkingDelta("Let me count"),
+                    CreateSignatureDelta("sig_123"),
+                    CreateContentBlockStop(),
+                    CreateContentBlockStart("text"),
+                    CreateTextDelta("There are three."),
+                    CreateContentBlockStop(),
+                    CreateMessageDelta("end_turn", CreateUsage(outputTokens: 9)),
+                },
+            ]
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var streamedTurns = new List<ChatClientAssistantTurn>();
+        var result = await client.SendMessageAsync(
+            "Count r characters",
+            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        );
+
+        streamedTurns.Should().HaveCount(4);
+        streamedTurns.Select(turn => turn.Id).Distinct().Should().ContainSingle();
+
+        streamedTurns[0].Blocks.Should().ContainSingle();
+        streamedTurns[0].Blocks[0]
+            .Should()
+            .BeOfType<ReasoningAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Let me count");
+
+        streamedTurns[1].Blocks.Should().ContainSingle();
+        var streamedReasoning = streamedTurns[1]
+            .Blocks[0]
+            .Should()
+            .BeOfType<ReasoningAssistantBlock>()
+            .Which;
+        streamedReasoning.Text.Should().Be("Let me count");
+        streamedReasoning.ReplayToken.Should().Be("sig_123");
+
+        streamedTurns[2].Blocks.Should().HaveCount(2);
+        streamedTurns[2].Blocks[0].Id.Should().Be(streamedTurns[0].Blocks[0].Id);
+        streamedTurns[2].Blocks[0].Id.Should().Be(streamedTurns[1].Blocks[0].Id);
+        streamedTurns[2].Blocks[1]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("There are three.");
+        streamedTurns[3].Blocks.Should().BeEquivalentTo(streamedTurns[2].Blocks);
+        streamedTurns[3].StopReason.Should().Be("end_turn");
+        var streamedUsage = streamedTurns[3].Usage;
+        streamedUsage.Should().NotBeNull();
+        streamedUsage!.InputTokens.Should().Be(15);
+        streamedUsage.OutputTokens.Should().Be(9);
+        streamedUsage.TotalTokens.Should().Be(24);
+        streamedUsage.AdditionalCounts.Should().Contain("cacheReadInputTokens", 3);
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Id.Should().Be(streamedTurns[0].Id);
+        assistantTurn.StopReason.Should().Be("end_turn");
+        assistantTurn.Usage.Should().BeEquivalentTo(streamedTurns[3].Usage);
+        assistantTurn.Blocks.Should().HaveCount(2);
+        assistantTurn.Blocks[0].Id.Should().Be(streamedTurns[2].Blocks[0].Id);
+        assistantTurn.Blocks[1].Id.Should().Be(streamedTurns[2].Blocks[1].Id);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldAccumulateToolUseSnapshotsAndPersistHistory()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-6",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            responses:
+            [
+                new ContentBase[] { new TextContent { Text = "Done" } },
+            ],
+            streamingResponses:
+            [
+                new MessageResponse[]
+                {
+                    CreateMessageStart(CreateUsage(inputTokens: 9)),
+                    CreateContentBlockStart("text"),
+                    CreateTextDelta("Checking"),
+                    CreateContentBlockStop(),
+                    CreateContentBlockStart("tool_use", "toolu_1", "search"),
+                    CreateToolDelta("""{"query":"weath"""),
+                    CreateToolDelta("""er"}"""),
+                    CreateMessageDelta("tool_use", CreateUsage(outputTokens: 4)),
+                },
+            ]
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var streamedTurns = new List<ChatClientAssistantTurn>();
+        var streamResult = await client.SendMessageAsync(
+            "find weather",
+            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        );
+
+        streamedTurns.Should().NotBeEmpty();
+        streamedTurns.Select(turn => turn.Id).Distinct().Should().ContainSingle();
+
+        var streamedTurnsWithTool = streamedTurns
+            .Where(turn => turn.Blocks.OfType<ToolCallAssistantBlock>().Any())
+            .ToList();
+        streamedTurnsWithTool.Should().NotBeEmpty();
+        streamedTurnsWithTool.Select(turn => turn.Blocks.OfType<ToolCallAssistantBlock>().Single().Id)
+            .Distinct()
+            .Should()
+            .ContainSingle();
+
+        var finalStreamedTurn = streamedTurns[^1];
+        finalStreamedTurn.Blocks.Should().HaveCount(2);
+        finalStreamedTurn.Blocks[0]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Checking");
+        finalStreamedTurn.Blocks[1]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.Arguments["query"].Should()
+            .Be("weather");
+        finalStreamedTurn.StopReason.Should().Be("tool_use");
+        finalStreamedTurn.Usage.Should().NotBeNull();
+        finalStreamedTurn.Usage!.InputTokens.Should().Be(9);
+        finalStreamedTurn.Usage.OutputTokens.Should().Be(4);
+        finalStreamedTurn.Usage.TotalTokens.Should().Be(13);
+
+        var assistantTurn = streamResult.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Id.Should().Be(finalStreamedTurn.Id);
+        assistantTurn.StopReason.Should().Be("tool_use");
+        assistantTurn.Usage.Should().BeEquivalentTo(finalStreamedTurn.Usage);
+        assistantTurn.Blocks[1].Id.Should().Be(finalStreamedTurn.Blocks[1].Id);
+
+        await client.SendToolResultsAsync(
+            [
+                new ToolInvocationResult(
+                    "toolu_1",
+                    "search",
+                    false,
+                    ["sunny"],
+                    structured: null,
+                    resourceLinks: Array.Empty<ToolResultResourceLink>(),
+                    metadata: null
+                ),
+            ]
+        );
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Messages.Should().HaveCount(3);
+        messageClient.LastParameters.Messages[1].Role.Should().Be(RoleType.Assistant);
+        messageClient.LastParameters.Messages[1]
+            .Content
+            .OfType<TextContent>()
+            .Select(content => content.Text)
+            .Should()
+            .ContainSingle()
+            .Which.Should().Be("Checking");
+        messageClient.LastParameters.Messages[1]
+            .Content
+            .OfType<ToolUseContent>()
+            .Should()
+            .ContainSingle()
+            .Which.Id.Should()
+            .Be("toolu_1");
+        messageClient.LastParameters.Messages[2].Role.Should().Be(RoleType.User);
+        messageClient.LastParameters.Messages[2]
+            .Content
+            .Should()
+            .ContainSingle()
+            .Which.Should()
+            .BeOfType<ToolResultContent>()
+            .Which.ToolUseId.Should()
+            .Be("toolu_1");
+    }
+
     private sealed record AnthropicReasoningFixture(string Thinking, string Signature, string Text)
     {
         public static AnthropicReasoningFixture Load()
@@ -414,17 +621,139 @@ public class AnthropicChatClientTests
         throw new InvalidOperationException("Could not locate the repository root.");
     }
 
+    private static MessageResponse CreateContentBlockStart(
+        string blockType,
+        string? blockId = null,
+        string? blockName = null
+    ) =>
+        new()
+        {
+            Type = "content_block_start",
+            ContentBlock = new ContentBlock
+            {
+                Type = blockType,
+                Id = blockId,
+                Name = blockName,
+            },
+        };
+
+    private static MessageResponse CreateContentBlockStop() => new() { Type = "content_block_stop" };
+
+    private static MessageResponse CreateMessageStart(Usage usage) =>
+        new()
+        {
+            Type = "message_start",
+            StreamStartMessage = new StreamMessage
+            {
+                Usage = usage,
+            },
+        };
+
+    private static MessageResponse CreateTextDelta(string text) =>
+        new()
+        {
+            Type = "content_block_delta",
+            Delta = new Delta
+            {
+                Text = text,
+            },
+        };
+
+    private static MessageResponse CreateThinkingDelta(string thinking) =>
+        new()
+        {
+            Type = "content_block_delta",
+            Delta = new Delta
+            {
+                Thinking = thinking,
+            },
+        };
+
+    private static MessageResponse CreateSignatureDelta(string signature) =>
+        new()
+        {
+            Type = "content_block_delta",
+            Delta = new Delta
+            {
+                Signature = signature,
+            },
+        };
+
+    private static MessageResponse CreateToolDelta(string partialJson) =>
+        new()
+        {
+            Type = "content_block_delta",
+            Delta = new Delta
+            {
+                PartialJson = partialJson,
+            },
+        };
+
+    private static MessageResponse CreateMessageDelta(string stopReason, Usage? usage = null) =>
+        new()
+        {
+            Type = "message_delta",
+            Delta = new Delta
+            {
+                StopReason = stopReason,
+            },
+            Usage = usage,
+        };
+
+    private static Usage CreateUsage(
+        int inputTokens = 0,
+        int outputTokens = 0,
+        int cacheCreationInputTokens = 0,
+        int cacheReadInputTokens = 0
+    ) =>
+        new()
+        {
+            InputTokens = inputTokens,
+            OutputTokens = outputTokens,
+            CacheCreationInputTokens = cacheCreationInputTokens,
+            CacheReadInputTokens = cacheReadInputTokens,
+        };
+
     private sealed class StubAnthropicMessageClient : IAnthropicMessageClient
     {
-        private readonly Queue<IReadOnlyList<ContentBase>> _responses;
+        private readonly Queue<MessageResponse> _responses;
+        private readonly Queue<IReadOnlyList<MessageResponse>> _streamingResponses;
         public MessageParameters? LastParameters { get; private set; }
 
-        public StubAnthropicMessageClient(params IReadOnlyList<ContentBase>[] responses)
+        public StubAnthropicMessageClient(params MessageResponse[] responses)
+            : this(responses, Array.Empty<IReadOnlyList<MessageResponse>>())
         {
-            _responses = new Queue<IReadOnlyList<ContentBase>>(responses);
         }
 
-        public Task<IReadOnlyList<ContentBase>> GetResponseContentAsync(MessageParameters parameters)
+        public StubAnthropicMessageClient(params IReadOnlyList<ContentBase>[] responses)
+            : this(responses, Array.Empty<IReadOnlyList<MessageResponse>>())
+        {
+        }
+
+        public StubAnthropicMessageClient(
+            IEnumerable<IReadOnlyList<ContentBase>> responses,
+            IEnumerable<IReadOnlyList<MessageResponse>> streamingResponses
+        )
+            : this(
+                responses.Select(content => new MessageResponse { Content = content.ToList() }),
+                streamingResponses
+            )
+        {
+        }
+
+        public StubAnthropicMessageClient(
+            IEnumerable<MessageResponse> responses,
+            IEnumerable<IReadOnlyList<MessageResponse>> streamingResponses
+        )
+        {
+            _responses = new Queue<MessageResponse>(responses);
+            _streamingResponses = new Queue<IReadOnlyList<MessageResponse>>(streamingResponses);
+        }
+
+        public Task<MessageResponse> GetResponseAsync(
+            MessageParameters parameters,
+            CancellationToken cancellationToken = default
+        )
         {
             LastParameters = parameters;
 
@@ -434,6 +763,27 @@ public class AnthropicChatClientTests
             }
 
             return Task.FromResult(_responses.Dequeue());
+        }
+
+        public async IAsyncEnumerable<MessageResponse> StreamResponseAsync(
+            MessageParameters parameters,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+                CancellationToken cancellationToken = default
+        )
+        {
+            LastParameters = parameters;
+
+            if (_streamingResponses.Count == 0)
+            {
+                throw new InvalidOperationException("No stubbed streaming responses configured.");
+            }
+
+            foreach (var response in _streamingResponses.Dequeue())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return response;
+                await Task.Yield();
+            }
         }
     }
 
@@ -446,9 +796,45 @@ public class AnthropicChatClientTests
             _exception = exception;
         }
 
-        public Task<IReadOnlyList<ContentBase>> GetResponseContentAsync(MessageParameters parameters)
+        public Task<MessageResponse> GetResponseAsync(
+            MessageParameters parameters,
+            CancellationToken cancellationToken = default
+        )
         {
-            return Task.FromException<IReadOnlyList<ContentBase>>(_exception);
+            return Task.FromException<MessageResponse>(_exception);
+        }
+
+        public IAsyncEnumerable<MessageResponse> StreamResponseAsync(
+            MessageParameters parameters,
+            CancellationToken cancellationToken = default
+        ) => ThrowStreamingResponseAsync(cancellationToken);
+
+        private async IAsyncEnumerable<MessageResponse> ThrowStreamingResponseAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+                CancellationToken cancellationToken
+        )
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            throw _exception;
+#pragma warning disable CS0162
+            yield break;
+#pragma warning restore CS0162
+        }
+    }
+
+    private sealed class CapturingProgress<T> : IProgress<T>
+    {
+        private readonly ICollection<T> _items;
+
+        public CapturingProgress(ICollection<T> items)
+        {
+            _items = items;
+        }
+
+        public void Report(T value)
+        {
+            _items.Add(value);
         }
     }
 }

@@ -184,3 +184,7 @@ Mcp.Net.WebUi/Data/Agents/*
 Mcp.Net.Examples.ExternalTools/GoogleSearchTool.cs
 simple_server_codex_config.toml
 .env
+
+# Firecrawl outputs
+.firecrawl/
+artifacts/

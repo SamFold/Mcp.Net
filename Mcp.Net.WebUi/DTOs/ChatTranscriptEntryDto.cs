@@ -66,14 +66,22 @@ public sealed record AssistantChatTranscriptEntryDto : ChatTranscriptEntryDto
         IReadOnlyList<AssistantContentBlockDto> blocks,
         string? turnId = null,
         string? provider = null,
-        string? model = null
+        string? model = null,
+        string? stopReason = null,
+        ChatUsage? usage = null
     )
         : base(id, sessionId, timestamp, turnId, provider, model)
     {
         Blocks = blocks;
+        StopReason = stopReason;
+        Usage = usage;
     }
 
     public IReadOnlyList<AssistantContentBlockDto> Blocks { get; }
+
+    public string? StopReason { get; }
+
+    public ChatUsage? Usage { get; }
 }
 
 public sealed record ToolResultChatTranscriptEntryDto : ChatTranscriptEntryDto

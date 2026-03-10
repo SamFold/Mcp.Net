@@ -25,7 +25,9 @@ internal static class ChatTranscriptEntryMapper
                 assistant.Blocks.Select(ToDto).ToArray(),
                 assistant.TurnId,
                 assistant.Provider,
-                assistant.Model
+                assistant.Model,
+                assistant.StopReason,
+                assistant.Usage
             ),
             ToolResultChatEntry toolResult => new ToolResultChatTranscriptEntryDto(
                 toolResult.Id,

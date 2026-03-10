@@ -82,7 +82,14 @@ public class ChatSessionTests
                             ReasoningVisibility.Visible
                         ),
                         new TextAssistantBlock("text-1", "Hello from Claude"),
-                    }
+                    },
+                    StopReason: "end_turn",
+                    Usage: new ChatUsage(
+                        11,
+                        7,
+                        18,
+                        new Dictionary<string, int> { ["cacheCreationInputTokens"] = 4 }
+                    )
                 )
             );
 
@@ -101,6 +108,10 @@ public class ChatSessionTests
         var assistantEntry = transcriptEntries.OfType<AssistantChatEntry>().Single();
         assistantEntry.Provider.Should().Be("anthropic");
         assistantEntry.Model.Should().Be("claude-sonnet-4-5-20250929");
+        assistantEntry.StopReason.Should().Be("end_turn");
+        assistantEntry.Usage.Should().NotBeNull();
+        assistantEntry.Usage!.TotalTokens.Should().Be(18);
+        assistantEntry.Usage.AdditionalCounts.Should().Contain("cacheCreationInputTokens", 4);
         assistantEntry.Blocks.Should().HaveCount(2);
         assistantEntry.Blocks[0].Should().BeOfType<ReasoningAssistantBlock>();
         assistantEntry.Blocks[1].Should().BeOfType<TextAssistantBlock>();
@@ -149,7 +160,9 @@ public class ChatSessionTests
                             new AssistantContentBlock[]
                             {
                                 new TextAssistantBlock("text-1", "Hello"),
-                            }
+                            },
+                            StopReason: "stop",
+                            Usage: new ChatUsage(6, 2, 8)
                         )
                     );
                 }
@@ -178,6 +191,9 @@ public class ChatSessionTests
         transcriptChanges[2].Entry.Id.Should().Be(transcriptChanges[1].Entry.Id);
 
         var assistantEntry = session.Transcript.OfType<AssistantChatEntry>().Single();
+        assistantEntry.StopReason.Should().Be("stop");
+        assistantEntry.Usage.Should().NotBeNull();
+        assistantEntry.Usage!.TotalTokens.Should().Be(8);
         assistantEntry.Blocks.Should().ContainSingle();
         assistantEntry.Blocks[0]
             .Should()

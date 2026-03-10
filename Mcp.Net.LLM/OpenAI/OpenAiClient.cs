@@ -146,6 +146,58 @@ public sealed class OpenAiChatClient : IChatClient
         return true;
     }
 
+    private static string ToStopReason(ChatFinishReason finishReason) =>
+        finishReason switch
+        {
+            ChatFinishReason.Stop => "stop",
+            ChatFinishReason.Length => "length",
+            ChatFinishReason.ContentFilter => "content_filter",
+            ChatFinishReason.ToolCalls => "tool_calls",
+            ChatFinishReason.FunctionCall => "function_call",
+            _ => finishReason.ToString().ToLowerInvariant(),
+        };
+
+    private static ChatUsage? ToChatUsage(ChatTokenUsage? usage)
+    {
+        if (usage == null)
+        {
+            return null;
+        }
+
+        var additionalCounts = new Dictionary<string, int>();
+        AddAdditionalCount(additionalCounts, "audioInputTokens", usage.InputTokenDetails?.AudioTokenCount);
+        AddAdditionalCount(
+            additionalCounts,
+            "cachedInputTokens",
+            usage.InputTokenDetails?.CachedTokenCount
+        );
+        AddAdditionalCount(additionalCounts, "audioOutputTokens", usage.OutputTokenDetails?.AudioTokenCount);
+        AddAdditionalCount(
+            additionalCounts,
+            "reasoningOutputTokens",
+            usage.OutputTokenDetails?.ReasoningTokenCount
+        );
+
+        return new ChatUsage(
+            usage.InputTokenCount,
+            usage.OutputTokenCount,
+            usage.TotalTokenCount,
+            additionalCounts
+        );
+    }
+
+    private static void AddAdditionalCount(
+        IDictionary<string, int> additionalCounts,
+        string key,
+        int? value
+    )
+    {
+        if (value is > 0)
+        {
+            additionalCounts[key] = value.Value;
+        }
+    }
+
     private static ToolInvocation BuildToolInvocation(ChatToolCall toolCall)
     {
         var arguments = ParseToolArguments(toolCall.FunctionArguments.ToString());
@@ -192,7 +244,9 @@ public sealed class OpenAiChatClient : IChatClient
             Guid.NewGuid().ToString("n"),
             "openai",
             _modelName,
-            blocks
+            blocks,
+            ToStopReason(completion.FinishReason),
+            ToChatUsage(completion.Usage)
         );
     }
 
@@ -501,7 +555,9 @@ public sealed class OpenAiChatClient : IChatClient
                 DateTimeOffset.UtcNow,
                 finalTurn.Blocks,
                 Provider: "openai",
-                Model: _modelName
+                Model: _modelName,
+                StopReason: finalTurn.StopReason,
+                Usage: finalTurn.Usage
             )
         );
 
@@ -517,6 +573,8 @@ public sealed class OpenAiChatClient : IChatClient
 
         public ChatFinishReason? FinishReason { get; private set; }
 
+        public ChatUsage? Usage { get; private set; }
+
         public bool HasContent => _textBuilder.Length > 0 || _toolCalls.Count > 0;
 
         public void Apply(StreamingChatCompletionUpdate update)
@@ -524,6 +582,11 @@ public sealed class OpenAiChatClient : IChatClient
             if (update.FinishReason is { } finishReason)
             {
                 FinishReason = finishReason;
+            }
+
+            if (update.Usage is { } usage)
+            {
+                Usage = ToChatUsage(usage);
             }
 
             foreach (var contentPart in update.ContentUpdate)
@@ -548,13 +611,28 @@ public sealed class OpenAiChatClient : IChatClient
             var blocks = BuildBlocks(lenientToolArguments: true);
             return blocks.Count == 0
                 ? null
-                : new ChatClientAssistantTurn(_assistantTurnId, "openai", modelName, blocks);
+                : new ChatClientAssistantTurn(
+                    _assistantTurnId,
+                    "openai",
+                    modelName,
+                    blocks,
+                    FinishReason is { } finishReason ? ToStopReason(finishReason) : null,
+                    Usage
+                );
         }
 
         public ChatClientAssistantTurn BuildFinalTurn(string modelName)
         {
             var blocks = BuildBlocks(lenientToolArguments: false);
-            return new ChatClientAssistantTurn(_assistantTurnId, "openai", modelName, blocks);
+            var finishReason = FinishReason ?? InferFinishReason();
+            return new ChatClientAssistantTurn(
+                _assistantTurnId,
+                "openai",
+                modelName,
+                blocks,
+                ToStopReason(finishReason),
+                Usage
+            );
         }
 
         private List<AssistantContentBlock> BuildBlocks(bool lenientToolArguments)

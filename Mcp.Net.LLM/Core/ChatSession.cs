@@ -450,7 +450,9 @@ public class ChatSession : IChatSessionEvents
             turn.Blocks,
             turnId,
             turn.Provider,
-            turn.Model
+            turn.Model,
+            turn.StopReason,
+            turn.Usage
         );
 
     private static ErrorChatEntry ToErrorEntry(ChatClientFailure failure, string turnId) =>

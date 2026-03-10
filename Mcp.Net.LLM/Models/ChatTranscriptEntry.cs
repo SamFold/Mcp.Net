@@ -30,7 +30,9 @@ public sealed record AssistantChatEntry(
     IReadOnlyList<AssistantContentBlock> Blocks,
     string? TurnId = null,
     string? Provider = null,
-    string? Model = null
+    string? Model = null,
+    string? StopReason = null,
+    ChatUsage? Usage = null
 ) : ChatTranscriptEntry(Id, ChatTranscriptEntryKind.Assistant, Timestamp, TurnId, Provider, Model);
 
 public sealed record ToolResultChatEntry(

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Anthropic.SDK;
@@ -146,26 +147,29 @@ public sealed class AnthropicChatClient : IChatClient
     /// <summary>
     /// Generates a response from Claude using the accumulated message history.
     /// </summary>
-    private async Task<ChatClientTurnResult> GetTurnResultAsync()
+    private async Task<ChatClientTurnResult> GetTurnResultAsync(
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    )
     {
         try
         {
-            var parameters = new MessageParameters
-            {
-                Model = _model,
-                MaxTokens = 1024,
-                Temperature = 1.0m,
-                Messages = _messages.ToList(),
-                Tools = _anthropicTools.ToList(),
-                System = _systemMessages.ToList(),
-            };
+            cancellationToken.ThrowIfCancellationRequested();
 
-            var content = await _messagesClient.GetResponseContentAsync(parameters);
-            var assistantMessage = content.ToList();
+            if (assistantTurnUpdates != null)
+            {
+                return await GetStreamingTurnResultAsync(assistantTurnUpdates, cancellationToken);
+            }
+
+            var response = await _messagesClient.GetResponseAsync(
+                CreateMessageParameters(),
+                cancellationToken
+            );
+            var assistantMessage = response.Content?.ToList() ?? new List<ContentBase>();
 
             _messages.Add(new Message { Role = RoleType.Assistant, Content = assistantMessage });
 
-            return BuildAssistantTurn(assistantMessage);
+            return BuildAssistantTurn(response);
         }
         catch (Exception ex)
         {
@@ -180,9 +184,68 @@ public sealed class AnthropicChatClient : IChatClient
         }
     }
 
-    private ChatClientAssistantTurn BuildAssistantTurn(IEnumerable<ContentBase> contentItems)
+    private MessageParameters CreateMessageParameters(bool stream = false) =>
+        new()
+        {
+            Model = _model,
+            MaxTokens = 1024,
+            Temperature = 1.0m,
+            Messages = _messages.ToList(),
+            Tools = _anthropicTools.ToList(),
+            System = _systemMessages.ToList(),
+            Stream = stream,
+        };
+
+    private static ChatUsage? ToChatUsage(Usage? usage)
+    {
+        if (usage == null)
+        {
+            return null;
+        }
+
+        var additionalCounts = new Dictionary<string, int>();
+        AddAdditionalCount(
+            additionalCounts,
+            "cacheCreationInputTokens",
+            usage.CacheCreationInputTokens
+        );
+        AddAdditionalCount(additionalCounts, "cacheReadInputTokens", usage.CacheReadInputTokens);
+        AddAdditionalCount(
+            additionalCounts,
+            "webSearchRequests",
+            usage.ServerToolUse?.WebSearchRequests
+        );
+        AddAdditionalCount(
+            additionalCounts,
+            "codeExecutionRequests",
+            usage.ServerToolUse?.CodeExecutionRequests
+        );
+        AddAdditionalCount(additionalCounts, "webFetchRequests", usage.ServerToolUse?.WebFetchRequests);
+
+        return new ChatUsage(
+            usage.InputTokens,
+            usage.OutputTokens,
+            usage.InputTokens + usage.OutputTokens,
+            additionalCounts
+        );
+    }
+
+    private static void AddAdditionalCount(
+        IDictionary<string, int> additionalCounts,
+        string key,
+        int? value
+    )
+    {
+        if (value is > 0)
+        {
+            additionalCounts[key] = value.Value;
+        }
+    }
+
+    private ChatClientAssistantTurn BuildAssistantTurn(MessageResponse response)
     {
         var blocks = new List<AssistantContentBlock>();
+        var contentItems = response.Content ?? [];
 
         foreach (var content in contentItems)
         {
@@ -239,7 +302,9 @@ public sealed class AnthropicChatClient : IChatClient
             Guid.NewGuid().ToString("n"),
             "anthropic",
             _model,
-            blocks
+            blocks,
+            response.StopReason,
+            ToChatUsage(response.Usage)
         );
     }
 
@@ -272,6 +337,26 @@ public sealed class AnthropicChatClient : IChatClient
         }
 
         return arguments;
+    }
+
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(string inputJson) =>
+        ParseToolArguments(JsonNode.Parse(inputJson));
+
+    private static bool TryParseToolArguments(
+        string inputJson,
+        out IReadOnlyDictionary<string, object?> arguments
+    )
+    {
+        try
+        {
+            arguments = ParseToolArguments(inputJson);
+            return true;
+        }
+        catch (JsonException)
+        {
+            arguments = new Dictionary<string, object?>();
+            return false;
+        }
     }
 
     private static object? ConvertJsonValue(JsonNode? value)
@@ -308,7 +393,6 @@ public sealed class AnthropicChatClient : IChatClient
         CancellationToken cancellationToken = default
     )
     {
-        _ = assistantTurnUpdates;
         cancellationToken.ThrowIfCancellationRequested();
 
         _messages.Add(
@@ -323,7 +407,7 @@ public sealed class AnthropicChatClient : IChatClient
         );
 
         _logger.LogDebug("User message added to history (Anthropic): {Message}", userMessage);
-        return await GetTurnResultAsync();
+        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
     }
 
     /// <summary>
@@ -335,7 +419,6 @@ public sealed class AnthropicChatClient : IChatClient
         CancellationToken cancellationToken = default
     )
     {
-        _ = assistantTurnUpdates;
         cancellationToken.ThrowIfCancellationRequested();
 
         foreach (var toolResult in toolResults)
@@ -350,8 +433,70 @@ public sealed class AnthropicChatClient : IChatClient
         }
 
         _logger.LogDebug("Making single API call after adding all tool results");
-        return await GetTurnResultAsync();
+        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
     }
+
+    private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
+        IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
+        CancellationToken cancellationToken
+    )
+    {
+        var accumulator = new StreamingAssistantTurnAccumulator();
+        ChatClientAssistantTurn? lastReportedTurn = null;
+
+        await foreach (var response in _messagesClient
+                           .StreamResponseAsync(CreateMessageParameters(stream: true), cancellationToken)
+                           .WithCancellation(cancellationToken))
+        {
+            accumulator.Apply(response);
+
+            var partialTurn = accumulator.BuildPartialTurn(_model);
+            if (partialTurn == null || AreEquivalentTurns(partialTurn, lastReportedTurn))
+            {
+                continue;
+            }
+
+            assistantTurnUpdates.Report(partialTurn);
+            lastReportedTurn = partialTurn;
+        }
+
+        if (!accumulator.HasContent)
+        {
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                "Unexpected streaming response: no assistant content",
+                Provider: "anthropic",
+                Model: _model
+            );
+        }
+
+        var finalTurn = accumulator.BuildFinalTurn(_model);
+        AppendAssistantReplayEntry(
+            new AssistantChatEntry(
+                finalTurn.Id,
+                DateTimeOffset.UtcNow,
+                finalTurn.Blocks,
+                Provider: "anthropic",
+                Model: _model,
+                StopReason: finalTurn.StopReason,
+                Usage: finalTurn.Usage
+            )
+        );
+
+        return finalTurn;
+    }
+
+    private static bool AreEquivalentTurns(
+        ChatClientAssistantTurn current,
+        ChatClientAssistantTurn? previous
+    ) =>
+        previous != null
+        && current.Id == previous.Id
+        && current.Provider == previous.Provider
+        && current.Model == previous.Model
+        && current.StopReason == previous.StopReason
+        && Equals(current.Usage, previous.Usage)
+        && current.Blocks.SequenceEqual(previous.Blocks);
 
     /// <summary>
     /// Gets the currently configured system prompt.
@@ -386,28 +531,330 @@ public sealed class AnthropicChatClient : IChatClient
                     );
                     break;
                 case AssistantChatEntry assistant:
-                    var replayContent = assistant
-                        .Blocks.Select(ToReplayContent)
-                        .OfType<ContentBase>()
-                        .ToList();
-
-                    if (replayContent.Count == 0)
-                    {
-                        break;
-                    }
-
-                    _messages.Add(
-                        new Message
-                        {
-                            Role = RoleType.Assistant,
-                            Content = replayContent,
-                        }
-                    );
+                    AppendAssistantReplayEntry(assistant);
                     break;
                 case ToolResultChatEntry toolResult:
                     AddToolResultToHistory(toolResult.Result);
                     break;
             }
+        }
+    }
+
+    private void AppendAssistantReplayEntry(AssistantChatEntry assistant)
+    {
+        var replayContent = assistant.Blocks.Select(ToReplayContent).OfType<ContentBase>().ToList();
+
+        if (replayContent.Count == 0)
+        {
+            return;
+        }
+
+        _messages.Add(
+            new Message
+            {
+                Role = RoleType.Assistant,
+                Content = replayContent,
+            }
+        );
+    }
+
+    private sealed class StreamingAssistantTurnAccumulator
+    {
+        private readonly string _assistantTurnId = Guid.NewGuid().ToString("n");
+        private readonly List<StreamingContentBlockAccumulator> _blocks = new();
+        private readonly StreamingUsageAccumulator _usage = new();
+        private StreamingContentBlockAccumulator? _activeBlock;
+
+        public string? StopReason { get; private set; }
+
+        public bool HasContent => _blocks.Any(block => block.HasContent);
+
+        public void Apply(MessageResponse response)
+        {
+            _usage.Apply(response.StreamStartMessage?.Usage);
+            _usage.Apply(response.Delta?.Usage);
+            _usage.Apply(response.Usage);
+
+            if (!string.IsNullOrWhiteSpace(response.Delta?.StopReason))
+            {
+                StopReason = response.Delta.StopReason;
+            }
+            else if (!string.IsNullOrWhiteSpace(response.StopReason))
+            {
+                StopReason = response.StopReason;
+            }
+
+            if (response.Type == "content_block_start" && response.ContentBlock != null)
+            {
+                _activeBlock = StartBlock(response.ContentBlock);
+            }
+
+            if (response.Delta != null && _activeBlock != null)
+            {
+                _activeBlock.Apply(response.Delta);
+            }
+
+            if (response.Type == "content_block_stop")
+            {
+                _activeBlock = null;
+            }
+
+            if (_activeBlock is { RawType: "tool_use" } && response.Delta?.StopReason == "tool_use")
+            {
+                _activeBlock = null;
+            }
+        }
+
+        public ChatClientAssistantTurn? BuildPartialTurn(string model)
+        {
+            var blocks = BuildBlocks(lenientToolArguments: true);
+            return blocks.Count == 0
+                ? null
+                : new ChatClientAssistantTurn(
+                    _assistantTurnId,
+                    "anthropic",
+                    model,
+                    blocks,
+                    StopReason,
+                    _usage.Build()
+                );
+        }
+
+        public ChatClientAssistantTurn BuildFinalTurn(string model) =>
+            new(
+                _assistantTurnId,
+                "anthropic",
+                model,
+                BuildBlocks(lenientToolArguments: false),
+                StopReason,
+                _usage.Build()
+            );
+
+        private StreamingContentBlockAccumulator? StartBlock(ContentBlock contentBlock)
+        {
+            _activeBlock = null;
+
+            var block = new StreamingContentBlockAccumulator(contentBlock);
+            _blocks.Add(block);
+
+            return block.IsImmediate ? null : block;
+        }
+
+        private List<AssistantContentBlock> BuildBlocks(bool lenientToolArguments)
+        {
+            var blocks = new List<AssistantContentBlock>();
+
+            foreach (var block in _blocks)
+            {
+                var builtBlock = block.BuildBlock(lenientToolArguments);
+                if (builtBlock != null)
+                {
+                    blocks.Add(builtBlock);
+                }
+            }
+
+            return blocks;
+        }
+    }
+
+    private sealed class StreamingContentBlockAccumulator
+    {
+        private readonly string _blockId = Guid.NewGuid().ToString("n");
+        private readonly StringBuilder _contentBuilder = new();
+        private string? _toolCallId;
+        private string? _toolName;
+        private string? _reasoningReplayToken;
+        private string? _redactedData;
+
+        public StreamingContentBlockAccumulator(ContentBlock contentBlock)
+        {
+            RawType = contentBlock.Type ?? string.Empty;
+            _toolCallId = contentBlock.Id;
+            _toolName = contentBlock.Name;
+
+            if (!string.IsNullOrWhiteSpace(contentBlock.Text))
+            {
+                _contentBuilder.Append(contentBlock.Text);
+            }
+
+            if (RawType == "redacted_thinking")
+            {
+                _redactedData = contentBlock.Data;
+                IsImmediate = true;
+            }
+        }
+
+        public string RawType { get; }
+
+        public bool IsImmediate { get; }
+
+        public bool HasContent => BuildBlock(lenientToolArguments: true) != null;
+
+        public void Apply(Delta delta)
+        {
+            switch (RawType)
+            {
+                case "text" when !string.IsNullOrEmpty(delta.Text):
+                    _contentBuilder.Append(delta.Text);
+                    break;
+                case "thinking":
+                    if (!string.IsNullOrEmpty(delta.Thinking))
+                    {
+                        _contentBuilder.Append(delta.Thinking);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(delta.Signature))
+                    {
+                        _reasoningReplayToken = delta.Signature;
+                    }
+
+                    break;
+                case "tool_use":
+                    if (!string.IsNullOrWhiteSpace(delta.Name))
+                    {
+                        _toolName = delta.Name;
+                    }
+
+                    if (!string.IsNullOrEmpty(delta.PartialJson))
+                    {
+                        _contentBuilder.Append(delta.PartialJson);
+                    }
+
+                    break;
+            }
+        }
+
+        public AssistantContentBlock? BuildBlock(bool lenientToolArguments)
+        {
+            switch (RawType)
+            {
+                case "text":
+                    return _contentBuilder.Length == 0
+                        ? null
+                        : new TextAssistantBlock(_blockId, _contentBuilder.ToString());
+                case "thinking":
+                    if (_contentBuilder.Length == 0 && string.IsNullOrWhiteSpace(_reasoningReplayToken))
+                    {
+                        return null;
+                    }
+
+                    return new ReasoningAssistantBlock(
+                        _blockId,
+                        _contentBuilder.Length == 0 ? null : _contentBuilder.ToString(),
+                        ReasoningVisibility.Visible,
+                        string.IsNullOrWhiteSpace(_reasoningReplayToken) ? null : _reasoningReplayToken
+                    );
+                case "redacted_thinking":
+                    return string.IsNullOrWhiteSpace(_redactedData)
+                        ? null
+                        : new ReasoningAssistantBlock(
+                            _blockId,
+                            null,
+                            ReasoningVisibility.Redacted,
+                            _redactedData
+                        );
+                case "tool_use":
+                    if (string.IsNullOrWhiteSpace(_toolCallId) || string.IsNullOrWhiteSpace(_toolName))
+                    {
+                        return null;
+                    }
+
+                    var argumentsText = _contentBuilder.ToString();
+                    IReadOnlyDictionary<string, object?> arguments;
+                    if (string.IsNullOrWhiteSpace(argumentsText))
+                    {
+                        arguments = new Dictionary<string, object?>();
+                    }
+                    else if (TryParseToolArguments(argumentsText, out var parsedArguments))
+                    {
+                        arguments = parsedArguments;
+                    }
+                    else if (lenientToolArguments)
+                    {
+                        arguments = new Dictionary<string, object?>();
+                    }
+                    else
+                    {
+                        arguments = ParseToolArguments(argumentsText);
+                    }
+
+                    return new ToolCallAssistantBlock(_blockId, _toolCallId, _toolName, arguments);
+                default:
+                    return null;
+            }
+        }
+    }
+
+    private sealed class StreamingUsageAccumulator
+    {
+        private int _inputTokens;
+        private int _outputTokens;
+        private int _cacheCreationInputTokens;
+        private int _cacheReadInputTokens;
+        private int _webSearchRequests;
+        private int _codeExecutionRequests;
+        private int _webFetchRequests;
+
+        public void Apply(Usage? usage)
+        {
+            if (usage == null)
+            {
+                return;
+            }
+
+            _inputTokens = Math.Max(_inputTokens, usage.InputTokens);
+            _outputTokens = Math.Max(_outputTokens, usage.OutputTokens);
+            _cacheCreationInputTokens = Math.Max(
+                _cacheCreationInputTokens,
+                usage.CacheCreationInputTokens
+            );
+            _cacheReadInputTokens = Math.Max(_cacheReadInputTokens, usage.CacheReadInputTokens);
+            _webSearchRequests = Math.Max(
+                _webSearchRequests,
+                usage.ServerToolUse?.WebSearchRequests ?? 0
+            );
+            _codeExecutionRequests = Math.Max(
+                _codeExecutionRequests,
+                usage.ServerToolUse?.CodeExecutionRequests ?? 0
+            );
+            _webFetchRequests = Math.Max(
+                _webFetchRequests,
+                usage.ServerToolUse?.WebFetchRequests ?? 0
+            );
+        }
+
+        public ChatUsage? Build()
+        {
+            if (
+                _inputTokens == 0
+                && _outputTokens == 0
+                && _cacheCreationInputTokens == 0
+                && _cacheReadInputTokens == 0
+                && _webSearchRequests == 0
+                && _codeExecutionRequests == 0
+                && _webFetchRequests == 0
+            )
+            {
+                return null;
+            }
+
+            var additionalCounts = new Dictionary<string, int>();
+            AddAdditionalCount(
+                additionalCounts,
+                "cacheCreationInputTokens",
+                _cacheCreationInputTokens
+            );
+            AddAdditionalCount(additionalCounts, "cacheReadInputTokens", _cacheReadInputTokens);
+            AddAdditionalCount(additionalCounts, "webSearchRequests", _webSearchRequests);
+            AddAdditionalCount(additionalCounts, "codeExecutionRequests", _codeExecutionRequests);
+            AddAdditionalCount(additionalCounts, "webFetchRequests", _webFetchRequests);
+
+            return new ChatUsage(
+                _inputTokens,
+                _outputTokens,
+                _inputTokens + _outputTokens,
+                additionalCounts
+            );
         }
     }
 

@@ -26,50 +26,67 @@
 - The remaining Web UI chat transport now uses discriminated transcript-entry DTOs for REST history and `ReceiveMessage`, and the controller send-message route now takes a dedicated user-message request DTO instead of the old flat `ChatMessageDto`.
 - `IChatClient` and `ChatSession` now expose a typed assistant-turn update seam for streaming: one in-flight assistant transcript entry is updated in place by transcript `Id`, SignalR emits `UpdateMessage` for durable transcript updates, and persisted transcript storage now upserts updated entries instead of appending duplicates.
 - The OpenAI chat adapter now uses the SDK streaming chat-completions API when assistant-turn updates are requested, emitting progressive text and tool-call snapshots while preserving stable transcript and block identifiers across partial and final turns.
+- The Anthropic chat adapter now uses the SDK streaming messages API when assistant-turn updates are requested, emitting progressive reasoning, text, and tool-use snapshots while preserving stable transcript and block identifiers across partial and final turns.
+- Stable assistant and block identifiers are now considered required behavior for transcript upserts and incremental Web UI updates, not an optional implementation detail.
+- `ChatClientAssistantTurn`, `AssistantChatEntry`, and the Web UI assistant transcript DTOs now carry explicit `Usage` and `StopReason`, and both OpenAI and Anthropic populate that metadata on non-streaming and streaming turns.
 - The streaming slice keeps `ToolExecutionUpdated` and `ThinkingStateChanged` as separate ephemeral UI events for now; only durable assistant content flows through transcript `Added` and `Updated` events.
+- Agent definitions and extensions already expose a `max_tokens` parameter, but `ChatClientOptions` still drops that knob before it reaches provider request builders.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
+- The latest planning review for this lane keeps the next work on option cleanup, cancellation, and review follow-ons on top of the completed provider-streaming and metadata seam; it explicitly does not reopen a broad message-model rewrite first.
 
 ## Goal
 
-- Replace the current text-first `ChatSession`/`LlmResponse` model with a contract-breaking block-based transcript and event model that matches modern provider behavior.
-- Delete superseded `Mcp.Net.LLM` files and abstractions when the cleaner replacement exists instead of carrying tech-debt shims.
+- Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture before revisiting larger API-shape changes.
+- Land configurable provider options, session cancellation, and the remaining review follow-ons as focused vertical slices on top of the completed OpenAI and Anthropic streaming and metadata seam.
 
 ## Scope
 
 - In scope:
-  - add transcript entry records for `User`, `Assistant`, `ToolResult`, and `Error`
-  - add assistant content blocks for `Text`, `Reasoning`, and `ToolCall`
-  - replace `IChatSessionEvents` with typed transcript/activity events
-  - replace `LlmResponse` and `MessageType` with a typed provider-output model
-  - add an explicit replay/history transform seam for provider/model-safe transcript replay
-  - migrate the Web UI DTO/adapter/storage slice to the new discriminated model as part of the same vertical slice
-  - delete obsolete `Mcp.Net.LLM` files and adapters once their replacements are in place
+  - expand `ChatClientOptions` with a small, typed shared surface, starting with max output tokens, so existing agent-level `max_tokens` intent reaches provider request builders instead of being silently dropped
+  - remove adapter-owned development-artifact prompt defaults so blank `SystemPrompt` no longer injects demo copy from the provider clients
+  - make Anthropic honor the shared `Temperature` option instead of hardcoding `1.0m`
+  - add session-level cancellation through provider calls and MCP tool execution seams
+  - make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions
+  - keep the completed OpenAI and Anthropic streaming paths and metadata propagation stable while option and cancellation work land
+  - keep the replay/history transformer and block-based transcript architecture stable while provider parity lands
 - Out of scope:
-  - preserving compatibility with the current Web UI contracts
-  - preserving `AssistantMessageReceived`, `ToolExecutionUpdated`, or `ThinkingStateChanged`
-  - a fully designed streaming transport protocol
-  - provider `RegisterTools` idempotency
+  - another full transcript or message-model rewrite
+  - an immediate breaking replacement of `IProgress<ChatClientAssistantTurn>` with `IAsyncEnumerable<T>`
+  - low-level memory or serialization optimization work
+  - broad provider-helper extraction beyond changes needed for the active slices
 
 ## Current slice
 
-1. Wire Anthropic streaming into the new assistant-turn update seam so Claude can emit real in-flight assistant snapshots with thinking, text, and tool-use blocks.
-2. Extend the probe corpus when real mixed reasoning-plus-tool-call streaming payloads become available so coverage can move from synthetic ordering cases to captured provider outputs.
-3. Decide whether any provider-specific partial-block metadata needs to be public or should stay internal to provider adapters.
+1. Add `MaxOutputTokens` to `ChatClientOptions` and thread existing agent and Web UI `max_tokens` settings into it so OpenAI `ChatCompletionOptions.MaxOutputTokenCount` and Anthropic `MessageParameters.MaxTokens` are driven by the same shared knob.
+2. Make Anthropic `CreateMessageParameters` honor `ChatClientOptions.Temperature`, while keeping OpenAI's existing unsupported-model omission behavior intact.
+3. Remove the adapter-owned Warhammer/demo fallback prompts so blank `SystemPrompt` stops injecting library-owned copy into outbound provider requests; explicit system prompts must continue to pass through unchanged.
+4. Add focused regressions for max-output-token propagation, Anthropic temperature propagation, and absence of injected default prompts without broad provider-helper extraction.
 
 ## Next slices
 
-1. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
-2. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay/streaming behavior has settled.
-3. Revisit a typed activity DTO family only if the existing ephemeral `ToolExecutionUpdated` and `ThinkingStateChanged` events prove too weak once provider streaming is live.
+1. Add session-level cancellation through `ChatSession`, including any required MCP client seam changes for tool execution.
+2. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
+3. Resolve the remaining 2026-03-08 LLM review follow-ons around agent registry startup behavior, persisted agent settings, and clone-persistence truthfulness once the provider-parity lane is stable, or earlier if those become release blockers.
+4. Revisit whether `IChatClient` should expose a breaking `IAsyncEnumerable<T>` stream surface once provider parity and metadata are stable.
+5. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay and streaming behavior have settled.
+6. Revisit a typed activity DTO family only if the existing ephemeral `ToolExecutionUpdated` and `ThinkingStateChanged` events prove too weak once provider streaming is live.
 
 ## Open decisions
 
+- Should the long-term provider streaming API stay snapshot-based or move to a breaking delta-event `IAsyncEnumerable<T>` contract after parity lands?
+- How far should shared `ChatClientOptions` go before provider-specific option types or nested provider option bags are warranted?
+- What cancellation seam should the MCP client expose so `ChatSession` can cancel tool execution without inventing provider-specific escape hatches? Note: `IMcpClient.CallTool` currently accepts no `CancellationToken`, so session cancellation requires an MCP client contract change, not just a `ChatSession` parameter addition.
 - Should `IChatClient` remain conversation-stateful after the typed output refactor, or should a later slice move it to an explicit context-driven request API?
 
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Add regressions for ordered assistant blocks containing reasoning, text, and tool calls.
+- Add regressions that existing agent/Web UI `max_tokens` intent reaches `ChatClientOptions` and both provider request builders.
+- Add regressions that explicit system prompts still pass through while blank `SystemPrompt` no longer injects adapter-owned demo text.
+- Add regressions that Anthropic request construction uses `ChatClientOptions.Temperature` and `MaxOutputTokens`.
+- Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
+- Add regressions for stable transcript and block identifiers across partial and final assistant updates.
 - Add regressions for tool execution appending `ToolResult` entries instead of mutating transcript state.
 - Add regressions for provider failures surfacing as `Error` entries instead of assistant text.
+- Add regressions for `ChatClientOptions` propagation and provider default cleanup once those fields land.
 - Add replay/history transform coverage for same-model preservation and degraded cross-model/provider replay.

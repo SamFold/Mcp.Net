@@ -21,13 +21,16 @@
 - After the focused test passes, run the next broader relevant test scope before finishing.
 - Keep each change set to one coherent vertical slice. Do not mix unrelated refactors into the same slice.
 - Prefer minimal, comprehensible changes over broad rewrites.
-- Keep each `docs/vnext.md` slice roughly commit-sized.
+- Keep each active `docs/vnext/*.md` slice roughly commit-sized.
 
 ## Planning and Docs
-- `docs/vnext.md` is the single source of truth for the next commit-sized slice of work.
-- Update `docs/vnext.md` before substantial implementation when the planned slice changes.
-- Update `docs/vnext.md` again after completing a slice so it points at the next slice.
-- `docs/roadmap.md` tracks the medium-term sequence of work and should be updated whenever priorities, milestones, or major decisions change.
+- `docs/vnext.md` is the repo-level planning index for active component and system tracks.
+- Detailed next-slice planning lives in per-component files under `docs/vnext/`.
+- Update the relevant `docs/vnext/*.md` track file or files before substantial implementation when the planned slice changes.
+- Update the same `docs/vnext/*.md` track file or files again after completing a slice so they point at the next slice for that area.
+- If a change spans multiple components, update each affected track or create a dedicated cross-cutting track.
+- `docs/roadmap.md` is the repo-level roadmap index for medium-term sequencing and should be updated whenever priorities, milestones, or major decisions change.
+- Detailed medium-term planning lives in project-specific files under `docs/roadmap/`.
 - `docs/testing.md` is the canonical testing policy for this repo.
 - Keep design notes, technical plans, and deeper writeups in `docs/` rather than scattering new markdown files at the repo root.
 
@@ -99,7 +102,11 @@
 
 ## Current Docs Layout
 - `docs/vnext.md`
+- `docs/vnext/README.md`
+- `docs/vnext/<component>.md`
 - `docs/roadmap.md`
+- `docs/roadmap/README.md`
+- `docs/roadmap/<project>.md`
 - `docs/testing.md`
 - `docs/dev-history/README.md`
 - `docs/dev-history/YYYY-MM-DD_short-description.md`

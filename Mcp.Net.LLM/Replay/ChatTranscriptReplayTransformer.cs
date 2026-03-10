@@ -132,7 +132,9 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
             blocks,
             assistant.TurnId,
             assistant.Provider,
-            assistant.Model
+            assistant.Model,
+            assistant.StopReason,
+            assistant.Usage
         );
     }
 
@@ -151,7 +153,9 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
             entry.Blocks.Select(Clone).ToArray(),
             entry.TurnId,
             entry.Provider,
-            entry.Model
+            entry.Model,
+            entry.StopReason,
+            entry.Usage
         );
 
     private static ToolResultChatEntry Clone(ToolResultChatEntry entry) =>
