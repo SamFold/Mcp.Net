@@ -5,12 +5,12 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
-using Mcp.Net.LLM.Catalog;
+using Mcp.Net.Agent.Catalog;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
-namespace Mcp.Net.Tests.LLM.Catalog;
+namespace Mcp.Net.Tests.Agent.Catalog;
 
 public class PromptResourceCatalogTests
 {

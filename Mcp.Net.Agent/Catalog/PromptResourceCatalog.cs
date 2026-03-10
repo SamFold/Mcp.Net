@@ -2,15 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
-using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace Mcp.Net.LLM.Catalog;
+namespace Mcp.Net.Agent.Catalog;
 
 /// <summary>
 /// Tracks prompts and resources exposed by the connected MCP server, keeping the cached copies in

@@ -2,7 +2,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Client.Elicitation;
 
-namespace Mcp.Net.LLM.Interfaces;
+namespace Mcp.Net.Agent.Interfaces;
 
 /// <summary>
 /// Contract for components that can interact with a user to fulfill MCP elicitation prompts.

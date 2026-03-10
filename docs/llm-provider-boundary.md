@@ -35,8 +35,9 @@ The boundary cutover is now in place:
 - `IChatClient` is request-based and executes explicit `ChatClientRequest` snapshots.
 - `ChatSession` owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap.
 - provider adapters rebuild provider payloads from session-owned state at call time rather than preloading mutable provider history.
+- MCP-backed prompt/resource catalog, completion, and elicitation helpers have moved to `Mcp.Net.Agent`.
 
-The remaining mismatch is project placement rather than state ownership: MCP-backed prompt/resource catalog, completion, and elicitation helpers still live in `Mcp.Net.LLM`.
+The remaining mismatch is now narrower: `ToolInvocationResult.FromMcpResult(...)` still converts MCP `ToolCallResult` / content payloads inside `Mcp.Net.LLM`, so the provider layer still carries one MCP/Core translation seam.
 
 ## Directional shape
 
@@ -62,5 +63,6 @@ In that model:
 ## Immediate follow-on slices
 
 1. Completed: introduce an explicit provider request/context contract in `Mcp.Net.LLM` and replace the old stateful `IChatClient` shape with a single request-based `SendAsync(...)` call.
-2. Next: move `PromptResourceCatalog`, `CompletionService`, `ElicitationCoordinator`, and related interfaces out of `Mcp.Net.LLM` to the agent/session side.
-3. Completed: remove the old MCP tool-model coupling from `Mcp.Net.LLM` by replacing `ToolConverter` and `Mcp.Net.Core.Models.Tools.Tool` usage with an LLM-local tool contract.
+2. Completed: move `PromptResourceCatalog`, `CompletionService`, `ElicitationCoordinator`, and related interfaces out of `Mcp.Net.LLM` to the agent/session side.
+3. Next: move MCP `ToolCallResult` / content-model conversion out of `ToolInvocationResult` so `Mcp.Net.LLM` no longer needs `Mcp.Net.Core` project references.
+4. Completed: remove the old MCP tool-model coupling from `Mcp.Net.LLM` by replacing `ToolConverter` and `Mcp.Net.Core.Models.Tools.Tool` usage with an LLM-local tool contract.

@@ -11,7 +11,8 @@
 - `IChatClient` is now a request-based provider boundary with a single `SendAsync(ChatClientRequest, ...)` call.
 - `ChatSession` now owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap, then builds provider requests from that state for each turn.
 - `Mcp.Net.LLM` no longer depends on the MCP tool model or `ToolConverter`; provider tool payloads now cross the boundary through the LLM-local request/tool contract.
-- The remaining mismatch is project placement, not state ownership: MCP-backed prompt/resource catalog, completion, and elicitation helpers still live in `Mcp.Net.LLM` and need to move out.
+- MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`.
+- The remaining boundary impurity is `ToolInvocationResult`: `Mcp.Net.LLM` still references `Mcp.Net.Core` because `ToolInvocationResult.FromMcpResult(...)` knows how to translate MCP `ToolCallResult` / content models into the LLM-local result shape.
 
 ## Goal
 
@@ -27,6 +28,7 @@
   - keep provider implementations, request/response models, replay types, and provider factory in `Mcp.Net.LLM`
   - move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM`
   - remove `Mcp.Net.Core.Models.Tools.Tool` coupling from the `Mcp.Net.LLM` provider boundary
+  - remove the remaining `Mcp.Net.Core.Models.Tools.ToolCallResult` / `ContentBase` conversion from `Mcp.Net.LLM`
   - keep the replay/history transformer and block-based transcript architecture stable while the boundary shift lands
 - Out of scope:
   - session-level cancellation until after the provider-boundary shift
@@ -36,16 +38,16 @@
 
 ## Current slice
 
-Re-home the remaining MCP-backed helper services out of `Mcp.Net.LLM` now that the request-based provider boundary is live:
+Remove the last MCP/Core conversion logic from `Mcp.Net.LLM` now that the helper re-home is complete:
 
-1. **Move prompt/resource catalog and completion helpers to the agent/session side**: `PromptResourceCatalog`, `CompletionService`, and their interfaces should live with MCP-backed session orchestration rather than in the provider library.
-   - Code references: `Mcp.Net.LLM/Catalog/*`, `Mcp.Net.LLM/Completions/*`, `Mcp.Net.LLM/Interfaces/IPromptResourceCatalog.cs`, `Mcp.Net.LLM/Interfaces/ICompletionService.cs`
+1. **Move MCP tool-result translation out of `Mcp.Net.LLM`**: `ToolInvocationResult.FromMcpResult(...)`, text/resource-link extraction, and any MCP content-model knowledge should live with agent/tool-execution orchestration rather than in the provider library.
+   - Code references: `Mcp.Net.LLM/Models/ToolInvocationResult.cs`, `Mcp.Net.Agent/Core/ChatSession.cs`
 
-2. **Move elicitation coordination out of `Mcp.Net.LLM`**: `ElicitationCoordinator` and the prompt-provider seam belong with session/UI orchestration, not with provider execution.
-   - Code references: `Mcp.Net.LLM/Elicitation/*`, `Mcp.Net.LLM/Interfaces/IElicitationPromptProvider.cs`, `Mcp.Net.WebUi/Adapters/SignalR/SignalRChatAdapter.cs`
+2. **Keep `ToolInvocationResult` and `ToolResultResourceLink` as LLM-local result contracts**: provider adapters should still consume the LLM-local tool result shape, but the conversion from MCP server payloads into that shape should happen before the provider boundary.
+   - Code references: `Mcp.Net.LLM/Models/ToolInvocationResult.cs`, `Mcp.Net.LLM/Models/ToolResultResourceLink.cs`
 
-3. **Keep the new stateless boundary stable while re-homing those helpers**: Web UI adapter creation and session bootstrap should keep working against the new `ChatClientRequest` seam with no provider-owned conversation state.
-   - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.WebUi/Chat/Factories/ChatFactory.cs`, `Mcp.Net.LLM/Interfaces/IChatClient.cs`
+3. **Drop the last non-provider project reference from `Mcp.Net.LLM`**: once the tool-result conversion is out, `Mcp.Net.LLM` should no longer require `Mcp.Net.Core` project references.
+   - Code references: `Mcp.Net.LLM/Mcp.Net.LLM.csproj`, `Mcp.Net.LLM/Models/ToolInvocationResult.cs`
 
 ## Completed background
 
@@ -133,6 +135,18 @@ Re-home the remaining MCP-backed helper services out of `Mcp.Net.LLM` now that t
      - `Mcp.Net.Tests/WebUi/Hubs/ChatHubHistoryLoadingTests.cs`
      - `Mcp.Net.Tests/WebUi/Infrastructure/InMemoryChatHistoryManagerTests.cs`
 
+7. **Completed: re-home MCP-backed prompt/resource/completion/elicitation helpers**
+   - Move to `Mcp.Net.Agent.Interfaces`:
+     - `Mcp.Net.LLM/Interfaces/IPromptResourceCatalog.cs`
+     - `Mcp.Net.LLM/Interfaces/ICompletionService.cs`
+     - `Mcp.Net.LLM/Interfaces/IElicitationPromptProvider.cs`
+   - Move to `Mcp.Net.Agent.Catalog` / `Mcp.Net.Agent.Completions` / `Mcp.Net.Agent.Elicitation`:
+     - `Mcp.Net.LLM/Catalog/PromptResourceCatalog.cs`
+     - `Mcp.Net.LLM/Completions/CompletionService.cs`
+     - `Mcp.Net.LLM/Elicitation/ElicitationCoordinator.cs`
+   - Repoint `Mcp.Net.WebUi`, `Mcp.Net.Examples.LLMConsole`, and the corresponding tests to the new namespaces.
+   - Replace the `Mcp.Net.LLM` project reference on `Mcp.Net.Client` with a narrower direct reference to `Mcp.Net.Core`.
+
 ## Stay in LLM
 
 - Keep these in `Mcp.Net.LLM` for the boundary shift:
@@ -162,7 +176,7 @@ Re-home the remaining MCP-backed helper services out of `Mcp.Net.LLM` now that t
 
 ## Next slices
 
-1. Move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM` and repoint their consumers.
+1. Move the remaining MCP/Core tool-result conversion out of `Mcp.Net.LLM` and drop the final non-provider project reference from the project.
 2. Revisit whether the long-term streaming API should move from snapshot-based progress updates to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
 3. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean seam.
 
@@ -180,6 +194,8 @@ Re-home the remaining MCP-backed helper services out of `Mcp.Net.LLM` now that t
 - Verify replay/history transforms continue to run from session-owned transcript state and still preserve same-model/provider degradation rules.
 - Verify provider bootstrap no longer depends on MCP-backed catalog/completion/elicitation helpers remaining in `Mcp.Net.LLM`.
 - Verify the `Mcp.Net.LLM` provider boundary stays free of MCP tool-model coupling.
+- Verify `ToolInvocationResult` construction no longer depends on `ToolCallResult` / `ContentBase` types from `Mcp.Net.Core`.
+- Verify `Mcp.Net.LLM.csproj` no longer needs any project references once the remaining conversion is removed.
 - Verify Web UI and session bootstrap still work after the helper move with no raw provider-state mutation paths reintroduced.
 - Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
 - Add regressions for stable transcript and block identifiers across partial and final assistant updates.

@@ -5,12 +5,12 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Completion;
-using Mcp.Net.LLM.Completions;
+using Mcp.Net.Agent.Completions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
-namespace Mcp.Net.Tests.LLM.Completions;
+namespace Mcp.Net.Tests.Agent.Completions;
 
 public class CompletionServiceTests
 {

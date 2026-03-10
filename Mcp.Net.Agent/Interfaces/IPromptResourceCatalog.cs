@@ -7,7 +7,7 @@ using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 
-namespace Mcp.Net.LLM.Interfaces;
+namespace Mcp.Net.Agent.Interfaces;
 
 /// <summary>
 /// Provides cached access to MCP prompts and resources, automatically refreshing when the server

@@ -5,6 +5,7 @@ using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.SignalR;

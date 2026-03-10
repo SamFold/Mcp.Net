@@ -3,9 +3,9 @@ using System.Globalization;
 using System.Linq;
 using System.Net.Mail;
 using System.Text.Json;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Core.Models.Elicitation;
-using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.Examples.LLMConsole.UI;
 using Microsoft.Extensions.Logging;
 

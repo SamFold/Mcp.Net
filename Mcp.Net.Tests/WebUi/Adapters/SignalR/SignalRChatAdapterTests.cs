@@ -8,6 +8,7 @@ using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Events;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Agent.Tools;

@@ -1,10 +1,10 @@
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Client.Elicitation;
-using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace Mcp.Net.LLM.Elicitation;
+namespace Mcp.Net.Agent.Elicitation;
 
 /// <summary>
 /// Bridges the MCP client's elicitation requests to a UI-facing prompt provider.

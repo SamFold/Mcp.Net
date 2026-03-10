@@ -6,7 +6,7 @@ using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Events;
-using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.Agent.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Examples.LLMConsole.UI;

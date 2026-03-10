@@ -3,7 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Mcp.Net.Core.Models.Completion;
 
-namespace Mcp.Net.LLM.Interfaces;
+namespace Mcp.Net.Agent.Interfaces;
 
 /// <summary>
 /// Provides a high-level facade over the MCP completion API so UI layers can request

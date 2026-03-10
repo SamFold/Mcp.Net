@@ -4,12 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Completion;
-using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging;
 
-namespace Mcp.Net.LLM.Completions;
+namespace Mcp.Net.Agent.Completions;
 
 /// <summary>
 /// Default implementation that mediates calls to <see cref="IMcpClient.CompleteAsync"/> with a

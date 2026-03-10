@@ -5,7 +5,8 @@ using FluentAssertions;
 using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
-using Mcp.Net.LLM.Elicitation;
+using Mcp.Net.Agent.Elicitation;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
@@ -179,7 +180,7 @@ public class ChatFactoryTests
         return new ElicitationRequestContext(request);
     }
 
-    private sealed class AcceptingProvider : Mcp.Net.LLM.Interfaces.IElicitationPromptProvider
+    private sealed class AcceptingProvider : IElicitationPromptProvider
     {
         public Task<ElicitationClientResponse> PromptAsync(
             ElicitationRequestContext context,

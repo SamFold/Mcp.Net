@@ -2,14 +2,14 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Mcp.Net.Agent.Elicitation;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Core.JsonRpc;
-using Mcp.Net.LLM.Elicitation;
-using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
-namespace Mcp.Net.Tests.LLM.Elicitation;
+namespace Mcp.Net.Tests.Agent.Elicitation;
 
 public class ElicitationCoordinatorTests
 {
