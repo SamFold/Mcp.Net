@@ -25,6 +25,7 @@
 - Replay/provider tests now use the captured Anthropic reasoning probe fixture for same-provider cross-model degradation, cross-provider handoff safety, and Anthropic thinking round-trips.
 - The remaining Web UI chat transport now uses discriminated transcript-entry DTOs for REST history and `ReceiveMessage`, and the controller send-message route now takes a dedicated user-message request DTO instead of the old flat `ChatMessageDto`.
 - `IChatClient` and `ChatSession` now expose a typed assistant-turn update seam for streaming: one in-flight assistant transcript entry is updated in place by transcript `Id`, SignalR emits `UpdateMessage` for durable transcript updates, and persisted transcript storage now upserts updated entries instead of appending duplicates.
+- The OpenAI chat adapter now uses the SDK streaming chat-completions API when assistant-turn updates are requested, emitting progressive text and tool-call snapshots while preserving stable transcript and block identifiers across partial and final turns.
 - The streaming slice keeps `ToolExecutionUpdated` and `ThinkingStateChanged` as separate ephemeral UI events for now; only durable assistant content flows through transcript `Added` and `Updated` events.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 
@@ -51,7 +52,7 @@
 
 ## Current slice
 
-1. Wire provider-specific streaming into the new assistant-turn update seam so OpenAI and Anthropic can emit real block-level in-flight assistant snapshots end to end.
+1. Wire Anthropic streaming into the new assistant-turn update seam so Claude can emit real in-flight assistant snapshots with thinking, text, and tool-use blocks.
 2. Extend the probe corpus when real mixed reasoning-plus-tool-call streaming payloads become available so coverage can move from synthetic ordering cases to captured provider outputs.
 3. Decide whether any provider-specific partial-block metadata needs to be public or should stay internal to provider adapters.
 

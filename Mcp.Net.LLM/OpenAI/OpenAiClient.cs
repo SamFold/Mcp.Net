@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
@@ -20,6 +21,13 @@ internal interface IOpenAiChatCompletionInvoker
         IReadOnlyList<ChatMessage> messages,
         ChatCompletionOptions options
     );
+
+    IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteChatStreamingAsync(
+        ChatClient client,
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions options,
+        CancellationToken cancellationToken
+    );
 }
 
 internal sealed class OpenAiChatCompletionInvoker : IOpenAiChatCompletionInvoker
@@ -31,6 +39,16 @@ internal sealed class OpenAiChatCompletionInvoker : IOpenAiChatCompletionInvoker
     )
     {
         return client.CompleteChat(messages, options).Value;
+    }
+
+    public IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteChatStreamingAsync(
+        ChatClient client,
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions options,
+        CancellationToken cancellationToken
+    )
+    {
+        return client.CompleteChatStreamingAsync(messages, options, cancellationToken);
     }
 }
 
@@ -224,15 +242,19 @@ public sealed class OpenAiChatClient : IChatClient
         InitializeHistory();
     }
 
-    private Task<ChatClientTurnResult> GetTurnResultAsync()
+    private async Task<ChatClientTurnResult> GetTurnResultAsync(
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    )
     {
         try
         {
-            var completion = _completionInvoker.CompleteChat(
-                _chatClient,
-                _history,
-                _completionOptions
-            );
+            if (assistantTurnUpdates != null)
+            {
+                return await GetStreamingTurnResultAsync(assistantTurnUpdates, cancellationToken);
+            }
+
+            var completion = _completionInvoker.CompleteChat(_chatClient, _history, _completionOptions);
 
             ChatClientTurnResult response = completion.FinishReason switch
             {
@@ -246,19 +268,17 @@ public sealed class OpenAiChatClient : IChatClient
                 ),
             };
 
-            return Task.FromResult(response);
+            return response;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error calling OpenAI API: {Message}", ex.Message);
-            return Task.FromResult<ChatClientTurnResult>(
-                new ChatClientFailure(
-                    ChatErrorSource.Provider,
-                    $"Error communicating with OpenAI: {ex.Message}",
-                    Details: ex.ToString(),
-                    Provider: "openai",
-                    Model: _modelName
-                )
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                $"Error communicating with OpenAI: {ex.Message}",
+                Details: ex.ToString(),
+                Provider: "openai",
+                Model: _modelName
             );
         }
     }
@@ -276,7 +296,7 @@ public sealed class OpenAiChatClient : IChatClient
         _history.Add(chatMessage);
         _logger.LogDebug("User message added to history (OpenAI): {Message}", userMessage);
 
-        return GetTurnResultAsync();
+        return GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
     }
 
     public async Task<ChatClientTurnResult> SendToolResultsAsync(
@@ -285,7 +305,6 @@ public sealed class OpenAiChatClient : IChatClient
         CancellationToken cancellationToken = default
     )
     {
-        _ = assistantTurnUpdates;
         cancellationToken.ThrowIfCancellationRequested();
 
         foreach (var toolResult in toolResults)
@@ -300,7 +319,7 @@ public sealed class OpenAiChatClient : IChatClient
         }
 
         _logger.LogDebug("Making single API call after adding all tool results");
-        return await GetTurnResultAsync();
+        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
     }
 
     public string GetSystemPrompt() => _systemPrompt;
@@ -423,4 +442,234 @@ public sealed class OpenAiChatClient : IChatClient
             systemFingerprint: null,
             usage: null!
         );
+
+    private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
+        IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
+        CancellationToken cancellationToken
+    )
+    {
+        var accumulator = new StreamingAssistantTurnAccumulator();
+        ChatClientAssistantTurn? lastReportedTurn = null;
+
+        await foreach (var update in _completionInvoker
+                           .CompleteChatStreamingAsync(
+                               _chatClient,
+                               _history,
+                               _completionOptions,
+                               cancellationToken
+                           )
+                           .WithCancellation(cancellationToken))
+        {
+            accumulator.Apply(update);
+
+            var partialTurn = accumulator.BuildPartialTurn(_modelName);
+            if (partialTurn == null || Equals(partialTurn, lastReportedTurn))
+            {
+                continue;
+            }
+
+            assistantTurnUpdates.Report(partialTurn);
+            lastReportedTurn = partialTurn;
+        }
+
+        if (!accumulator.HasContent)
+        {
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                "Unexpected streaming response: no assistant content",
+                Provider: "openai",
+                Model: _modelName
+            );
+        }
+
+        var finishReason = accumulator.FinishReason ?? accumulator.InferFinishReason();
+        if (finishReason != ChatFinishReason.Stop && finishReason != ChatFinishReason.ToolCalls)
+        {
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                $"Unexpected response: {finishReason}",
+                Provider: "openai",
+                Model: _modelName
+            );
+        }
+
+        var finalTurn = accumulator.BuildFinalTurn(_modelName);
+
+        AppendAssistantReplayEntry(
+            new AssistantChatEntry(
+                finalTurn.Id,
+                DateTimeOffset.UtcNow,
+                finalTurn.Blocks,
+                Provider: "openai",
+                Model: _modelName
+            )
+        );
+
+        return finalTurn;
+    }
+
+    private sealed class StreamingAssistantTurnAccumulator
+    {
+        private readonly string _assistantTurnId = Guid.NewGuid().ToString("n");
+        private readonly string _textBlockId = Guid.NewGuid().ToString("n");
+        private readonly StringBuilder _textBuilder = new();
+        private readonly List<StreamingToolCallAccumulator> _toolCalls = new();
+
+        public ChatFinishReason? FinishReason { get; private set; }
+
+        public bool HasContent => _textBuilder.Length > 0 || _toolCalls.Count > 0;
+
+        public void Apply(StreamingChatCompletionUpdate update)
+        {
+            if (update.FinishReason is { } finishReason)
+            {
+                FinishReason = finishReason;
+            }
+
+            foreach (var contentPart in update.ContentUpdate)
+            {
+                if (!string.IsNullOrWhiteSpace(contentPart.Text))
+                {
+                    _textBuilder.Append(contentPart.Text);
+                }
+            }
+
+            foreach (var toolCallUpdate in update.ToolCallUpdates)
+            {
+                FindOrCreateToolCall(toolCallUpdate).Apply(toolCallUpdate);
+            }
+        }
+
+        public ChatFinishReason InferFinishReason() =>
+            _toolCalls.Count > 0 ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
+
+        public ChatClientAssistantTurn? BuildPartialTurn(string modelName)
+        {
+            var blocks = BuildBlocks(lenientToolArguments: true);
+            return blocks.Count == 0
+                ? null
+                : new ChatClientAssistantTurn(_assistantTurnId, "openai", modelName, blocks);
+        }
+
+        public ChatClientAssistantTurn BuildFinalTurn(string modelName)
+        {
+            var blocks = BuildBlocks(lenientToolArguments: false);
+            return new ChatClientAssistantTurn(_assistantTurnId, "openai", modelName, blocks);
+        }
+
+        private List<AssistantContentBlock> BuildBlocks(bool lenientToolArguments)
+        {
+            var blocks = new List<AssistantContentBlock>();
+
+            if (_textBuilder.Length > 0)
+            {
+                blocks.Add(new TextAssistantBlock(_textBlockId, _textBuilder.ToString()));
+            }
+
+            foreach (var toolCall in _toolCalls)
+            {
+                var block = toolCall.BuildBlock(lenientToolArguments);
+                if (block != null)
+                {
+                    blocks.Add(block);
+                }
+            }
+
+            return blocks;
+        }
+
+        private StreamingToolCallAccumulator FindOrCreateToolCall(
+            StreamingChatToolCallUpdate update
+        )
+        {
+            if (!string.IsNullOrWhiteSpace(update.ToolCallId))
+            {
+                var existing = _toolCalls.FirstOrDefault(call => call.ToolCallId == update.ToolCallId);
+                if (existing != null)
+                {
+                    return existing;
+                }
+            }
+
+            var created = new StreamingToolCallAccumulator();
+            _toolCalls.Add(created);
+            return created;
+        }
+    }
+
+    private sealed class StreamingToolCallAccumulator
+    {
+        private readonly string _blockId = Guid.NewGuid().ToString("n");
+        private readonly StringBuilder _argumentsBuilder = new();
+
+        public string? ToolCallId { get; private set; }
+
+        public string? FunctionName { get; private set; }
+
+        public void Apply(StreamingChatToolCallUpdate update)
+        {
+            if (!string.IsNullOrWhiteSpace(update.ToolCallId))
+            {
+                ToolCallId = update.ToolCallId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(update.FunctionName))
+            {
+                FunctionName = update.FunctionName;
+            }
+
+            var argumentsUpdate = update.FunctionArgumentsUpdate?.ToString();
+            if (!string.IsNullOrEmpty(argumentsUpdate))
+            {
+                _argumentsBuilder.Append(argumentsUpdate);
+            }
+        }
+
+        public ToolCallAssistantBlock? BuildBlock(bool lenientToolArguments)
+        {
+            if (string.IsNullOrWhiteSpace(ToolCallId) || string.IsNullOrWhiteSpace(FunctionName))
+            {
+                return null;
+            }
+
+            var argumentsText = _argumentsBuilder.ToString();
+            IReadOnlyDictionary<string, object?> arguments;
+            if (string.IsNullOrWhiteSpace(argumentsText))
+            {
+                arguments = new Dictionary<string, object?>();
+            }
+            else if (TryParseToolArguments(argumentsText, out var parsedArguments))
+            {
+                arguments = parsedArguments;
+            }
+            else if (lenientToolArguments)
+            {
+                arguments = new Dictionary<string, object?>();
+            }
+            else
+            {
+                arguments = ParseToolArguments(argumentsText);
+            }
+
+            return new ToolCallAssistantBlock(_blockId, ToolCallId, FunctionName, arguments);
+        }
+    }
+
+    private static bool TryParseToolArguments(
+        string argumentsJson,
+        out IReadOnlyDictionary<string, object?> arguments
+    )
+    {
+        try
+        {
+            arguments = ParseToolArguments(argumentsJson);
+            return true;
+        }
+        catch (JsonException)
+        {
+            arguments = Array.Empty<KeyValuePair<string, object?>>()
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+            return false;
+        }
+    }
 }

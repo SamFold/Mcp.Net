@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.LLM.Models;
@@ -224,6 +225,114 @@ public class OpenAiChatClientTests
         assistantMessage.ToolCalls.Single().FunctionName.Should().Be("record_probe");
     }
 
+    [Fact]
+    public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldReportPartialTextSnapshots()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+
+        var updateTimestamp = DateTimeOffset.UtcNow;
+        var completionInvoker = new StreamingChatCompletionInvoker(
+            CreateTextUpdate("stream-1", "Hel", updateTimestamp),
+            CreateTextUpdate("stream-1", "lo", updateTimestamp, ChatFinishReason.Stop)
+        );
+
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var streamedTurns = new List<ChatClientAssistantTurn>();
+        var result = await client.SendMessageAsync(
+            "hello",
+            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        );
+
+        completionInvoker.StreamingCalled.Should().BeTrue();
+        completionInvoker.CapturedMessages.Should().NotBeNull();
+        completionInvoker.CapturedMessages.Should().HaveCount(2);
+
+        streamedTurns.Should().HaveCount(2);
+        streamedTurns.Select(turn => turn.Id).Distinct().Should().ContainSingle();
+        streamedTurns.Select(turn => ((TextAssistantBlock)turn.Blocks.Single()).Text)
+            .Should()
+            .ContainInOrder("Hel", "Hello");
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Id.Should().Be(streamedTurns[0].Id);
+        assistantTurn.Blocks.Should().ContainSingle();
+        assistantTurn.Blocks[0]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Hello");
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldAccumulateToolCallArguments()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+
+        var updateTimestamp = DateTimeOffset.UtcNow;
+        var completionInvoker = new StreamingChatCompletionInvoker(
+            CreateTextUpdate("stream-2", "Checking", updateTimestamp),
+            CreateToolUpdate("stream-2", "call-1", "search", """{"query":"weath""", updateTimestamp),
+            CreateToolUpdate(
+                "stream-2",
+                "call-1",
+                "search",
+                """er"}""",
+                updateTimestamp,
+                ChatFinishReason.ToolCalls
+            )
+        );
+
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var streamedTurns = new List<ChatClientAssistantTurn>();
+        var result = await client.SendMessageAsync(
+            "find weather",
+            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        );
+
+        streamedTurns.Should().NotBeEmpty();
+        var finalStreamedTurn = streamedTurns[^1];
+        finalStreamedTurn.Blocks.Should().HaveCount(2);
+        finalStreamedTurn.Blocks[0]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Checking");
+        finalStreamedTurn.Blocks[1]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.Arguments["query"].Should()
+            .Be("weather");
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Id.Should().Be(finalStreamedTurn.Id);
+        assistantTurn.Blocks.Should().HaveCount(2);
+        assistantTurn.Blocks[1]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.ToolCallId.Should()
+            .Be("call-1");
+    }
+
     private static string ExtractSystemPrompt(IReadOnlyList<ChatMessage> messages)
     {
         messages[0].Should().BeOfType<SystemChatMessage>();
@@ -256,5 +365,127 @@ public class OpenAiChatClientTests
             CapturedMessages = messages.ToList();
             throw new InvalidOperationException("Capture complete");
         }
+
+        public IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteChatStreamingAsync(
+            ChatClient client,
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions options,
+            CancellationToken cancellationToken
+        )
+        {
+            CapturedMessages = messages.ToList();
+            throw new InvalidOperationException("Streaming capture not expected");
+        }
     }
+
+    private sealed class StreamingChatCompletionInvoker : IOpenAiChatCompletionInvoker
+    {
+        private readonly IReadOnlyList<StreamingChatCompletionUpdate> _updates;
+
+        public StreamingChatCompletionInvoker(params StreamingChatCompletionUpdate[] updates)
+        {
+            _updates = updates;
+        }
+
+        public IReadOnlyList<ChatMessage>? CapturedMessages { get; private set; }
+
+        public bool StreamingCalled { get; private set; }
+
+        public ChatCompletion CompleteChat(
+            ChatClient client,
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions options
+        )
+        {
+            CapturedMessages = messages.ToList();
+            throw new InvalidOperationException("Non-streaming completion not expected");
+        }
+
+        public async IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteChatStreamingAsync(
+            ChatClient client,
+            IReadOnlyList<ChatMessage> messages,
+            ChatCompletionOptions options,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
+        )
+        {
+            StreamingCalled = true;
+            CapturedMessages = messages.ToList();
+
+            foreach (var update in _updates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return update;
+                await Task.Yield();
+            }
+        }
+    }
+
+    private sealed class CapturingProgress<T> : IProgress<T>
+    {
+        private readonly ICollection<T> _items;
+
+        public CapturingProgress(ICollection<T> items)
+        {
+            _items = items;
+        }
+
+        public void Report(T value)
+        {
+            _items.Add(value);
+        }
+    }
+
+    private static StreamingChatCompletionUpdate CreateTextUpdate(
+        string id,
+        string text,
+        DateTimeOffset createdAt,
+        ChatFinishReason? finishReason = null
+    ) =>
+        OpenAIChatModelFactory.StreamingChatCompletionUpdate(
+            id,
+            new ChatMessageContent([ChatMessageContentPart.CreateTextPart(text)]),
+            null,
+            Array.Empty<StreamingChatToolCallUpdate>(),
+            ChatMessageRole.Assistant,
+            null,
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            finishReason,
+            createdAt,
+            "gpt-5",
+            null,
+            null!
+        );
+
+    private static StreamingChatCompletionUpdate CreateToolUpdate(
+        string id,
+        string toolCallId,
+        string toolName,
+        string argumentsFragment,
+        DateTimeOffset createdAt,
+        ChatFinishReason? finishReason = null
+    ) =>
+        OpenAIChatModelFactory.StreamingChatCompletionUpdate(
+            id,
+            new ChatMessageContent(Array.Empty<ChatMessageContentPart>()),
+            null,
+            [
+                OpenAIChatModelFactory.StreamingChatToolCallUpdate(
+                    0,
+                    toolCallId,
+                    ChatToolCallKind.Function,
+                    toolName,
+                    BinaryData.FromString(argumentsFragment)
+                ),
+            ],
+            ChatMessageRole.Assistant,
+            null,
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            Array.Empty<ChatTokenLogProbabilityDetails>(),
+            finishReason,
+            createdAt,
+            "gpt-5",
+            null,
+            null!
+        );
 }
