@@ -1,13 +1,14 @@
 using System.Net.Http;
 using Mcp.Net.Client.Interfaces;
-using Mcp.Net.LLM.Agents;
+using Mcp.Net.Agent.Agents;
+using Mcp.Net.Agent.Extensions;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Anthropic;
-using Mcp.Net.LLM.Extensions;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Mcp.Net.LLM.Replay;
-using Mcp.Net.LLM.Tools;
+using Mcp.Net.Agent.Tools;
 using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
 using Mcp.Net.WebUi.Chat.Interfaces;

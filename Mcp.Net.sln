@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mcp.Net.WebUi", "Mcp.Net.We
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mcp.Net.Examples.LLMConsole", "Mcp.Net.Examples.LLMConsole\Mcp.Net.Examples.LLMConsole.csproj", "{DD9A8575-6DCF-4372-913C-28491B992028}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mcp.Net.Agent", "Mcp.Net.Agent\Mcp.Net.Agent.csproj", "{18F1AA67-04A9-4076-B6F4-947DE5D12542}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -167,6 +169,18 @@ Global
 		{DD9A8575-6DCF-4372-913C-28491B992028}.Release|x64.Build.0 = Release|Any CPU
 		{DD9A8575-6DCF-4372-913C-28491B992028}.Release|x86.ActiveCfg = Release|Any CPU
 		{DD9A8575-6DCF-4372-913C-28491B992028}.Release|x86.Build.0 = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|x64.Build.0 = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Debug|x86.Build.0 = Debug|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|Any CPU.Build.0 = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|x64.ActiveCfg = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|x64.Build.0 = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|x86.ActiveCfg = Release|Any CPU
+		{18F1AA67-04A9-4076-B6F4-947DE5D12542}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

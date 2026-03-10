@@ -1,5 +1,5 @@
-using Mcp.Net.LLM.Agents;
-using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.Agent.Agents;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Models;
 using Microsoft.Extensions.Logging;
 

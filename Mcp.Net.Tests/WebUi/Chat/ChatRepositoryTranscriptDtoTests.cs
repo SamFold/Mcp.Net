@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using FluentAssertions;
-using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Chat.Repositories;
 using Mcp.Net.WebUi.DTOs;

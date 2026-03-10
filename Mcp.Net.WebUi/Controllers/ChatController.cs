@@ -1,6 +1,7 @@
-using Mcp.Net.LLM.Agents;
-using Mcp.Net.LLM.Events;
-using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.Agent.Agents;
+using Mcp.Net.Agent.Events;
+using Mcp.Net.Agent.Interfaces;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.Adapters.Interfaces;

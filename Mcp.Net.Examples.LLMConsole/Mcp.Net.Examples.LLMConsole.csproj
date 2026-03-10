@@ -19,5 +19,6 @@
     <ProjectReference Include="..\Mcp.Net.LLM\Mcp.Net.LLM.csproj" />
     <ProjectReference Include="..\Mcp.Net.Client\Mcp.Net.Client.csproj" />
     <ProjectReference Include="..\Mcp.Net.Examples.Shared\Mcp.Net.Examples.Shared.csproj" />
+    <ProjectReference Include="..\Mcp.Net.Agent\Mcp.Net.Agent.csproj" />
   </ItemGroup>
 </Project>

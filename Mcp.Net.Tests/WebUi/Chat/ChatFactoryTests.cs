@@ -6,6 +6,7 @@ using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.LLM.Elicitation;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -82,8 +83,8 @@ public class ChatFactoryTests
         var loggerFactory = LoggerFactory.Create(builder => { });
         var chatFactoryLogger = loggerFactory.CreateLogger<ChatFactory>();
         var hubContext = new Mock<IHubContext<ChatHub>>().Object;
-        var toolRegistry = new Mcp.Net.LLM.Tools.ToolRegistry(
-            NullLogger<Mcp.Net.LLM.Tools.ToolRegistry>.Instance
+        var toolRegistry = new Mcp.Net.Agent.Tools.ToolRegistry(
+            NullLogger<Mcp.Net.Agent.Tools.ToolRegistry>.Instance
         );
         var llmFactory = new LlmClientFactory(
             loggerFactory.CreateLogger<Mcp.Net.LLM.Anthropic.AnthropicChatClient>(),

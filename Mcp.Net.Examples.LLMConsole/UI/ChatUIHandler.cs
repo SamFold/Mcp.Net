@@ -1,4 +1,5 @@
-using Mcp.Net.LLM.Events;
+using Mcp.Net.Agent.Events;
+using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging;
 

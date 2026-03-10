@@ -1,3 +1,4 @@
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.DTOs;
 

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using FluentAssertions;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging.Abstractions;

@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Mcp.Net.LLM.Events;
+using Mcp.Net.Agent.Events;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Content;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.Adapters.Interfaces;

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.WebUi.DTOs;

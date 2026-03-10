@@ -13,7 +13,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current priorities
 1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Start the `Mcp.Net.LLM` post-parity API-shape lane, beginning with whether `IChatClient` should remain stateful before `Mcp.Net.Agent` extraction
+3. Start the `Mcp.Net.LLM` extraction lane: split `Mcp.Net.Agent` out of `Mcp.Net.LLM` while preserving the current `IChatClient` boundary
 
 ## Active Project Roadmaps
 
@@ -22,14 +22,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
   - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
 - `Mcp.Net.LLM`: `docs/roadmap/llm.md`
-  - Current focus: settle post-parity client/session API-shape decisions first; cancellation is deferred until the MCP client/tool path actually needs and supports it cleanly.
+  - Current focus: extract `Mcp.Net.Agent` first; cancellation stays deferred until after that split.
 - Cross-cutting: `docs/roadmap/cross-cutting.md`
   - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 
 ## Current cross-project dependencies
 
 - `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is now deferred rather than the next active slice.
-- The completed `Mcp.Net.LLM` metadata, option-cleanup, tool-registration, and review-follow-on slices already touched `Mcp.Net.WebUi`; post-parity API-shape decisions may widen shared `ChatSession` or adapter contracts and should be tracked carefully before the `Mcp.Net.Agent` extraction.
+- The completed `Mcp.Net.LLM` metadata, option-cleanup, tool-registration, and review-follow-on slices already touched `Mcp.Net.WebUi`; the `Mcp.Net.Agent` extraction will likely widen or relocate shared `ChatSession` and adapter contracts, especially the current raw-client pass-through, and should be tracked carefully during the split.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 
 ## On-Demand Roadmaps

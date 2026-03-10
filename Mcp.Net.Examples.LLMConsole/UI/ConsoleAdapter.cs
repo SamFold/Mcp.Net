@@ -4,8 +4,8 @@ using System.Text;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
-using Mcp.Net.LLM.Core;
-using Mcp.Net.LLM.Events;
+using Mcp.Net.Agent.Core;
+using Mcp.Net.Agent.Events;
 using Mcp.Net.LLM.Interfaces;
 using Microsoft.Extensions.Logging;
 

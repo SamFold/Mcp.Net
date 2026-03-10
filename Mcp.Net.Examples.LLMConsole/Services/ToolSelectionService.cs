@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Examples.LLMConsole.UI;
-using Mcp.Net.LLM.Tools;
+using Mcp.Net.Agent.Tools;
 
 namespace Mcp.Net.Examples.LLMConsole;
 

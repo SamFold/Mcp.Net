@@ -1,4 +1,4 @@
-using Mcp.Net.LLM.Events;
+using Mcp.Net.Agent.Events;
 using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.WebUi.Adapters.SignalR;

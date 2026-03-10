@@ -1,5 +1,5 @@
-using Mcp.Net.LLM.Interfaces;
-using Mcp.Net.LLM.Tools;
+using Mcp.Net.Agent.Interfaces;
+using Mcp.Net.Agent.Tools;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Mcp.Net.WebUi.Controllers;

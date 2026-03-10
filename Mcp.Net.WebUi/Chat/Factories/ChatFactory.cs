@@ -1,12 +1,13 @@
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
-using Mcp.Net.LLM.Core;
+using Mcp.Net.Agent.Core;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Catalog;
 using Mcp.Net.LLM.Completions;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
-using Mcp.Net.LLM.Tools;
+using Mcp.Net.Agent.Tools;
 using Mcp.Net.LLM.Elicitation;
 using System.Collections.Concurrent;
 using Mcp.Net.Core.JsonRpc;
