@@ -1,3 +1,4 @@
+using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.WebUi.Adapters.SignalR;
@@ -13,13 +14,23 @@ public class ChatMessageEventArgs : EventArgs
     public string ChatId { get; }
 
     /// <summary>
-    /// Typed transcript entry that was added to the session.
+    /// Typed transcript entry that changed in the session.
     /// </summary>
     public ChatTranscriptEntry Entry { get; }
 
-    public ChatMessageEventArgs(string chatId, ChatTranscriptEntry entry)
+    /// <summary>
+    /// The transcript change kind associated with the entry.
+    /// </summary>
+    public ChatTranscriptChangeKind ChangeKind { get; }
+
+    public ChatMessageEventArgs(
+        string chatId,
+        ChatTranscriptEntry entry,
+        ChatTranscriptChangeKind changeKind = ChatTranscriptChangeKind.Added
+    )
     {
         ChatId = chatId;
         Entry = entry;
+        ChangeKind = changeKind;
     }
 }

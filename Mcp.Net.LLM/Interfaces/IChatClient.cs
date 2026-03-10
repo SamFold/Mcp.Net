@@ -8,9 +8,17 @@ public interface IChatClient
 {
     void RegisterTools(IEnumerable<Tool> tools);
 
-    Task<ChatClientTurnResult> SendMessageAsync(string userMessage);
+    Task<ChatClientTurnResult> SendMessageAsync(
+        string userMessage,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    );
 
-    Task<ChatClientTurnResult> SendToolResultsAsync(IEnumerable<ToolInvocationResult> toolResults);
+    Task<ChatClientTurnResult> SendToolResultsAsync(
+        IEnumerable<ToolInvocationResult> toolResults,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    );
 
     void ResetConversation() =>
         throw new NotImplementedException("Not supported by this client type");

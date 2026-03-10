@@ -273,25 +273,24 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
 
     private async void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)
     {
-        if (args.ChangeKind != ChatTranscriptChangeKind.Added)
-        {
-            return;
-        }
-
         var messageDto = ChatTranscriptEntryMapper.ToDto(_sessionId, args.Entry);
+        var hubMethod = args.ChangeKind == ChatTranscriptChangeKind.Updated
+            ? "UpdateMessage"
+            : "ReceiveMessage";
 
         _logger.LogDebug(
-            "Transcript entry received in session {SessionId}: {EntryType}",
+            "Transcript entry change received in session {SessionId}: {EntryType} ({ChangeKind})",
             _sessionId,
-            messageDto.GetType().Name
+            messageDto.GetType().Name,
+            args.ChangeKind
         );
 
         MessageReceived?.Invoke(
             this,
-            new ChatMessageEventArgs(_sessionId, args.Entry)
+            new ChatMessageEventArgs(_sessionId, args.Entry, args.ChangeKind)
         );
 
-        await _hubContext.Clients.Group(_sessionId).SendAsync("ReceiveMessage", messageDto);
+        await _hubContext.Clients.Group(_sessionId).SendAsync(hubMethod, messageDto);
     }
 
     private async void OnToolCallActivityChanged(object? sender, ToolCallActivityChangedEventArgs args)

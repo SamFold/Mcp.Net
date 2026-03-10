@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Mcp.Net.LLM.Events;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.LLM.Models;
@@ -511,7 +512,14 @@ public class ChatHub : Hub
     {
         try
         {
-            await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
+            if (args.ChangeKind == ChatTranscriptChangeKind.Updated)
+            {
+                await _chatRepository.UpsertTranscriptEntryAsync(args.ChatId, args.Entry);
+            }
+            else
+            {
+                await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
+            }
 
             // Don't try to notify clients directly from the ChatHub event handler
             // Just update the metadata in the repository

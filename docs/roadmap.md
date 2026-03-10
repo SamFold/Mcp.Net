@@ -6,18 +6,24 @@ Update it when priorities, milestones, or major decisions change.
 ## Current priorities
 1. Start the `Mcp.Net.Client` Streamable HTTP spec-alignment review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Replace the current `Mcp.Net.LLM` text-first chat contracts with the new block-based transcript/event model
+3. Wire real provider streaming into the new `Mcp.Net.LLM` assistant-turn transcript update seam
 
 ## Near-term roadmap
 1. `Mcp.Net.Client`: Streamable HTTP request-response spec alignment for 2025-11-25
 2. `Mcp.Net.Server`: logging/debuggability and hidden mutable state review
-3. `Mcp.Net.LLM`: replace `ChatSession`, `IChatSessionEvents`, `LlmResponse`, and `MessageType` with a block-based transcript and typed provider-output model
-4. `Mcp.Net.LLM` and `Mcp.Net.WebUi`: migrate SignalR, DTO, and stored message shapes to the discriminated transcript model without compatibility shims
-5. `Mcp.Net.LLM`: add replay/history transform infrastructure for same-model preservation and degraded cross-model or cross-provider replay
+3. `Mcp.Net.LLM`: implement provider-specific streaming for OpenAI and Anthropic on top of the assistant-turn update seam so one in-flight assistant entry can receive block-level updates end to end
+4. `Mcp.Net.LLM`: extend the probe corpus and regression coverage for mixed reasoning, text, and tool-call streaming payloads
+5. `Mcp.Net.LLM`: make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions
 6. MCP server review closure and cleanup
 7. Broader MCP spec alignment work across server, client, and LLM integrations
 
 ## Recently completed
+- `Mcp.Net.LLM` and `Mcp.Net.WebUi` now have the first streaming-ready transcript update seam:
+  - `IChatClient` accepts typed in-flight assistant turn updates
+  - `ChatSession` updates one assistant transcript entry in place by transcript `Id`
+  - SignalR emits durable `UpdateMessage` events for transcript updates
+  - persisted transcript storage upserts updated entries instead of appending duplicates
+- The previous `Mcp.Net.LLM` roadmap milestones for the block-based transcript rewrite, discriminated Web UI transport migration, and replay/history transform seam are now complete and the next LLM slice moves to provider-side streaming
 - `Mcp.Net.LLM` now has a concrete next-generation `ChatSession` transcript/event spec in `docs/llm-chat-session-item-model.md`, replacing the earlier flat five-kind item proposal with:
   - transcript entries: `User`, `Assistant`, `ToolResult`, `Error`
   - assistant blocks: `Text`, `Reasoning`, `ToolCall`
@@ -73,7 +79,7 @@ Update it when priorities, milestones, or major decisions change.
 - Each `docs/vnext/*.md` file holds the next commit-sized slice for one component, subsystem, or cross-cutting lane.
 - This file is for the broader sequence of upcoming work across those tracks.
 - The currently active tracks are `docs/vnext/client.md`, `docs/vnext/server.md`, and `docs/vnext/llm.md`.
-- The active `Mcp.Net.LLM` lane is now a contract-breaking transcript/event rewrite, not another compatibility-first adapter patch pass.
+- The active `Mcp.Net.LLM` lane is now provider streaming on top of the new transcript/update seam, not another compatibility-first adapter patch pass.
 - The builder/DI inconsistency slice is now closed for the concrete default-copy bugs found in this review pass.
 - The SSE vs stdio parity slice has closed the concrete gaps found in this pass: per-session elicitation capability enforcement, disconnect handling, client remote-close propagation, and outbound write serialization.
 - The next active client review area is Streamable HTTP reconnect, retry, and stale-state cleanup, including session-expiry handling after HTTP 404.

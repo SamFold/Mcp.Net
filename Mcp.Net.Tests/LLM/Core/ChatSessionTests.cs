@@ -26,7 +26,11 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync("Hi there"))
+            .Setup(c => c.SendMessageAsync(
+                "Hi there",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-1",
@@ -60,7 +64,11 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync("Hi there"))
+            .Setup(c => c.SendMessageAsync(
+                "Hi there",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-1",
@@ -99,6 +107,86 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_StreamingAssistantUpdate_ShouldUpdateSingleAssistantEntryInPlace()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+
+        llmClient
+            .Setup(c => c.SendMessageAsync(
+                "Hi there",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(
+                (
+                    string userMessage,
+                    IProgress<ChatClientAssistantTurn>? assistantTurnUpdates,
+                    CancellationToken cancellationToken
+                ) =>
+                {
+                    userMessage.Should().Be("Hi there");
+                    cancellationToken.Should().Be(CancellationToken.None);
+                    assistantTurnUpdates!
+                        .Report(
+                            new ChatClientAssistantTurn(
+                                "assistant-1",
+                                "openai",
+                                "gpt-5",
+                                new AssistantContentBlock[]
+                                {
+                                    new TextAssistantBlock("text-1", "Hel"),
+                                }
+                            )
+                        );
+
+                    return Task.FromResult<ChatClientTurnResult>(
+                        new ChatClientAssistantTurn(
+                            "assistant-1",
+                            "openai",
+                            "gpt-5",
+                            new AssistantContentBlock[]
+                            {
+                                new TextAssistantBlock("text-1", "Hello"),
+                            }
+                        )
+                    );
+                }
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        var transcriptChanges = new List<ChatTranscriptChangedEventArgs>();
+        session.TranscriptChanged += (_, args) => transcriptChanges.Add(args);
+
+        await session.SendUserMessageAsync("Hi there");
+
+        session.Transcript.Should().HaveCount(2);
+        session.Transcript.Should().ContainSingle(entry => entry is AssistantChatEntry);
+
+        transcriptChanges.Should().HaveCount(3);
+        transcriptChanges[1].ChangeKind.Should().Be(ChatTranscriptChangeKind.Added);
+        transcriptChanges[1].Entry.Should().BeOfType<AssistantChatEntry>();
+        transcriptChanges[2].ChangeKind.Should().Be(ChatTranscriptChangeKind.Updated);
+        transcriptChanges[2].Entry.Should().BeOfType<AssistantChatEntry>();
+        transcriptChanges[2].Entry.Id.Should().Be(transcriptChanges[1].Entry.Id);
+
+        var assistantEntry = session.Transcript.OfType<AssistantChatEntry>().Single();
+        assistantEntry.Blocks.Should().ContainSingle();
+        assistantEntry.Blocks[0]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Hello");
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ProviderFailure_ShouldAppendErrorEntry()
     {
         var llmClient = new Mock<IChatClient>();
@@ -106,7 +194,11 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync("Hi there"))
+            .Setup(c => c.SendMessageAsync(
+                "Hi there",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientFailure(
                     ChatErrorSource.Provider,
@@ -151,7 +243,11 @@ public class ChatSessionTests
         );
 
         llmClient
-            .Setup(c => c.SendMessageAsync("Please add numbers"))
+            .Setup(c => c.SendMessageAsync(
+                "Please add numbers",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-1",
@@ -162,7 +258,11 @@ public class ChatSessionTests
             );
 
         llmClient
-            .Setup(c => c.SendToolResultsAsync(It.IsAny<IEnumerable<ToolInvocationResult>>()))
+            .Setup(c => c.SendToolResultsAsync(
+                It.IsAny<IEnumerable<ToolInvocationResult>>(),
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-2",
@@ -227,7 +327,11 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync("Hi there"))
+            .Setup(c => c.SendMessageAsync(
+                "Hi there",
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-1",

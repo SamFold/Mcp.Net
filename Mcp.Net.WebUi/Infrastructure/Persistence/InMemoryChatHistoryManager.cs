@@ -475,40 +475,56 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
                 "[HISTORY] Transcript preview: '{ContentPreview}'",
                 ChatTranscriptEntryMapper.ToPreview(entry, 30)
             );
+            UpdateSessionPreview(sessionId, entry);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 
-            bool sessionFound = false;
-            foreach (var userEntry in _userSessions)
+    public async Task UpsertTranscriptEntryAsync(string sessionId, ChatTranscriptEntry entry)
+    {
+        _logger.LogInformation(
+            "[HISTORY] UpsertTranscriptEntryAsync for session {SessionId}, entry kind: {Kind}",
+            sessionId,
+            entry.Kind
+        );
+
+        await _lock.WaitAsync();
+        try
+        {
+            if (!_sessionTranscript.TryGetValue(sessionId, out var transcript))
             {
-                var userId = userEntry.Key;
-                var sessions = userEntry.Value;
-
-                var session = sessions.FirstOrDefault(s => s.Id == sessionId);
-                if (session != null)
-                {
-                    sessionFound = true;
-                    _logger.LogInformation(
-                        "[HISTORY] Updating session metadata for transcript entry in user {UserId}",
-                        userId
-                    );
-
-                    session.LastUpdatedAt = DateTime.UtcNow;
-                    session.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(entry);
-
-                    _logger.LogInformation(
-                        "[HISTORY] Updated last message preview for session {SessionId}: '{NewPreview}'",
-                        sessionId,
-                        session.LastMessagePreview
-                    );
-                }
+                _logger.LogInformation(
+                    "[HISTORY] Creating new transcript list for session {SessionId}",
+                    sessionId
+                );
+                transcript = new List<ChatTranscriptEntry>();
+                _sessionTranscript[sessionId] = transcript;
             }
 
-            if (!sessionFound)
+            var existingIndex = transcript.FindIndex(existing => existing.Id == entry.Id);
+            if (existingIndex >= 0)
             {
-                _logger.LogWarning(
-                    "[HISTORY] Transcript entry added to session {SessionId}, but session metadata not found in any user's sessions",
+                transcript[existingIndex] = entry;
+                _logger.LogInformation(
+                    "[HISTORY] Replaced transcript entry {EntryId} in session {SessionId}",
+                    entry.Id,
                     sessionId
                 );
             }
+            else
+            {
+                transcript.Add(entry);
+                _logger.LogInformation(
+                    "[HISTORY] Appended transcript entry {EntryId} to session {SessionId}",
+                    entry.Id,
+                    sessionId
+                );
+            }
+
+            UpdateSessionPreview(sessionId, entry);
         }
         finally
         {
@@ -596,6 +612,43 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
         finally
         {
             _lock.Release();
+        }
+    }
+
+    private void UpdateSessionPreview(string sessionId, ChatTranscriptEntry entry)
+    {
+        bool sessionFound = false;
+        foreach (var userEntry in _userSessions)
+        {
+            var userId = userEntry.Key;
+            var sessions = userEntry.Value;
+
+            var session = sessions.FirstOrDefault(s => s.Id == sessionId);
+            if (session != null)
+            {
+                sessionFound = true;
+                _logger.LogInformation(
+                    "[HISTORY] Updating session metadata for transcript entry in user {UserId}",
+                    userId
+                );
+
+                session.LastUpdatedAt = DateTime.UtcNow;
+                session.LastMessagePreview = ChatTranscriptEntryMapper.ToPreview(entry);
+
+                _logger.LogInformation(
+                    "[HISTORY] Updated last message preview for session {SessionId}: '{NewPreview}'",
+                    sessionId,
+                    session.LastMessagePreview
+                );
+            }
+        }
+
+        if (!sessionFound)
+        {
+            _logger.LogWarning(
+                "[HISTORY] Transcript entry stored for session {SessionId}, but session metadata not found in any user's sessions",
+                sessionId
+            );
         }
     }
 }

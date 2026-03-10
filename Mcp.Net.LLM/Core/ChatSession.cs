@@ -158,6 +158,7 @@ public class ChatSession : IChatSessionEvents
     {
         _lastActivityAt = DateTime.UtcNow;
         var turnId = Guid.NewGuid().ToString("n");
+        var assistantTurnUpdates = CreateAssistantTurnProgress(turnId);
 
         AppendTranscript(
             new UserChatEntry(
@@ -168,11 +169,14 @@ public class ChatSession : IChatSessionEvents
             )
         );
 
-        var nextTurn = await RequestProviderAsync(() => _llmClient.SendMessageAsync(message), turnId);
+        var nextTurn = await RequestProviderAsync(
+            () => _llmClient.SendMessageAsync(message, assistantTurnUpdates),
+            turnId
+        );
 
         while (nextTurn is ChatClientAssistantTurn assistantTurn)
         {
-            AppendTranscript(ToAssistantEntry(assistantTurn, turnId));
+            UpsertAssistantEntry(assistantTurn, turnId);
 
             var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
             if (toolCalls.Count == 0)
@@ -182,7 +186,7 @@ public class ChatSession : IChatSessionEvents
 
             var toolResults = await ExecuteToolCallsAsync(toolCalls, turnId);
             nextTurn = await RequestProviderAsync(
-                () => _llmClient.SendToolResultsAsync(toolResults),
+                () => _llmClient.SendToolResultsAsync(toolResults, assistantTurnUpdates),
                 turnId
             );
         }
@@ -392,6 +396,36 @@ public class ChatSession : IChatSessionEvents
         TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
 
+    private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
+    {
+        var assistantEntry = ToAssistantEntry(turn, turnId);
+        var existingIndex = _transcript.FindIndex(entry => entry.Id == assistantEntry.Id);
+        if (existingIndex < 0)
+        {
+            AppendTranscript(assistantEntry);
+            return;
+        }
+
+        var existingEntry = _transcript[existingIndex] as AssistantChatEntry;
+        var updatedEntry = existingEntry == null
+            ? assistantEntry
+            : assistantEntry with { Timestamp = existingEntry.Timestamp };
+
+        if (Equals(_transcript[existingIndex], updatedEntry))
+        {
+            return;
+        }
+
+        _transcript[existingIndex] = updatedEntry;
+        TranscriptChanged?.Invoke(
+            this,
+            new ChatTranscriptChangedEventArgs(updatedEntry, ChatTranscriptChangeKind.Updated)
+        );
+    }
+
+    private IProgress<ChatClientAssistantTurn> CreateAssistantTurnProgress(string turnId) =>
+        new AssistantTurnProgress(turn => UpsertAssistantEntry(turn, turnId));
+
     private void SetActivity(ChatSessionActivity activity, string turnId)
     {
         _logger.LogDebug(
@@ -451,5 +485,20 @@ public class ChatSession : IChatSessionEvents
             resourceLinks: Array.Empty<ToolResultResourceLink>(),
             metadata: null
         );
+    }
+
+    private sealed class AssistantTurnProgress : IProgress<ChatClientAssistantTurn>
+    {
+        private readonly Action<ChatClientAssistantTurn> _handler;
+
+        public AssistantTurnProgress(Action<ChatClientAssistantTurn> handler)
+        {
+            _handler = handler;
+        }
+
+        public void Report(ChatClientAssistantTurn value)
+        {
+            _handler(value);
+        }
     }
 }

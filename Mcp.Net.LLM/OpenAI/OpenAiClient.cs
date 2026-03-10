@@ -263,8 +263,15 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 
-    public Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
+    public Task<ChatClientTurnResult> SendMessageAsync(
+        string userMessage,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         var chatMessage = new UserChatMessage(userMessage);
         _history.Add(chatMessage);
         _logger.LogDebug("User message added to history (OpenAI): {Message}", userMessage);
@@ -273,9 +280,14 @@ public sealed class OpenAiChatClient : IChatClient
     }
 
     public async Task<ChatClientTurnResult> SendToolResultsAsync(
-        IEnumerable<ToolInvocationResult> toolResults
+        IEnumerable<ToolInvocationResult> toolResults,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
     )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         foreach (var toolResult in toolResults)
         {
             _logger.LogDebug(

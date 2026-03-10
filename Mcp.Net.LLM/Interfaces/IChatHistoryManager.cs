@@ -43,6 +43,11 @@ public interface IChatHistoryManager
     Task AddTranscriptEntryAsync(string sessionId, ChatTranscriptEntry entry);
 
     /// <summary>
+    /// Replace an existing transcript entry by identifier or append it when no entry exists yet.
+    /// </summary>
+    Task UpsertTranscriptEntryAsync(string sessionId, ChatTranscriptEntry entry);
+
+    /// <summary>
     /// Append multiple transcript entries to a chat session
     /// </summary>
     Task AddTranscriptEntriesAsync(string sessionId, IReadOnlyList<ChatTranscriptEntry> entries);

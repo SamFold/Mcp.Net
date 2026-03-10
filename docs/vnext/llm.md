@@ -24,6 +24,8 @@
 - OpenAI replay now rebuilds mixed assistant text-plus-tool-call history as a single assistant message via the SDK `ChatCompletion` mock factory instead of splitting it into two assistant messages.
 - Replay/provider tests now use the captured Anthropic reasoning probe fixture for same-provider cross-model degradation, cross-provider handoff safety, and Anthropic thinking round-trips.
 - The remaining Web UI chat transport now uses discriminated transcript-entry DTOs for REST history and `ReceiveMessage`, and the controller send-message route now takes a dedicated user-message request DTO instead of the old flat `ChatMessageDto`.
+- `IChatClient` and `ChatSession` now expose a typed assistant-turn update seam for streaming: one in-flight assistant transcript entry is updated in place by transcript `Id`, SignalR emits `UpdateMessage` for durable transcript updates, and persisted transcript storage now upserts updated entries instead of appending duplicates.
+- The streaming slice keeps `ToolExecutionUpdated` and `ThinkingStateChanged` as separate ephemeral UI events for now; only durable assistant content flows through transcript `Added` and `Updated` events.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 
 ## Goal
@@ -49,15 +51,15 @@
 
 ## Current slice
 
-1. Keep transcript semantics stable while the next streaming block-delta shape is introduced.
-2. Decide whether transient activity transport such as `ToolExecutionUpdated` and `ThinkingStateChanged` should remain separate ephemeral UI events or move to typed activity DTOs alongside the transcript model.
-3. Extend the probe corpus when real mixed reasoning-plus-tool-call payloads become available so replay coverage can move from synthetic ordering cases to captured provider outputs.
+1. Wire provider-specific streaming into the new assistant-turn update seam so OpenAI and Anthropic can emit real block-level in-flight assistant snapshots end to end.
+2. Extend the probe corpus when real mixed reasoning-plus-tool-call streaming payloads become available so coverage can move from synthetic ordering cases to captured provider outputs.
+3. Decide whether any provider-specific partial-block metadata needs to be public or should stay internal to provider adapters.
 
 ## Next slices
 
-1. Add streaming block-delta support on top of the new transcript model without changing transcript semantics.
-2. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
-3. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay/streaming behavior has settled.
+1. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
+2. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay/streaming behavior has settled.
+3. Revisit a typed activity DTO family only if the existing ephemeral `ToolExecutionUpdated` and `ThinkingStateChanged` events prove too weak once provider streaming is live.
 
 ## Open decisions
 

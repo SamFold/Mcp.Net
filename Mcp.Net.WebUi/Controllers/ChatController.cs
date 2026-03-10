@@ -1,4 +1,5 @@
 using Mcp.Net.LLM.Agents;
+using Mcp.Net.LLM.Events;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Chat;
@@ -669,7 +670,14 @@ public class ChatController : ControllerBase
     {
         try
         {
-            await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
+            if (args.ChangeKind == ChatTranscriptChangeKind.Updated)
+            {
+                await _chatRepository.UpsertTranscriptEntryAsync(args.ChatId, args.Entry);
+            }
+            else
+            {
+                await _chatRepository.AppendTranscriptEntryAsync(args.ChatId, args.Entry);
+            }
 
             // Also update the session metadata with LastUpdatedAt
             var metadata = await _chatRepository.GetChatMetadataAsync(args.ChatId);

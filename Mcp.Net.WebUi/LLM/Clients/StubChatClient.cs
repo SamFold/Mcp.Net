@@ -35,8 +35,15 @@ public class StubChatClient : IChatClient
         _logger.LogInformation("Registered {Count} tools with stub chat client", tools.Count());
     }
 
-    public Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
+    public Task<ChatClientTurnResult> SendMessageAsync(
+        string userMessage,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         _logger.LogInformation("[STUB] Received message: {Content}", userMessage);
         _messageHistory.Add(userMessage);
 
@@ -56,9 +63,14 @@ public class StubChatClient : IChatClient
     }
 
     public Task<ChatClientTurnResult> SendToolResultsAsync(
-        IEnumerable<ToolInvocationResult> toolResults
+        IEnumerable<ToolInvocationResult> toolResults,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
     )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         _logger.LogInformation(
             "[STUB] Received tool results: {Count} results",
             toolResults.Count()

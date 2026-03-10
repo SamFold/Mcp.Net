@@ -302,8 +302,15 @@ public sealed class AnthropicChatClient : IChatClient
     /// <summary>
     /// Sends a user message to Claude and returns the resulting response.
     /// </summary>
-    public async Task<ChatClientTurnResult> SendMessageAsync(string userMessage)
+    public async Task<ChatClientTurnResult> SendMessageAsync(
+        string userMessage,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
+    )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         _messages.Add(
             new Message
             {
@@ -323,9 +330,14 @@ public sealed class AnthropicChatClient : IChatClient
      /// Appends tool execution results and requests the next assistant response batch.
      /// </summary>
     public async Task<ChatClientTurnResult> SendToolResultsAsync(
-        IEnumerable<ToolInvocationResult> toolResults
+        IEnumerable<ToolInvocationResult> toolResults,
+        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
+        CancellationToken cancellationToken = default
     )
     {
+        _ = assistantTurnUpdates;
+        cancellationToken.ThrowIfCancellationRequested();
+
         foreach (var toolResult in toolResults)
         {
             _logger.LogDebug(

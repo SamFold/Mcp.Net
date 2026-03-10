@@ -205,6 +205,19 @@ public class ChatRepository : IChatRepository
     }
 
     /// <summary>
+    /// Replace an existing transcript entry by identifier or append it when no entry exists yet.
+    /// </summary>
+    public Task UpsertTranscriptEntryAsync(string chatId, ChatTranscriptEntry entry)
+    {
+        _logger.LogInformation(
+            "[REPOSITORY] UpsertTranscriptEntryAsync called for session {ChatId}",
+            chatId
+        );
+
+        return _historyManager.UpsertTranscriptEntryAsync(chatId, entry);
+    }
+
+    /// <summary>
     /// Clear all messages from a chat session
     /// </summary>
     public async Task ClearChatMessagesAsync(string chatId)

@@ -50,6 +50,11 @@ public interface IChatRepository
     Task AppendTranscriptEntryAsync(string chatId, ChatTranscriptEntry entry);
 
     /// <summary>
+    /// Replace an existing transcript entry by identifier or append it when no entry exists yet.
+    /// </summary>
+    Task UpsertTranscriptEntryAsync(string chatId, ChatTranscriptEntry entry);
+
+    /// <summary>
     /// Clear all messages from a chat session
     /// </summary>
     Task ClearChatMessagesAsync(string chatId);
