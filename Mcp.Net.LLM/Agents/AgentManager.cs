@@ -153,7 +153,12 @@ public class AgentManager : IAgentManager
         clone.Description =
             $"Cloned from {sourceAgent.Name} ({sourceAgent.Id}). {sourceAgent.Description}";
 
-        await _registry.RegisterAgentAsync(clone, userId);
+        var success = await _registry.RegisterAgentAsync(clone, userId);
+        if (!success)
+        {
+            _logger.LogWarning("Failed to persist cloned agent: {AgentId}", clone.Id);
+            throw new InvalidOperationException($"Failed to persist cloned agent: {clone.Id}");
+        }
 
         _logger.LogInformation(
             "Cloned agent {SourceAgentId} to new agent {CloneAgentId} by user {UserId}",

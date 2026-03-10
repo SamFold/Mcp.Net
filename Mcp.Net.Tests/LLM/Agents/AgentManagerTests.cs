@@ -440,6 +440,25 @@ public class AgentManagerTests
     }
 
     [Fact]
+    public async Task CloneAgentAsync_ShouldThrowWhenPersistenceFails()
+    {
+        // Arrange
+        var sourceAgentId = _testAgent.Id;
+        var userId = "user789";
+
+        _mockRegistry
+            .Setup(r => r.RegisterAgentAsync(It.IsAny<AgentDefinition>(), userId))
+            .ReturnsAsync(false);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _agentManager.CloneAgentAsync(sourceAgentId, userId, "Clone Name")
+        );
+
+        Assert.Contains("Failed to persist cloned agent", exception.Message);
+    }
+
+    [Fact]
     public async Task GetToolCategoriesAsync_ShouldDelegateToFactory()
     {
         // Arrange

@@ -32,19 +32,19 @@
 - The streaming slice keeps `ToolExecutionUpdated` and `ThinkingStateChanged` as separate ephemeral UI events for now; only durable assistant content flows through transcript `Added` and `Updated` events.
 - `ChatClientOptions` now carries `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches OpenAI and Anthropic request builders, Anthropic honors the shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned demo text.
 - Provider `RegisterTools` is now idempotent (clear-and-replace) on both OpenAI and Anthropic, with regressions for repeated and replacement registration scenarios.
-- The 2026-03-08 LLM review tool re-registration issue is resolved. Three issues remain: agent registry startup race, persisted agent settings round-trip verification, and clone-persistence truthfulness.
-- The latest planning review for this lane keeps the next work on the remaining review follow-ons on top of the completed provider-streaming, metadata, option-cleanup, and idempotent-registration seams; it explicitly defers cancellation because the current MCP client/tool-execution path does not support it cleanly.
+- The 2026-03-08 LLM review tool re-registration issue and clone-persistence truthfulness issue are resolved. Two issues remain: agent registry startup race and persisted agent settings round-trip verification.
+- The latest planning review for this lane keeps the next work on the remaining review follow-ons on top of the completed provider-streaming, metadata, option-cleanup, idempotent-registration, and clone-persistence seams; it explicitly defers cancellation because the current MCP client/tool-execution path does not support it cleanly.
 
 ## Goal
 
 - Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture before revisiting larger API-shape changes.
-- Land configurable provider options, idempotent tool registration, and the remaining review follow-ons as focused vertical slices on top of the completed OpenAI and Anthropic streaming and metadata seam, while deferring cancellation until the MCP client path warrants the extra seam.
+- Land configurable provider options, idempotent tool registration, clone-persistence truthfulness, and the remaining review follow-ons as focused vertical slices on top of the completed OpenAI and Anthropic streaming and metadata seam, while deferring cancellation until the MCP client path warrants the extra seam.
 
 ## Scope
 
 - In scope:
-  - resolve the remaining 2026-03-08 LLM review follow-ons (agent registry startup race, persisted agent settings round-trip, clone-persistence truthfulness)
-  - keep the completed OpenAI and Anthropic streaming paths, metadata propagation, and idempotent tool registration stable while review follow-ons land
+  - resolve the remaining 2026-03-08 LLM review follow-ons (agent registry startup race and persisted agent settings round-trip verification)
+  - keep the completed OpenAI and Anthropic streaming paths, metadata propagation, idempotent tool registration, and clone-persistence fix stable while review follow-ons land
   - keep the replay/history transformer and block-based transcript architecture stable while provider parity lands
 - Out of scope:
   - session-level cancellation until the MCP client/tool-execution path needs it and supports a cleaner seam
@@ -55,16 +55,13 @@
 
 ## Current slice
 
-Resolve the three remaining 2026-03-08 LLM review follow-ons:
+Resolve the two remaining 2026-03-08 LLM review follow-ons:
 
 1. **Agent registry startup race**: `AgentRegistry` constructor fires `ReloadAgentsAsync()` without awaiting it; `DefaultAgentInitializer` immediately reads `GetAllAgentsAsync()` and can observe an empty cache, creating duplicate default agents. Fix: make initialization awaitable so `DefaultAgentInitializer` runs after the registry is loaded.
    - Files: `Mcp.Net.LLM/Agents/AgentRegistry.cs`, `Mcp.Net.WebUi/Infrastructure/DefaultAgentInitializer.cs`
 
 2. **Persisted agent settings round-trip**: Parameter coercion in `AgentFactory` was hardened but needs regression coverage proving that values persisted through `FileSystemAgentStore` → `AgentDefinition.Parameters` → `AgentFactory` → `ChatClientOptions` actually reach provider request builders (temperature, max output tokens).
    - Files: `Mcp.Net.LLM/Agents/AgentFactory.cs`, `Mcp.Net.LLM/Agents/Stores/FileSystemAgentStore.cs`, `Mcp.Net.LLM/Models/AgentDefinition.cs`
-
-3. **Clone-persistence truthfulness**: `AgentManager.CloneAgentAsync` ignores the `bool` return from `RegisterAgentAsync` — if persistence fails, the caller gets a phantom agent that was never saved. Fix: check the return and throw or propagate the failure.
-   - Files: `Mcp.Net.LLM/Agents/AgentManager.cs`
 
 ## Next slices
 
@@ -92,7 +89,6 @@ Resolve the three remaining 2026-03-08 LLM review follow-ons:
 - Add failing regression tests before implementation when feasible.
 - Add regression proving `AgentRegistry` initialization completes before `DefaultAgentInitializer` checks for existing agents.
 - Add regression proving `AgentFactory` round-trips persisted temperature and max-output-tokens through to provider request parameters.
-- Add regression proving `CloneAgentAsync` surfaces persistence failures instead of returning phantom agents.
 - Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
 - Add regressions for stable transcript and block identifiers across partial and final assistant updates.
 - Add regressions for tool execution appending `ToolResult` entries instead of mutating transcript state.
