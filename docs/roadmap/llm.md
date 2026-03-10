@@ -3,18 +3,19 @@
 ## Current focus
 
 - Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture.
-- Resolve the final 2026-03-08 LLM review follow-on now that idempotent tool registration, clone-persistence truthfulness, agent-registry startup ordering, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
+- Settle the post-parity `IChatClient` and session API shape now that idempotent tool registration, clone-persistence truthfulness, agent-registry startup ordering, persisted-settings coverage, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
 - Cancellation is explicitly deferred for now because the current MCP client/tool-execution path does not support it cleanly and it is not the highest-value next slice.
 
 ## Near-term sequence
 
-1. Resolve the remaining 2026-03-08 LLM review follow-on: persisted agent settings round-trip verification.
-3. Revisit session cancellation only when the MCP client/tool-execution path actually needs it and can support a clean contract.
-4. Revisit the long-term streaming and client-state APIs only after provider parity, metadata, and tool-registration behavior have landed.
+1. Decide whether `IChatClient` should remain conversation-stateful or move to an explicit context-driven request API.
+2. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the client-state decision.
+3. Extract `Mcp.Net.Agent` from `Mcp.Net.LLM` once those API surfaces are settled.
+4. Revisit session cancellation only when the MCP client/tool-execution path actually needs it and can support a clean contract.
 
 ## Post-parity milestone
 
-5. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`.** Once options, idempotent tool registration, the deferred-cancellation decision, and review follow-ons are stable, split the project along the provider-abstraction / agent-orchestration boundary (inspired by the pi-mono `pi-ai` / `pi-agent-core` separation):
+5. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`.** Once options, idempotent tool registration, the deferred-cancellation decision, review follow-ons, and post-parity API-shape decisions are stable, split the project along the provider-abstraction / agent-orchestration boundary (inspired by the pi-mono `pi-ai` / `pi-agent-core` separation):
    - `Mcp.Net.LLM` becomes a pure, reusable LLM provider library: `IChatClient`, provider implementations, options, turn results, content blocks, usage, transcript entry types, replay transformer, provider factory.
    - `Mcp.Net.Agent` (new project) owns orchestration: `ChatSession`, agent definitions and management, session events, history management, tool registry and categorization, tool execution coordination.
    - `Mcp.Net.Agent` depends on `Mcp.Net.LLM`; the reverse dependency does not exist.
@@ -33,12 +34,13 @@
 - Provider `RegisterTools` is now idempotent (clear-and-replace) on both OpenAI and Anthropic, with regressions for repeated and replacement registration scenarios.
 - `AgentManager.CloneAgentAsync` now surfaces persistence failures instead of returning a phantom clone, with a regression covering the failed `RegisterAgentAsync` path.
 - `AgentRegistry` now blocks public cache access on initialization, can recover from a failed first reload via manual `ReloadAgentsAsync`, and preserves immediate `userId` validation on register/update paths.
+- Persisted agent settings now round-trip through the real `FileSystemAgentStore` path into `AgentFactory` `ChatClientOptions`, with regression coverage for deserialized `JsonElement` temperature and `max_tokens` values.
 
 ## Dependencies and risks
 
 - Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it is deferred until the seam is both needed and worth widening.
-- The last review follow-on touches `Mcp.Net.LLM/Agents/` and `Mcp.Net.LLM/Agents/Stores/`; changes should stay focused on persisted-settings round-trip verification without broadening into agent-layer redesign (that comes with the `Mcp.Net.Agent` extraction).
-- The active lane should not reopen another transcript or message-model rewrite before the review follow-ons land.
+- The next API-shape decisions are likely to touch `IChatClient`, `ChatSession`, replay/history loading, and Web UI session adapters; they should stay focused on interface truthfulness and extraction readiness, not reopen provider parity or transcript redesign.
+- The active lane should not reopen another transcript or message-model rewrite while the post-parity API-shape decisions are still being settled.
 
 ## Open questions
 

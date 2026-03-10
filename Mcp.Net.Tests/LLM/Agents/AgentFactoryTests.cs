@@ -1,5 +1,7 @@
+using System.IO;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Agents;
+using Mcp.Net.LLM.Agents.Stores;
 using Mcp.Net.LLM.Anthropic;
 using Mcp.Net.LLM.Factories;
 using Mcp.Net.LLM.Interfaces;
@@ -464,6 +466,62 @@ public class AgentFactoryTests
                 ),
             Times.Once
         );
+    }
+
+    [Fact]
+    public async Task CreateClientFromAgentDefinitionAsync_ShouldHandleFileSystemRoundTrippedJsonElementParameters()
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), $"agent-factory-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDirectory);
+
+        try
+        {
+            // Arrange: persist and reload through the real file-backed store path.
+            var store = new FileSystemAgentStore(
+                tempDirectory,
+                NullLogger<FileSystemAgentStore>.Instance
+            );
+
+            var original = new AgentDefinition
+            {
+                Provider = LlmProvider.OpenAI,
+                ModelName = "gpt-5",
+                SystemPrompt = "Test prompt",
+                Parameters = new Dictionary<string, object>
+                {
+                    { "temperature", 0.9f },
+                    { "max_tokens", 4096 },
+                },
+            };
+
+            await store.SaveAgentAsync(original);
+
+            var deserialized = await store.GetAgentByIdAsync(original.Id);
+
+            // Verify the precondition: values are now JsonElement, not float/int
+            Assert.NotNull(deserialized);
+            Assert.IsType<System.Text.Json.JsonElement>(deserialized!.Parameters["temperature"]);
+            Assert.IsType<System.Text.Json.JsonElement>(deserialized.Parameters["max_tokens"]);
+
+            ChatClientOptions? capturedOptions = null;
+            var mockChatClient = new Mock<IChatClient>();
+            _mockChatClientFactory
+                .Setup(f => f.Create(It.IsAny<LlmProvider>(), It.IsAny<ChatClientOptions>()))
+                .Callback<LlmProvider, ChatClientOptions>((_, opts) => capturedOptions = opts)
+                .Returns(mockChatClient.Object);
+
+            // Act
+            await _factory.CreateClientFromAgentDefinitionAsync(deserialized);
+
+            // Assert
+            Assert.NotNull(capturedOptions);
+            Assert.Equal(0.9f, capturedOptions!.Temperature, precision: 3);
+            Assert.Equal(4096, capturedOptions.MaxOutputTokens);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
     }
 
     private AgentFactory CreateFactoryWithConcreteChatClientFactory()
