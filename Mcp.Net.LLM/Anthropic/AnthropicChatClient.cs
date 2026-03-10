@@ -90,11 +90,14 @@ public sealed class AnthropicChatClient : IChatClient
     }
 
     /// <summary>
-    /// Registers the available MCP tools so the Anthropic API can surface them in tool-use responses.
+    /// Replaces the currently registered MCP tools so the Anthropic API can surface the supplied
+    /// tool set in tool-use responses.
     /// </summary>
-    /// <param name="tools">Collection of MCP tool descriptors to expose to the model.</param>
+    /// <param name="tools">Complete collection of MCP tool descriptors to expose to the model.</param>
     public void RegisterTools(IEnumerable<Mcp.Net.Core.Models.Tools.Tool> tools)
     {
+        _anthropicTools.Clear();
+
         foreach (var tool in tools)
         {
             _logger.LogDebug("Registering Anthropic tool {ToolName}", tool.Name);

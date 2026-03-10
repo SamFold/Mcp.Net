@@ -18,7 +18,7 @@ Use it to see which component or system tracks are active and where each next sl
 - `Mcp.Net.Client`: `docs/vnext/client.md`
   - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
 - `Mcp.Net.LLM`: `docs/vnext/llm.md`
-  - Current slice: add session-level cancellation through provider/tool-execution seams; then tool-registration idempotency and remaining review follow-ons.
+  - Current slice: resolve remaining 2026-03-08 review follow-ons (agent registry startup race, persisted agent settings round-trip, clone-persistence truthfulness).
   - Post-parity milestone: extract `Mcp.Net.Agent` (orchestration, agents, sessions, tool registry) from `Mcp.Net.LLM` (pure provider abstraction).
 
 ## On-Demand Tracks

@@ -3,19 +3,18 @@
 ## Current focus
 
 - Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture.
-- Land cancellation, tool-registration idempotency, and the remaining LLM review follow-ons now that Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
-- The immediate target is session cancellation through provider requests and MCP tool execution seams.
+- Resolve the remaining 2026-03-08 LLM review follow-ons now that idempotent tool registration, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
+- Cancellation is explicitly deferred for now because the current MCP client/tool-execution path does not support it cleanly and it is not the highest-value next slice.
 
 ## Near-term sequence
 
-1. Add session-level cancellation through provider requests and MCP tool execution seams, coordinating the required `IMcpClient` cancellation seam with `Mcp.Net.Client`.
-2. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
-3. Resolve the remaining 2026-03-08 LLM review follow-ons around agent registry startup behavior, persisted agent settings application, and clone-persistence truthfulness once the provider-parity lane is stable, or earlier if those become release blockers.
-4. Revisit the long-term streaming and client-state APIs only after provider parity, metadata, and cancellation work have landed.
+1. Resolve the remaining 2026-03-08 LLM review follow-ons: agent registry startup race, persisted agent settings round-trip verification, and clone-persistence truthfulness.
+3. Revisit session cancellation only when the MCP client/tool-execution path actually needs it and can support a clean contract.
+4. Revisit the long-term streaming and client-state APIs only after provider parity, metadata, and tool-registration behavior have landed.
 
 ## Post-parity milestone
 
-5. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`.** Once options, cancellation, idempotent tool registration, and review follow-ons are stable, split the project along the provider-abstraction / agent-orchestration boundary (inspired by the pi-mono `pi-ai` / `pi-agent-core` separation):
+5. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`.** Once options, idempotent tool registration, the deferred-cancellation decision, and review follow-ons are stable, split the project along the provider-abstraction / agent-orchestration boundary (inspired by the pi-mono `pi-ai` / `pi-agent-core` separation):
    - `Mcp.Net.LLM` becomes a pure, reusable LLM provider library: `IChatClient`, provider implementations, options, turn results, content blocks, usage, transcript entry types, replay transformer, provider factory.
    - `Mcp.Net.Agent` (new project) owns orchestration: `ChatSession`, agent definitions and management, session events, history management, tool registry and categorization, tool execution coordination.
    - `Mcp.Net.Agent` depends on `Mcp.Net.LLM`; the reverse dependency does not exist.
@@ -31,13 +30,13 @@
 - Anthropic streaming is now wired into that update seam too, including progressive reasoning, text, and tool-use snapshots plus regression coverage proving post-stream tool follow-ups still replay the final assistant turn correctly.
 - `Usage` and `StopReason` now propagate through `ChatClientAssistantTurn`, assistant transcript entries, persistence, and Web UI assistant DTOs for both OpenAI and Anthropic, including streaming final-snapshot metadata updates.
 - `ChatClientOptions` now carries shared `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches provider request builders, Anthropic honors shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned prompt copy.
+- Provider `RegisterTools` is now idempotent (clear-and-replace) on both OpenAI and Anthropic, with regressions for repeated and replacement registration scenarios.
 
 ## Dependencies and risks
 
-- Session-level cancellation is cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`.
-- The completed metadata and option-cleanup slices already touched `Mcp.Net.WebUi`; the next cancellation slice should stay local unless the MCP client seam broadens further than `CancellationToken` threading.
-- The active lane should not reopen another transcript or message-model rewrite before metadata, option cleanup, and cancellation work land.
-- The March 8 review findings around agent startup and persisted settings remain open even though they are not the first milestones in the provider-parity lane.
+- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it is deferred until the seam is both needed and worth widening.
+- The review follow-ons touch `Mcp.Net.LLM/Agents/` and `Mcp.Net.WebUi/Infrastructure/`; changes should stay focused on the three specific issues without broadening into agent-layer redesign (that comes with the `Mcp.Net.Agent` extraction).
+- The active lane should not reopen another transcript or message-model rewrite before the review follow-ons land.
 
 ## Open questions
 

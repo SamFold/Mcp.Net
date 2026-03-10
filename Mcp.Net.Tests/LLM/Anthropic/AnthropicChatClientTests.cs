@@ -10,6 +10,7 @@ using Anthropic.SDK.Messaging;
 using FluentAssertions;
 using Mcp.Net.LLM.Anthropic;
 using Mcp.Net.LLM.Models;
+using McpTool = Mcp.Net.Core.Models.Tools.Tool;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -96,6 +97,101 @@ public class AnthropicChatClientTests
         assistantTurn.Usage.OutputTokens.Should().Be(7);
         assistantTurn.Usage.TotalTokens.Should().Be(18);
         assistantTurn.Usage.AdditionalCounts.Should().Contain("cacheCreationInputTokens", 4);
+    }
+
+    [Fact]
+    public async Task RegisterTools_CalledTwice_ShouldNotDuplicateToolsInOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var tools = new[]
+        {
+            new McpTool
+            {
+                Name = "search",
+                Description = "Search tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+            new McpTool
+            {
+                Name = "calculate",
+                Description = "Calculator",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+
+        client.RegisterTools(tools);
+        client.RegisterTools(tools);
+
+        await client.SendMessageAsync("hello");
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Tools.Should().HaveCount(2);
+        messageClient.LastParameters.Tools
+            .Select(t => t.Function.Name)
+            .Should()
+            .OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task RegisterTools_WithDifferentSets_ShouldReplaceNotAppend()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var firstSet = new[]
+        {
+            new McpTool
+            {
+                Name = "search",
+                Description = "Search tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+        var secondSet = new[]
+        {
+            new McpTool
+            {
+                Name = "calculate",
+                Description = "Calculator",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+            new McpTool
+            {
+                Name = "weather",
+                Description = "Weather tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+
+        client.RegisterTools(firstSet);
+        client.RegisterTools(secondSet);
+
+        await client.SendMessageAsync("hello");
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Tools.Should().HaveCount(2);
+        messageClient.LastParameters.Tools
+            .Select(t => t.Function.Name)
+            .Should()
+            .BeEquivalentTo("calculate", "weather");
     }
 
     [Fact]

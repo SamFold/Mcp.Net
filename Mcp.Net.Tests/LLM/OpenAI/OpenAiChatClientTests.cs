@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -64,6 +65,107 @@ public class OpenAiChatClientTests
         usage.TotalTokens.Should().Be(20);
         usage.AdditionalCounts.Should().Contain("cachedInputTokens", 3);
         usage.AdditionalCounts.Should().Contain("reasoningOutputTokens", 4);
+    }
+
+    [Fact]
+    public async Task RegisterTools_CalledTwice_ShouldNotDuplicateToolsInOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "test prompt",
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var tools = new[]
+        {
+            new Tool
+            {
+                Name = "search",
+                Description = "Search tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+            new Tool
+            {
+                Name = "calculate",
+                Description = "Calculator",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+
+        client.RegisterTools(tools);
+        client.RegisterTools(tools);
+
+        try { await client.SendMessageAsync("hello"); } catch (InvalidOperationException) { }
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().HaveCount(2);
+        completionInvoker.CapturedOptions.Tools
+            .Select(t => t.FunctionName)
+            .Should()
+            .OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task RegisterTools_WithDifferentSets_ShouldReplaceNotAppend()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "test prompt",
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var firstSet = new[]
+        {
+            new Tool
+            {
+                Name = "search",
+                Description = "Search tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+        var secondSet = new[]
+        {
+            new Tool
+            {
+                Name = "calculate",
+                Description = "Calculator",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+            new Tool
+            {
+                Name = "weather",
+                Description = "Weather tool",
+                InputSchema = JsonDocument.Parse("{}").RootElement,
+            },
+        };
+
+        client.RegisterTools(firstSet);
+        client.RegisterTools(secondSet);
+
+        try { await client.SendMessageAsync("hello"); } catch (InvalidOperationException) { }
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().HaveCount(2);
+        completionInvoker.CapturedOptions.Tools
+            .Select(t => t.FunctionName)
+            .Should()
+            .BeEquivalentTo("calculate", "weather");
     }
 
     [Fact]

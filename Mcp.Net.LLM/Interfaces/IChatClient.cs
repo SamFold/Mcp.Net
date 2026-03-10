@@ -6,6 +6,11 @@ namespace Mcp.Net.LLM.Interfaces;
 
 public interface IChatClient
 {
+    /// <summary>
+    /// Replaces the model-facing tool set with the supplied collection.
+    /// Repeated calls should be idempotent for the same input set.
+    /// </summary>
+    /// <param name="tools">The complete tool set that should remain registered.</param>
     void RegisterTools(IEnumerable<Tool> tools);
 
     Task<ChatClientTurnResult> SendMessageAsync(

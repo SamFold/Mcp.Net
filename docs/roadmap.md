@@ -13,7 +13,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current priorities
 1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Finish the remaining `Mcp.Net.LLM` provider-parity slice, starting with session cancellation now that shared option cleanup and result metadata propagation are in place
+3. Finish the remaining `Mcp.Net.LLM` provider-parity slice, starting with tool-registration idempotency now that shared option cleanup and result metadata propagation are in place
 
 ## Active Project Roadmaps
 
@@ -22,14 +22,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
   - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
 - `Mcp.Net.LLM`: `docs/roadmap/llm.md`
-  - Current focus: session cancellation first, then tool-registration idempotency and unresolved LLM review follow-ons now that shared option cleanup is in place.
+  - Current focus: tool-registration idempotency and unresolved LLM review follow-ons first; cancellation is deferred until the MCP client/tool path actually needs and supports it cleanly.
 - Cross-cutting: `docs/roadmap/cross-cutting.md`
   - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 
 ## Current cross-project dependencies
 
-- `Mcp.Net.LLM` session cancellation depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, so the LLM cancellation slice is not purely local.
-- The completed `Mcp.Net.LLM` `Usage` and `StopReason` slice already touched `Mcp.Net.WebUi`; the next option-cleanup slice should stay local unless shared request contracts broaden.
+- `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is now deferred rather than the next active slice.
+- The completed `Mcp.Net.LLM` metadata and option-cleanup slices already touched `Mcp.Net.WebUi`; the next tool-registration idempotency slice should stay local unless shared request or refresh contracts broaden.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 
 ## On-Demand Roadmaps

@@ -212,12 +212,18 @@ public sealed class OpenAiChatClient : IChatClient
         return new ToolInvocation(toolCall.Id, toolCall.FunctionName, arguments);
     }
 
+    /// <summary>
+    /// Replaces the currently registered MCP tools so the OpenAI request options reflect the
+    /// supplied tool set without accumulating duplicates across refreshes.
+    /// </summary>
+    /// <param name="tools">Complete collection of MCP tool descriptors to expose to the model.</param>
     public void RegisterTools(IEnumerable<Tool> tools)
     {
+        _completionOptions.Tools.Clear();
+
         foreach (var tool in tools)
         {
-            var chatTool = ToolConverter.ConvertToChatTool(tool);
-            _completionOptions.Tools.Add(chatTool);
+            _completionOptions.Tools.Add(ToolConverter.ConvertToChatTool(tool));
         }
     }
 
