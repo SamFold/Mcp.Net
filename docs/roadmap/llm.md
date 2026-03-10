@@ -3,12 +3,12 @@
 ## Current focus
 
 - Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture.
-- Resolve the remaining 2026-03-08 LLM review follow-ons now that idempotent tool registration, clone-persistence truthfulness, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
+- Resolve the final 2026-03-08 LLM review follow-on now that idempotent tool registration, clone-persistence truthfulness, agent-registry startup ordering, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
 - Cancellation is explicitly deferred for now because the current MCP client/tool-execution path does not support it cleanly and it is not the highest-value next slice.
 
 ## Near-term sequence
 
-1. Resolve the remaining 2026-03-08 LLM review follow-ons: agent registry startup race and persisted agent settings round-trip verification.
+1. Resolve the remaining 2026-03-08 LLM review follow-on: persisted agent settings round-trip verification.
 3. Revisit session cancellation only when the MCP client/tool-execution path actually needs it and can support a clean contract.
 4. Revisit the long-term streaming and client-state APIs only after provider parity, metadata, and tool-registration behavior have landed.
 
@@ -32,11 +32,12 @@
 - `ChatClientOptions` now carries shared `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches provider request builders, Anthropic honors shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned prompt copy.
 - Provider `RegisterTools` is now idempotent (clear-and-replace) on both OpenAI and Anthropic, with regressions for repeated and replacement registration scenarios.
 - `AgentManager.CloneAgentAsync` now surfaces persistence failures instead of returning a phantom clone, with a regression covering the failed `RegisterAgentAsync` path.
+- `AgentRegistry` now blocks public cache access on initialization, can recover from a failed first reload via manual `ReloadAgentsAsync`, and preserves immediate `userId` validation on register/update paths.
 
 ## Dependencies and risks
 
 - Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it is deferred until the seam is both needed and worth widening.
-- The review follow-ons touch `Mcp.Net.LLM/Agents/` and `Mcp.Net.WebUi/Infrastructure/`; changes should stay focused on the two remaining issues without broadening into agent-layer redesign (that comes with the `Mcp.Net.Agent` extraction).
+- The last review follow-on touches `Mcp.Net.LLM/Agents/` and `Mcp.Net.LLM/Agents/Stores/`; changes should stay focused on persisted-settings round-trip verification without broadening into agent-layer redesign (that comes with the `Mcp.Net.Agent` extraction).
 - The active lane should not reopen another transcript or message-model rewrite before the review follow-ons land.
 
 ## Open questions

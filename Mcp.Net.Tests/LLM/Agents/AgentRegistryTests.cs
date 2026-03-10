@@ -46,6 +46,39 @@ public class AgentRegistryTests
     }
 
     [Fact]
+    public async Task RegisterAgentAsync_ShouldValidateUserIdBeforeInitialization()
+    {
+        // Arrange
+        var delayedStore = new Mock<IAgentStore>();
+        var releaseSignal = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        delayedStore
+            .Setup(s => s.ListAgentsAsync())
+            .Returns(async () =>
+            {
+                await releaseSignal.Task;
+                return Array.Empty<AgentDefinition>();
+            });
+
+        var registry = new AgentRegistry(delayedStore.Object, _mockLogger.Object);
+        var agent = new AgentDefinition
+        {
+            Name = "Test Agent",
+            Provider = LlmProvider.OpenAI,
+            ModelName = "gpt-5",
+        };
+
+        // Act
+        var registerTask = registry.RegisterAgentAsync(agent, "");
+        var completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(1)));
+
+        // Assert
+        Assert.Same(registerTask, completedTask);
+        await Assert.ThrowsAsync<ArgumentNullException>(() => registerTask);
+    }
+
+    [Fact]
     public async Task RegisterAgentAsync_ShouldSetCreatorAndModifier()
     {
         // Arrange
@@ -91,6 +124,40 @@ public class AgentRegistryTests
         await Assert.ThrowsAsync<ArgumentNullException>(
             () => _registry.UpdateAgentAsync(agent, "")
         );
+    }
+
+    [Fact]
+    public async Task UpdateAgentAsync_ShouldValidateUserIdBeforeInitialization()
+    {
+        // Arrange
+        var delayedStore = new Mock<IAgentStore>();
+        var releaseSignal = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        delayedStore
+            .Setup(s => s.ListAgentsAsync())
+            .Returns(async () =>
+            {
+                await releaseSignal.Task;
+                return Array.Empty<AgentDefinition>();
+            });
+
+        var registry = new AgentRegistry(delayedStore.Object, _mockLogger.Object);
+        var agent = new AgentDefinition
+        {
+            Id = "agent-123",
+            Name = "Test Agent",
+            Provider = LlmProvider.OpenAI,
+            ModelName = "gpt-5",
+        };
+
+        // Act
+        var updateTask = registry.UpdateAgentAsync(agent, "");
+        var completedTask = await Task.WhenAny(updateTask, Task.Delay(TimeSpan.FromSeconds(1)));
+
+        // Assert
+        Assert.Same(updateTask, completedTask);
+        await Assert.ThrowsAsync<ArgumentNullException>(() => updateTask);
     }
 
     [Fact]
@@ -211,6 +278,81 @@ public class AgentRegistryTests
         Assert.True(eventRaised);
         Assert.Equal(updatedAgent.Id, eventAgent?.Id);
         Assert.Equal(updatedAgent.Name, eventAgent?.Name);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ShouldWaitForInitialization()
+    {
+        // Arrange: create a store that delays its ListAgentsAsync response
+        var delayedStore = new Mock<IAgentStore>();
+        var agents = new List<AgentDefinition>
+        {
+            new AgentDefinition { Id = "delayed-1", Name = "Delayed Agent" },
+        };
+
+        var releaseSignal = new TaskCompletionSource<bool>();
+        delayedStore
+            .Setup(s => s.ListAgentsAsync())
+            .Returns(async () =>
+            {
+                await releaseSignal.Task;
+                return agents;
+            });
+
+        // Act: construct registry (starts initialization), then call GetAllAgentsAsync
+        // before the store has responded
+        var registry = new AgentRegistry(delayedStore.Object, _mockLogger.Object);
+        var getAllTask = registry.GetAllAgentsAsync();
+
+        // The task should NOT be completed yet — initialization is still blocked
+        Assert.False(getAllTask.IsCompleted);
+
+        // Release the store
+        releaseSignal.SetResult(true);
+
+        var result = await getAllTask;
+
+        // Assert: the result includes the agent loaded during initialization
+        Assert.Single(result);
+        Assert.Equal("delayed-1", result.First().Id);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ShouldRecoverAfterFailedInitialization()
+    {
+        // Arrange: a store whose first ListAgentsAsync call faults
+        var failingStore = new Mock<IAgentStore>();
+        var callCount = 0;
+        var agents = new List<AgentDefinition>
+        {
+            new AgentDefinition { Id = "recovered-1", Name = "Recovered Agent" },
+        };
+
+        failingStore
+            .Setup(s => s.ListAgentsAsync())
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new IOException("transient store failure");
+                return Task.FromResult<IEnumerable<AgentDefinition>>(agents);
+            });
+
+        // Act: construct registry — first load faults
+        var registry = new AgentRegistry(failingStore.Object, _mockLogger.Object);
+
+        // Public methods should throw because initialization faulted
+        await Assert.ThrowsAsync<IOException>(() => registry.GetAllAgentsAsync());
+
+        // Manual reload succeeds and clears the faulted state
+        await registry.ReloadAgentsAsync();
+
+        // Now public methods should work
+        var result = await registry.GetAllAgentsAsync();
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal("recovered-1", result.First().Id);
     }
 
     [Fact]

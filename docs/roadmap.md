@@ -13,7 +13,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current priorities
 1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Finish the remaining `Mcp.Net.LLM` provider-parity review follow-ons, starting with the agent registry startup race and persisted-settings round-trip verification
+3. Finish the remaining `Mcp.Net.LLM` provider-parity review follow-on: persisted-settings round-trip verification
 
 ## Active Project Roadmaps
 

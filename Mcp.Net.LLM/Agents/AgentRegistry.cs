@@ -14,6 +14,9 @@ public class AgentRegistry : IAgentRegistry
     private Dictionary<string, AgentDefinition> _agentsCache = new();
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
 
+    private readonly object _initializationGate = new();
+    private Task _initializationTask;
+
     public event EventHandler<AgentDefinition>? AgentRegistered;
     public event EventHandler<AgentDefinition>? AgentUpdated;
     public event EventHandler<string>? AgentUnregistered;
@@ -24,12 +27,26 @@ public class AgentRegistry : IAgentRegistry
         _store = store;
         _logger = logger;
 
-        // Initialize the cache
-        _ = ReloadAgentsAsync();
+        // Start loading the cache; public methods await this before accessing state
+        _initializationTask = ReloadAgentsCoreAsync();
+    }
+
+    private Task CurrentInitializationTask()
+    {
+        lock (_initializationGate)
+        {
+            return _initializationTask;
+        }
+    }
+
+    private async Task EnsureInitializedAsync()
+    {
+        await CurrentInitializationTask();
     }
 
     public async Task<IEnumerable<AgentDefinition>> GetAllAgentsAsync()
     {
+        await EnsureInitializedAsync();
         await _cacheLock.WaitAsync();
         try
         {
@@ -43,6 +60,7 @@ public class AgentRegistry : IAgentRegistry
 
     public async Task<AgentDefinition?> GetAgentByIdAsync(string id)
     {
+        await EnsureInitializedAsync();
         await _cacheLock.WaitAsync();
         try
         {
@@ -56,6 +74,7 @@ public class AgentRegistry : IAgentRegistry
 
     public async Task<IEnumerable<AgentDefinition>> GetAgentsByCategoryAsync(AgentCategory category)
     {
+        await EnsureInitializedAsync();
         await _cacheLock.WaitAsync();
         try
         {
@@ -76,6 +95,8 @@ public class AgentRegistry : IAgentRegistry
                 "User ID is required when creating an agent"
             );
         }
+
+        await EnsureInitializedAsync();
 
         if (string.IsNullOrEmpty(agent.Id))
         {
@@ -123,6 +144,8 @@ public class AgentRegistry : IAgentRegistry
             );
         }
 
+        await EnsureInitializedAsync();
+
         // Check if the agent exists
         var existingAgent = await GetAgentByIdAsync(agent.Id);
         if (existingAgent == null)
@@ -166,6 +189,8 @@ public class AgentRegistry : IAgentRegistry
 
     public async Task<bool> UnregisterAgentAsync(string id)
     {
+        await EnsureInitializedAsync();
+
         var success = await _store.DeleteAgentAsync(id);
         if (success)
         {
@@ -187,6 +212,18 @@ public class AgentRegistry : IAgentRegistry
     }
 
     public async Task ReloadAgentsAsync()
+    {
+        Task reloadTask;
+        lock (_initializationGate)
+        {
+            reloadTask = ReloadAgentsCoreAsync();
+            _initializationTask = reloadTask;
+        }
+
+        await reloadTask;
+    }
+
+    private async Task ReloadAgentsCoreAsync()
     {
         _logger.LogInformation("Reloading agents from store");
 
