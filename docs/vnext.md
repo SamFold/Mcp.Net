@@ -18,8 +18,8 @@ Use it to see which component or system tracks are active and where each next sl
 - `Mcp.Net.Client`: `docs/vnext/client.md`
   - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
 - `Mcp.Net.LLM`: `docs/vnext/llm.md`
-  - Current slice: move the agent domain and service layer into `Mcp.Net.Agent` now that the project/reference bootstrap is in place.
-  - Post-parity milestone: extract `Mcp.Net.Agent` (orchestration, agents, sessions, tool registry) from `Mcp.Net.LLM` (pure provider abstraction).
+  - Current slice: move MCP-backed prompt/resource/completion/elicitation helpers out of `Mcp.Net.LLM`.
+  - Post-parity milestone: finish converging `Mcp.Net.LLM` into a pure provider abstraction and keep session/MCP helpers on the agent side.
 
 ## On-Demand Tracks
 

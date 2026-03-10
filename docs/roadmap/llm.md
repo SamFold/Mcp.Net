@@ -2,39 +2,35 @@
 
 ## Current focus
 
-- Complete provider capability parity on top of the new block-based transcript, replay, and streaming-update architecture.
-- Extract `Mcp.Net.Agent` from `Mcp.Net.LLM` now that idempotent tool registration, clone-persistence truthfulness, agent-registry startup ordering, persisted-settings coverage, Anthropic streaming parity, result metadata propagation, and shared option cleanup are in place, without reopening another broad message-model rewrite.
-- Cancellation is explicitly delayed until after the `Mcp.Net.Agent` extraction because the current MCP client/tool-execution path does not support it cleanly and it is not the highest-value pre-extraction slice.
+- Keep the block-based transcript, replay, and streaming-update baseline stable while narrowing `Mcp.Net.LLM` to provider execution concerns.
+- The stateless-executor boundary shift is now live: `ChatSession` owns prompt/tools/transcript state and `Mcp.Net.LLM` executes explicit request snapshots.
+- Move the remaining MCP-facing prompt/resource catalog, completion, and elicitation helpers out of `Mcp.Net.LLM`.
+- Cancellation remains deferred until after the helper re-home because the current MCP client/tool-execution path still does not support it cleanly.
 
 ## Near-term sequence
 
-1. Extract `Mcp.Net.Agent` from `Mcp.Net.LLM` while preserving the current stateful `IChatClient` contract.
-2. Revisit whether `IChatClient` should remain conversation-stateful or move to an explicit context-driven request API after the split.
-3. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the client-state decision.
-4. Revisit session cancellation only after the `Mcp.Net.Agent` extraction and only if the MCP client/tool-execution path then needs a clean contract.
+1. Move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM` and repoint their consumers.
+2. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
+3. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean contract.
 
-## Extraction slice breakdown
+## Completed boundary work
 
-1. Bootstrap `Mcp.Net.Agent` as a new project, add it to `Mcp.Net.sln`, and add references from `Mcp.Net.WebUi` and `Mcp.Net.Tests`.
-2. Move the agent domain/service layer into `Mcp.Net.Agent`: `AgentDefinition`, `AgentCategory`, `IAgentFactory`, `IAgentManager`, `IAgentRegistry`, `IAgentStore`, `AgentFactory`, `AgentManager`, `AgentRegistry`, `DefaultAgentManager`, store implementations, and the DI registration extension.
-3. Move the session/runtime layer into `Mcp.Net.Agent`: `ChatSession`, `IChatSessionEvents`, `ChatSessionEventArgs`, `IChatHistoryManager`, `ChatSessionMetadata`, and the service-provider helpers that create sessions from agents.
-4. Move tool inventory/orchestration into `Mcp.Net.Agent`: `IToolRegistry`, `ToolRegistry`, category metadata helpers, and enablement/catalog support types.
-5. Keep `IChatClient`, provider implementations, replay/history transform types, transcript entry contracts, API-key providers, prompt/resource catalog services, and completion services in `Mcp.Net.LLM`.
-6. Preserve the current Web UI raw-client pass-through (`GetLlmClient`, `GetSystemPrompt`, `SetSystemPrompt`, `ResetConversation`, `RegisterTools`) during the split, then revisit whether to replace it with an agent-facing session API in a later slice.
-7. Re-home the agent/session/tool unit tests to the new boundary and keep the existing Web UI adapter/controller/hub regressions green across the project move.
+1. Extract `Mcp.Net.Agent` and move the agent domain, store, session, tool-registry, and related DI surfaces out of `Mcp.Net.LLM`.
+2. Re-home the agent/session/tool tests to the new boundary and keep the existing Web UI adapter/controller/hub regressions green across the move.
+3. Replace the temporary Web UI raw-client pass-through with explicit `ChatSession` / adapter operations for prompt update, conversation reset, and tool refresh.
+4. Cut `IChatClient` over to a request-based `SendAsync(...)` boundary, make `ChatSession` the single owner of prompt/tool/transcript state, and remove the old MCP tool-model coupling from `Mcp.Net.LLM`.
 
-## Post-parity milestone
+## Next milestone
 
-5. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`.** Now that provider parity, shared option cleanup, idempotent tool registration, persisted-settings coverage, and the review follow-ons are stable, split the project along the provider-abstraction / agent-orchestration boundary (inspired by the pi-mono `pi-ai` / `pi-agent-core` separation) while preserving the current `IChatClient` behavior:
-   - `Mcp.Net.LLM` becomes a pure, reusable LLM provider library: `IChatClient`, provider implementations, options, turn results, content blocks, usage, transcript entry types, replay transformer, provider factory.
-   - `Mcp.Net.Agent` (new project) owns orchestration: `ChatSession`, agent definitions and management, session events, history management, tool registry and categorization, tool execution coordination.
-   - `Mcp.Net.Agent` depends on `Mcp.Net.LLM`; the reverse dependency does not exist.
-   - Handle the current Web UI raw-client pass-through explicitly during the split instead of bundling a separate statefulness redesign into the same slice.
-   - Execute as a single focused PR, not piecemeal.
+1. **Converge `Mcp.Net.LLM` on a pure provider boundary.** Now that the `Mcp.Net.Agent` extraction, Web UI seam cleanup, and request-based `IChatClient` cutover are complete, finish the second half of the separation:
+   - `Mcp.Net.LLM` becomes a pure, reusable provider-execution library: provider request/response contracts, provider implementations, replay/history transforms, and API-key/provider-factory concerns.
+   - `Mcp.Net.Agent` owns conversation state and MCP-backed session helpers: `ChatSession`, prompt/tool/transcript state, prompt/resource catalog, completion lookups, elicitation coordination, and tool execution.
+   - `Mcp.Net.LLM` should no longer depend on MCP client abstractions or MCP tool models once the migration finishes.
+   - Keep the transcript and replay architecture stable while the boundary shifts.
 
 ## Recently completed
 
-- Provider clients now honor `ChatClientOptions.SystemPrompt`, nested tool arguments now preserve structured values through both provider adapters, and provider `System` and `Error` responses now surface through `ChatSession`.
+- Provider request builders now honor shared prompt/options inputs, nested tool arguments preserve structured values through both provider adapters, and provider `System` and `Error` responses surface through `ChatSession`.
 - The transcript architecture has shifted to typed `ChatTranscriptEntry` records with block-based assistant content, provider-agnostic replay/history transforms, transcript persistence rehydration, and Web UI discriminated transcript DTOs.
 - Anthropic reasoning capture and replay are in place, including visibility-aware degradation for missing signatures and captured probe-based regression coverage for same-provider and cross-provider replay cases.
 - `IChatClient`, `ChatSession`, SignalR delivery, and transcript persistence now support durable in-flight assistant updates keyed by stable transcript `Id`.
@@ -42,22 +38,21 @@
 - Anthropic streaming is now wired into that update seam too, including progressive reasoning, text, and tool-use snapshots plus regression coverage proving post-stream tool follow-ups still replay the final assistant turn correctly.
 - `Usage` and `StopReason` now propagate through `ChatClientAssistantTurn`, assistant transcript entries, persistence, and Web UI assistant DTOs for both OpenAI and Anthropic, including streaming final-snapshot metadata updates.
 - `ChatClientOptions` now carries shared `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches provider request builders, Anthropic honors shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned prompt copy.
-- Provider `RegisterTools` is now idempotent (clear-and-replace) on both OpenAI and Anthropic, with regressions for repeated and replacement registration scenarios.
+- Tool replacement scenarios are covered on both OpenAI and Anthropic, and the request-based boundary now keeps the active tool set explicit on each provider call.
 - `AgentManager.CloneAgentAsync` now surfaces persistence failures instead of returning a phantom clone, with a regression covering the failed `RegisterAgentAsync` path.
 - `AgentRegistry` now blocks public cache access on initialization, can recover from a failed first reload via manual `ReloadAgentsAsync`, and preserves immediate `userId` validation on register/update paths.
 - Persisted agent settings now round-trip through the real `FileSystemAgentStore` path into `AgentFactory` `ChatClientOptions`, with regression coverage for deserialized `JsonElement` temperature and `max_tokens` values.
-- The latest extraction review concluded the provider clients can stay stateful for the split because `ChatSession` already treats `IChatClient` as opaque behind replay/load and send methods.
-- That same review identified one caveat: Web UI currently reaches through `ChatSession.GetLlmClient()` to call `GetSystemPrompt`, `SetSystemPrompt`, `ResetConversation`, and `RegisterTools`, so the extraction must preserve or replace that pass-through explicitly.
+- The `Mcp.Net.Agent` extraction is complete, including the Web UI seam cleanup that removed raw `IChatClient` reach-through for prompt update, conversation reset, and tool refresh.
+- The provider-boundary decision is now implemented: `IChatClient` is request-based, `ChatSession` owns prompt/tool/transcript state, provider clients rebuild provider payloads from explicit request snapshots, and the old MCP tool-model coupling has been removed from `Mcp.Net.LLM`.
 
 ## Dependencies and risks
 
-- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the `Mcp.Net.Agent` extraction and only comes back when the seam is both needed and worth widening.
-- The extraction touches `ChatSession`, agent management/store types, replay/history loading, and Web UI session adapters; it should preserve the current `IChatClient` behavior instead of bundling a statefulness redesign into the same slice.
-- The active lane should not reopen another transcript or message-model rewrite while the extraction is still being settled.
+- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the provider-boundary shift and only comes back when the seam is both needed and worth widening.
+- The next boundary slices touch `IChatClient`, `ChatSession`, replay/load behavior, provider bootstrap, and the MCP-backed helper services. They should stay focused on state ownership and project boundaries and avoid reopening another transcript or message-model rewrite.
 
 ## Open questions
 
 - Should the long-term provider streaming API stay snapshot-based or move to a breaking delta-event `IAsyncEnumerable<T>` contract after parity lands?
 - How far should shared `ChatClientOptions` go before provider-specific option types or nested provider option bags are warranted?
-- Should `IChatClient` remain conversation-stateful after the typed output refactor, or should a later slice move it to an explicit context-driven request API?
+- Should the LLM-local tool definition live directly in `Mcp.Net.LLM` or in a thinner shared contract package if other projects need provider access without taking an agent dependency?
 - Where should `ChatTranscriptEntry` live after the agent extraction — in `Mcp.Net.LLM` (current plan, since replay owns the types) or in a shared contracts package?

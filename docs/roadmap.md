@@ -13,7 +13,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current priorities
 1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Start the `Mcp.Net.LLM` extraction lane: split `Mcp.Net.Agent` out of `Mcp.Net.LLM` while preserving the current `IChatClient` boundary
+3. Continue the `Mcp.Net.LLM` post-extraction boundary lane: re-home MCP-backed helper services now that the stateless provider boundary is live
 
 ## Active Project Roadmaps
 
@@ -22,14 +22,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
   - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
 - `Mcp.Net.LLM`: `docs/roadmap/llm.md`
-  - Current focus: extract `Mcp.Net.Agent` first; cancellation stays deferred until after that split.
+  - Current focus: move MCP-backed helper services out of `Mcp.Net.LLM` now that the request-based provider boundary is live; cancellation stays deferred.
 - Cross-cutting: `docs/roadmap/cross-cutting.md`
   - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 
 ## Current cross-project dependencies
 
 - `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is now deferred rather than the next active slice.
-- The completed `Mcp.Net.LLM` metadata, option-cleanup, tool-registration, and review-follow-on slices already touched `Mcp.Net.WebUi`; the `Mcp.Net.Agent` extraction will likely widen or relocate shared `ChatSession` and adapter contracts, especially the current raw-client pass-through, and should be tracked carefully during the split.
+- The completed `Mcp.Net.LLM` metadata, option-cleanup, tool-registration, review-follow-on, `Mcp.Net.Agent` extraction, and raw-client seam cleanup slices already touched `Mcp.Net.WebUi`; the next LLM lane keeps touching `Mcp.Net.WebUi` while prompt/resource/completion/elicitation helpers are re-homed out of `Mcp.Net.LLM`.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 
 ## On-Demand Roadmaps
