@@ -27,9 +27,9 @@ public sealed class AnthropicChatClient : IChatClient
     private readonly IAnthropicMessageClient _messagesClient;
     private readonly string _model;
     private readonly ILogger<AnthropicChatClient> _logger;
-    private string _systemPrompt =
-        "You are a helpful assistant with access to various tools including calculators "
-        + "and Warhammer 40k themed functions. Use these tools when appropriate.";
+    private readonly float _temperature;
+    private readonly int? _maxOutputTokens;
+    private string _systemPrompt = string.Empty;
 
     public AnthropicChatClient(ChatClientOptions options, ILogger<AnthropicChatClient> logger)
         : this(options, logger, new AnthropicMessageClient(options.ApiKey))
@@ -44,8 +44,10 @@ public sealed class AnthropicChatClient : IChatClient
     {
         _logger = logger;
         _messagesClient = messagesClient ?? throw new ArgumentNullException(nameof(messagesClient));
+        _temperature = options.Temperature;
+        _maxOutputTokens = options.MaxOutputTokens;
         _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
-            ? _systemPrompt
+            ? string.Empty
             : options.SystemPrompt;
 
         // Determine the model to use
@@ -64,7 +66,7 @@ public sealed class AnthropicChatClient : IChatClient
             _logger.LogInformation("Using Anthropic model: {Model}", _model);
         }
 
-        _systemMessages.Add(new SystemMessage(_systemPrompt));
+        RefreshSystemMessages();
     }
 
     /// <summary>
@@ -74,10 +76,7 @@ public sealed class AnthropicChatClient : IChatClient
     {
         _logger.LogInformation("Setting system prompt for Anthropic chat client");
         _systemPrompt = systemPrompt;
-
-        // Update the system messages list
-        _systemMessages.Clear();
-        _systemMessages.Add(new SystemMessage(_systemPrompt));
+        RefreshSystemMessages();
     }
 
     /// <summary>
@@ -87,10 +86,7 @@ public sealed class AnthropicChatClient : IChatClient
     {
         _logger.LogInformation("Resetting conversation history for Anthropic chat client");
         _messages.Clear();
-
-        // Re-add system messages as needed
-        _systemMessages.Clear();
-        _systemMessages.Add(new SystemMessage(_systemPrompt));
+        RefreshSystemMessages();
     }
 
     /// <summary>
@@ -188,13 +184,22 @@ public sealed class AnthropicChatClient : IChatClient
         new()
         {
             Model = _model,
-            MaxTokens = 1024,
-            Temperature = 1.0m,
+            MaxTokens = _maxOutputTokens ?? 1024,
+            Temperature = Convert.ToDecimal(_temperature),
             Messages = _messages.ToList(),
             Tools = _anthropicTools.ToList(),
             System = _systemMessages.ToList(),
             Stream = stream,
         };
+
+    private void RefreshSystemMessages()
+    {
+        _systemMessages.Clear();
+        if (!string.IsNullOrWhiteSpace(_systemPrompt))
+        {
+            _systemMessages.Add(new SystemMessage(_systemPrompt));
+        }
+    }
 
     private static ChatUsage? ToChatUsage(Usage? usage)
     {

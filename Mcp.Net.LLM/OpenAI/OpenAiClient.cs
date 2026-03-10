@@ -64,9 +64,7 @@ public sealed class OpenAiChatClient : IChatClient
     private readonly IOpenAiChatCompletionInvoker _completionInvoker;
     private readonly List<ChatMessage> _history = new();
     private readonly string _modelName;
-    private string _systemPrompt =
-        "You are a helpful assistant with access to various tools including calculators "
-        + "and Warhammer 40k themed functions. Use these tools when appropriate.";
+    private string _systemPrompt = string.Empty;
 
     public OpenAiChatClient(ChatClientOptions options, ILogger<OpenAiChatClient> logger)
         : this(options, logger, new OpenAiChatCompletionInvoker())
@@ -83,7 +81,7 @@ public sealed class OpenAiChatClient : IChatClient
         _completionInvoker =
             completionInvoker ?? throw new ArgumentNullException(nameof(completionInvoker));
         _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
-            ? _systemPrompt
+            ? string.Empty
             : options.SystemPrompt;
 
         _modelName = ResolveModelName(options);
@@ -117,6 +115,16 @@ public sealed class OpenAiChatClient : IChatClient
         {
             _logger.LogDebug(
                 "Model {Model} does not support temperature; omitting parameter",
+                modelName
+            );
+        }
+
+        if (options.MaxOutputTokens is > 0)
+        {
+            completionOptions.MaxOutputTokenCount = options.MaxOutputTokens.Value;
+            _logger.LogDebug(
+                "Using max output tokens {MaxOutputTokens} for model {Model}",
+                completionOptions.MaxOutputTokenCount,
                 modelName
             );
         }
@@ -287,7 +295,10 @@ public sealed class OpenAiChatClient : IChatClient
     private void InitializeHistory()
     {
         _history.Clear();
-        _history.Add(new SystemChatMessage(_systemPrompt));
+        if (!string.IsNullOrWhiteSpace(_systemPrompt))
+        {
+            _history.Add(new SystemChatMessage(_systemPrompt));
+        }
     }
 
     public void ResetConversation()
@@ -412,6 +423,17 @@ public sealed class OpenAiChatClient : IChatClient
         _systemPrompt = systemPrompt;
 
         var existingSystemMessage = _history.FirstOrDefault(m => m is SystemChatMessage);
+
+        if (string.IsNullOrWhiteSpace(systemPrompt))
+        {
+            if (existingSystemMessage != null)
+            {
+                _history.Remove(existingSystemMessage);
+            }
+
+            return;
+        }
+
         if (existingSystemMessage != null)
         {
             int index = _history.IndexOf(existingSystemMessage);

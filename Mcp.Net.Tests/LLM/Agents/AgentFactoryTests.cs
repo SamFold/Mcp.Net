@@ -188,7 +188,11 @@ public class AgentFactoryTests
             ModelName = "gpt-5",
             SystemPrompt = "Test prompt",
             ToolIds = new List<string> { "calculator_add" },
-            Parameters = new Dictionary<string, object> { { "temperature", 0.5f } },
+            Parameters = new Dictionary<string, object>
+            {
+                { "temperature", 0.5f },
+                { "max_tokens", 4096 },
+            },
         };
 
         var mockChatClient = new Mock<IChatClient>();
@@ -206,7 +210,10 @@ public class AgentFactoryTests
                 f.Create(
                     It.Is<LlmProvider>(p => p == agent.Provider),
                     It.Is<ChatClientOptions>(o =>
-                        o.Model == agent.ModelName && o.SystemPrompt == agent.SystemPrompt
+                        o.Model == agent.ModelName
+                        && o.SystemPrompt == agent.SystemPrompt
+                        && o.Temperature == 0.5f
+                        && o.MaxOutputTokens == 4096
                     )
                 ),
             Times.Once

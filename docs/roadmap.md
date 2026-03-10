@@ -13,7 +13,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current priorities
 1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Finish the remaining `Mcp.Net.LLM` provider-parity slice, starting with shared option cleanup for max-output tokens, prompt ownership, and Anthropic temperature now that `Usage` and `StopReason` propagation is in place
+3. Finish the remaining `Mcp.Net.LLM` provider-parity slice, starting with session cancellation now that shared option cleanup and result metadata propagation are in place
 
 ## Active Project Roadmaps
 
@@ -22,7 +22,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
   - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
 - `Mcp.Net.LLM`: `docs/roadmap/llm.md`
-  - Current focus: option cleanup first, specifically max-output tokens, prompt ownership, and Anthropic temperature; then cancellation, tool-registration idempotency, and unresolved LLM review follow-ons.
+  - Current focus: session cancellation first, then tool-registration idempotency and unresolved LLM review follow-ons now that shared option cleanup is in place.
 - Cross-cutting: `docs/roadmap/cross-cutting.md`
   - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 

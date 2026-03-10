@@ -225,7 +225,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithoutConfiguredSystemPrompt_ShouldIncludeDefaultPromptInOutboundRequest()
+    public async Task SendMessageAsync_WithoutConfiguredSystemPrompt_ShouldNotInjectPromptInOutboundRequest()
     {
         // Arrange
         var options = new ChatClientOptions
@@ -244,10 +244,31 @@ public class AnthropicChatClientTests
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
-        client.GetSystemPrompt().Should().NotBeNullOrWhiteSpace();
-        JsonSerializer.Serialize(messageClient.LastParameters)
-            .Should()
-            .Contain(client.GetSystemPrompt());
+        client.GetSystemPrompt().Should().BeEmpty();
+        messageClient.LastParameters!.System.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithConfiguredTemperatureAndMaxOutputTokens_ShouldIncludeSharedOptionsInOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+            Temperature = 0.3f,
+            MaxOutputTokens = 777,
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendMessageAsync("hello");
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Temperature.Should().Be(0.3m);
+        messageClient.LastParameters.MaxTokens.Should().Be(777);
     }
 
     [Fact]

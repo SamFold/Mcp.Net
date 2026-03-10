@@ -17,6 +17,8 @@ using Mcp.Net.WebUi.Hubs;
 using Mcp.Net.WebUi.LLM.Factories;
 using Microsoft.AspNetCore.SignalR;
 using Mcp.Net.WebUi.Authentication;
+using System.Globalization;
+using System.Text.Json;
 
 namespace Mcp.Net.WebUi.Chat.Factories;
 
@@ -249,21 +251,33 @@ public class ChatFactory : IChatFactory
         );
 
         // Create client options with parameters from the agent definition
-        var options = new ChatClientOptions { Model = agent.ModelName };
+        var options = new ChatClientOptions
+        {
+            Model = agent.ModelName,
+            SystemPrompt = agent.SystemPrompt,
+        };
 
         // Apply additional parameters from the agent definition
         if (agent.Parameters != null)
         {
             // Temperature
             if (
-                agent.Parameters.TryGetValue("temperature", out var temperatureValue)
-                && temperatureValue is float or double or int
+                TryGetFloatParameter(agent.Parameters, "temperature", out var temperature)
             )
             {
-                options.Temperature = Convert.ToSingle(temperatureValue);
+                options.Temperature = temperature;
                 _logger.LogDebug(
                     "Set temperature to {Temperature} from agent definition",
                     options.Temperature
+                );
+            }
+
+            if (TryGetIntParameter(agent.Parameters, "max_tokens", out var maxOutputTokens))
+            {
+                options.MaxOutputTokens = maxOutputTokens;
+                _logger.LogDebug(
+                    "Set max output tokens to {MaxOutputTokens} from agent definition",
+                    options.MaxOutputTokens
                 );
             }
         }
@@ -312,6 +326,140 @@ public class ChatFactory : IChatFactory
         );
 
         return client;
+    }
+
+    private static bool TryGetFloatParameter(
+        IReadOnlyDictionary<string, object> parameters,
+        string key,
+        out float value
+    )
+    {
+        if (!parameters.TryGetValue(key, out var rawValue))
+        {
+            value = default;
+            return false;
+        }
+
+        switch (rawValue)
+        {
+            case float single:
+                value = single;
+                return true;
+            case double doubleValue:
+                value = Convert.ToSingle(doubleValue);
+                return true;
+            case decimal decimalValue:
+                value = Convert.ToSingle(decimalValue);
+                return true;
+            case int intValue:
+                value = intValue;
+                return true;
+            case long longValue:
+                value = longValue;
+                return true;
+            case string stringValue
+                when float.TryParse(
+                    stringValue,
+                    NumberStyles.Float | NumberStyles.AllowThousands,
+                    CultureInfo.InvariantCulture,
+                    out value
+                ):
+                return true;
+            case JsonElement element:
+                return TryGetFloatFromJsonElement(element, out value);
+            default:
+                value = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetIntParameter(
+        IReadOnlyDictionary<string, object> parameters,
+        string key,
+        out int value
+    )
+    {
+        if (!parameters.TryGetValue(key, out var rawValue))
+        {
+            value = default;
+            return false;
+        }
+
+        switch (rawValue)
+        {
+            case int intValue:
+                value = intValue;
+                return true;
+            case long longValue when longValue is >= int.MinValue and <= int.MaxValue:
+                value = (int)longValue;
+                return true;
+            case double doubleValue
+                when doubleValue >= int.MinValue
+                    && doubleValue <= int.MaxValue
+                    && Math.Abs(doubleValue % 1) < double.Epsilon:
+                value = Convert.ToInt32(doubleValue);
+                return true;
+            case decimal decimalValue
+                when decimalValue >= int.MinValue
+                    && decimalValue <= int.MaxValue
+                    && decimal.Truncate(decimalValue) == decimalValue:
+                value = Convert.ToInt32(decimalValue);
+                return true;
+            case string stringValue
+                when int.TryParse(
+                    stringValue,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out value
+                ):
+                return true;
+            case JsonElement element:
+                return TryGetIntFromJsonElement(element, out value);
+            default:
+                value = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetFloatFromJsonElement(JsonElement element, out float value)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Number when element.TryGetSingle(out value):
+                return true;
+            case JsonValueKind.Number when element.TryGetDouble(out var doubleValue):
+                value = Convert.ToSingle(doubleValue);
+                return true;
+            case JsonValueKind.String:
+                return float.TryParse(
+                    element.GetString(),
+                    NumberStyles.Float | NumberStyles.AllowThousands,
+                    CultureInfo.InvariantCulture,
+                    out value
+                );
+            default:
+                value = default;
+                return false;
+        }
+    }
+
+    private static bool TryGetIntFromJsonElement(JsonElement element, out int value)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Number when element.TryGetInt32(out value):
+                return true;
+            case JsonValueKind.String:
+                return int.TryParse(
+                    element.GetString(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out value
+                );
+            default:
+                value = default;
+                return false;
+        }
     }
 
     /// <summary>

@@ -30,7 +30,7 @@
 - Stable assistant and block identifiers are now considered required behavior for transcript upserts and incremental Web UI updates, not an optional implementation detail.
 - `ChatClientAssistantTurn`, `AssistantChatEntry`, and the Web UI assistant transcript DTOs now carry explicit `Usage` and `StopReason`, and both OpenAI and Anthropic populate that metadata on non-streaming and streaming turns.
 - The streaming slice keeps `ToolExecutionUpdated` and `ThinkingStateChanged` as separate ephemeral UI events for now; only durable assistant content flows through transcript `Added` and `Updated` events.
-- Agent definitions and extensions already expose a `max_tokens` parameter, but `ChatClientOptions` still drops that knob before it reaches provider request builders.
+- `ChatClientOptions` now carries `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches OpenAI and Anthropic request builders, Anthropic honors the shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned demo text.
 - The 2026-03-08 LLM review still has unresolved issues around tool re-registration, agent registry startup behavior, and persisted agent settings.
 - The latest planning review for this lane keeps the next work on option cleanup, cancellation, and review follow-ons on top of the completed provider-streaming and metadata seam; it explicitly does not reopen a broad message-model rewrite first.
 
@@ -42,9 +42,6 @@
 ## Scope
 
 - In scope:
-  - expand `ChatClientOptions` with a small, typed shared surface, starting with max output tokens, so existing agent-level `max_tokens` intent reaches provider request builders instead of being silently dropped
-  - remove adapter-owned development-artifact prompt defaults so blank `SystemPrompt` no longer injects demo copy from the provider clients
-  - make Anthropic honor the shared `Temperature` option instead of hardcoding `1.0m`
   - add session-level cancellation through provider calls and MCP tool execution seams
   - make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions
   - keep the completed OpenAI and Anthropic streaming paths and metadata propagation stable while option and cancellation work land
@@ -57,19 +54,22 @@
 
 ## Current slice
 
-1. Add `MaxOutputTokens` to `ChatClientOptions` and thread existing agent and Web UI `max_tokens` settings into it so OpenAI `ChatCompletionOptions.MaxOutputTokenCount` and Anthropic `MessageParameters.MaxTokens` are driven by the same shared knob.
-2. Make Anthropic `CreateMessageParameters` honor `ChatClientOptions.Temperature`, while keeping OpenAI's existing unsupported-model omission behavior intact.
-3. Remove the adapter-owned Warhammer/demo fallback prompts so blank `SystemPrompt` stops injecting library-owned copy into outbound provider requests; explicit system prompts must continue to pass through unchanged.
-4. Add focused regressions for max-output-token propagation, Anthropic temperature propagation, and absence of injected default prompts without broad provider-helper extraction.
+1. Add session-level cancellation through `ChatSession`, including any required MCP client seam changes so user-initiated cancellation can stop both provider requests and in-flight tool execution.
+2. Keep the cancellation slice narrow: update the MCP client contract, thread `CancellationToken` through the tool-execution path, and add focused regressions instead of reopening the streaming/message surface.
+3. Re-run the focused LLM and client/server integration slices needed to prove cancellation works across provider calls and MCP tool execution boundaries.
 
 ## Next slices
 
-1. Add session-level cancellation through `ChatSession`, including any required MCP client seam changes for tool execution.
-2. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
-3. Resolve the remaining 2026-03-08 LLM review follow-ons around agent registry startup behavior, persisted agent settings, and clone-persistence truthfulness once the provider-parity lane is stable, or earlier if those become release blockers.
-4. Revisit whether `IChatClient` should expose a breaking `IAsyncEnumerable<T>` stream surface once provider parity and metadata are stable.
-5. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay and streaming behavior have settled.
-6. Revisit a typed activity DTO family only if the existing ephemeral `ToolExecutionUpdated` and `ThinkingStateChanged` events prove too weak once provider streaming is live.
+1. Make provider `RegisterTools` behavior idempotent so refreshes cannot duplicate model-facing tool definitions.
+2. Resolve the remaining 2026-03-08 LLM review follow-ons around agent registry startup behavior, persisted agent settings, and clone-persistence truthfulness once the provider-parity lane is stable, or earlier if those become release blockers.
+3. Revisit whether `IChatClient` should expose a breaking `IAsyncEnumerable<T>` stream surface once provider parity, metadata, and cancellation are stable.
+4. Revisit whether `IChatClient` should remain stateful or move to an explicit context-driven request API once replay and streaming behavior have settled.
+5. Revisit a typed activity DTO family only if the existing ephemeral `ToolExecutionUpdated` and `ThinkingStateChanged` events prove too weak once provider streaming is live.
+6. **Extract `Mcp.Net.Agent` from `Mcp.Net.LLM`** once the provider-parity lane (options, cancellation, idempotent tools, review follow-ons) is stable. The split follows the pi-mono `pi-ai` / `pi-agent-core` boundary:
+   - `Mcp.Net.LLM` becomes a pure provider abstraction: `IChatClient`, provider implementations, `ChatClientOptions`, `ChatClientTurnResult`, `AssistantContentBlock`, `ChatUsage`, `ChatTranscriptEntry` (shared contract for replay), replay transformer, provider factory.
+   - `Mcp.Net.Agent` owns orchestration and session management: `ChatSession`, `AgentDefinition`, `IAgentManager`, `IAgentFactory`, `IAgentRegistry`, `IAgentStore`, `IChatSessionEvents`, event args, `IChatHistoryManager`, session metadata, `IToolRegistry`, tool categorization, tool execution coordination.
+   - `Mcp.Net.Agent` depends on `Mcp.Net.LLM`, not the reverse.
+   - Do this as a single focused PR once API surfaces are settled, not piecemeal during active slices.
 
 ## Open decisions
 
@@ -77,16 +77,16 @@
 - How far should shared `ChatClientOptions` go before provider-specific option types or nested provider option bags are warranted?
 - What cancellation seam should the MCP client expose so `ChatSession` can cancel tool execution without inventing provider-specific escape hatches? Note: `IMcpClient.CallTool` currently accepts no `CancellationToken`, so session cancellation requires an MCP client contract change, not just a `ChatSession` parameter addition.
 - Should `IChatClient` remain conversation-stateful after the typed output refactor, or should a later slice move it to an explicit context-driven request API?
+- Where should `ChatTranscriptEntry` live after the `Mcp.Net.Agent` extraction — it is the shared contract between replay (provider layer) and session persistence (agent layer)? Current plan keeps it in `Mcp.Net.LLM` since replay owns the type definitions.
 
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Add regressions that existing agent/Web UI `max_tokens` intent reaches `ChatClientOptions` and both provider request builders.
-- Add regressions that explicit system prompts still pass through while blank `SystemPrompt` no longer injects adapter-owned demo text.
-- Add regressions that Anthropic request construction uses `ChatClientOptions.Temperature` and `MaxOutputTokens`.
+- Add focused regressions that cancellation propagates from `ChatSession` into provider requests and MCP tool execution.
+- Add focused regressions that cancellation during tool execution does not corrupt transcript state or append phantom `ToolResult` entries.
+- Add integration coverage for the required `IMcpClient` cancellation seam once that contract changes.
 - Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
 - Add regressions for stable transcript and block identifiers across partial and final assistant updates.
 - Add regressions for tool execution appending `ToolResult` entries instead of mutating transcript state.
 - Add regressions for provider failures surfacing as `Error` entries instead of assistant text.
-- Add regressions for `ChatClientOptions` propagation and provider default cleanup once those fields land.
 - Add replay/history transform coverage for same-model preservation and degraded cross-model/provider replay.

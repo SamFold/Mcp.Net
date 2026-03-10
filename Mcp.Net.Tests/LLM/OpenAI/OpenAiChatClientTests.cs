@@ -94,7 +94,7 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithoutConfiguredSystemPrompt_ShouldIncludeDefaultPromptInFirstOutboundRequest()
+    public async Task SendMessageAsync_WithoutConfiguredSystemPrompt_ShouldNotInjectPromptInFirstOutboundRequest()
     {
         // Arrange
         var options = new ChatClientOptions
@@ -115,9 +115,33 @@ public class OpenAiChatClientTests
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
-        completionInvoker.CapturedMessages.Should().HaveCount(2);
-        ExtractSystemPrompt(completionInvoker.CapturedMessages!).Should().Be(client.GetSystemPrompt());
-        client.GetSystemPrompt().Should().NotBeNullOrWhiteSpace();
+        completionInvoker.CapturedMessages.Should().HaveCount(1);
+        completionInvoker.CapturedMessages![0].Should().BeOfType<UserChatMessage>();
+        client.GetSystemPrompt().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithConfiguredMaxOutputTokens_ShouldSetCompletionOption()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+            MaxOutputTokens = 321,
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendMessageAsync("hello");
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.MaxOutputTokenCount.Should().Be(321);
     }
 
     [Fact]
@@ -436,6 +460,7 @@ public class OpenAiChatClientTests
     private sealed class CapturingChatCompletionInvoker : IOpenAiChatCompletionInvoker
     {
         public IReadOnlyList<ChatMessage>? CapturedMessages { get; private set; }
+        public ChatCompletionOptions? CapturedOptions { get; private set; }
 
         public ChatCompletion CompleteChat(
             ChatClient client,
@@ -444,6 +469,7 @@ public class OpenAiChatClientTests
         )
         {
             CapturedMessages = messages.ToList();
+            CapturedOptions = options;
             throw new InvalidOperationException("Capture complete");
         }
 
@@ -455,6 +481,7 @@ public class OpenAiChatClientTests
         )
         {
             CapturedMessages = messages.ToList();
+            CapturedOptions = options;
             throw new InvalidOperationException("Streaming capture not expected");
         }
     }
@@ -492,6 +519,7 @@ public class OpenAiChatClientTests
         }
 
         public IReadOnlyList<ChatMessage>? CapturedMessages { get; private set; }
+        public ChatCompletionOptions? CapturedOptions { get; private set; }
 
         public bool StreamingCalled { get; private set; }
 
@@ -502,6 +530,7 @@ public class OpenAiChatClientTests
         )
         {
             CapturedMessages = messages.ToList();
+            CapturedOptions = options;
             throw new InvalidOperationException("Non-streaming completion not expected");
         }
 
@@ -514,6 +543,7 @@ public class OpenAiChatClientTests
         {
             StreamingCalled = true;
             CapturedMessages = messages.ToList();
+            CapturedOptions = options;
 
             foreach (var update in _updates)
             {

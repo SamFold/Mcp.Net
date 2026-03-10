@@ -6,12 +6,14 @@ using Mcp.Net.Client.Elicitation;
 using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.LLM.Elicitation;
+using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat.Factories;
 using Mcp.Net.WebUi.Chat.Interfaces;
 using Mcp.Net.WebUi.Hubs;
+using Mcp.Net.WebUi.LLM.Clients;
 using Mcp.Net.WebUi.LLM.Factories;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
@@ -46,6 +48,33 @@ public class ChatFactoryTests
         var postRelease = await coordinator.HandleAsync(context, CancellationToken.None);
         postRelease.Action.Should().Be("decline");
         coordinators.ContainsKey(sessionId).Should().BeFalse();
+    }
+
+    [Fact]
+    public void CreateClientFromAgent_ShouldPropagateTemperatureAndMaxOutputTokens()
+    {
+        var factory = CreateChatFactory();
+        var agent = new AgentDefinition
+        {
+            Id = "agent-1",
+            Name = "Test agent",
+            Provider = LlmProvider.OpenAI,
+            ModelName = "gpt-5",
+            SystemPrompt = "Be concise.",
+            Parameters = new Dictionary<string, object>
+            {
+                ["temperature"] = 0.25f,
+                ["max_tokens"] = 1536,
+            },
+        };
+
+        var client = InvokeCreateClientFromAgent(factory, "session-1", agent);
+        var options = GetClientOptions(client);
+
+        options.Model.Should().Be("gpt-5");
+        options.Temperature.Should().Be(0.25f);
+        options.MaxOutputTokens.Should().Be(1536);
+        client.GetSystemPrompt().Should().Be(agent.SystemPrompt);
     }
 
     private static ChatFactory CreateChatFactory()
@@ -96,6 +125,31 @@ public class ChatFactoryTests
         );
         field.Should().NotBeNull();
         return (ConcurrentDictionary<string, ElicitationCoordinator>)field!.GetValue(factory)!;
+    }
+
+    private static StubChatClient InvokeCreateClientFromAgent(
+        ChatFactory factory,
+        string sessionId,
+        AgentDefinition agent
+    )
+    {
+        var method = typeof(ChatFactory).GetMethod(
+            "CreateClientFromAgent",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        method.Should().NotBeNull();
+
+        return method!.Invoke(factory, new object[] { sessionId, agent }).Should().BeOfType<StubChatClient>().Subject;
+    }
+
+    private static ChatClientOptions GetClientOptions(StubChatClient client)
+    {
+        var field = typeof(StubChatClient).GetField(
+            "_options",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        field.Should().NotBeNull();
+        return (ChatClientOptions)field!.GetValue(client)!;
     }
 
     private static ElicitationRequestContext CreateSampleContext()
