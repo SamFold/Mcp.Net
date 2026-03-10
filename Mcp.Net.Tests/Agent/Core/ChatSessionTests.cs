@@ -26,8 +26,12 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.SystemPrompt == string.Empty
+                    && request.Tools.Count == 0
+                    && request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
@@ -64,8 +68,10 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
@@ -125,19 +131,21 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
             .Returns(
                 (
-                    string userMessage,
+                    ChatClientRequest request,
                     IProgress<ChatClientAssistantTurn>? assistantTurnUpdates,
                     CancellationToken cancellationToken
                 ) =>
                 {
-                    userMessage.Should().Be("Hi there");
+                    request.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("Hi there");
                     cancellationToken.Should().Be(CancellationToken.None);
                     assistantTurnUpdates!
                         .Report(
@@ -210,8 +218,10 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
@@ -259,8 +269,8 @@ public class ChatSessionTests
         );
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Please add numbers",
+            .SetupSequence(c => c.SendAsync(
+                It.IsAny<ChatClientRequest>(),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
@@ -271,14 +281,7 @@ public class ChatSessionTests
                     "gpt-5",
                     new AssistantContentBlock[] { toolInvocationBlock }
                 )
-            );
-
-        llmClient
-            .Setup(c => c.SendToolResultsAsync(
-                It.IsAny<IEnumerable<ToolInvocationResult>>(),
-                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
-                It.IsAny<CancellationToken>()
-            ))
+            )
             .ReturnsAsync(
                 new ChatClientAssistantTurn(
                     "turn-2",
@@ -343,8 +346,10 @@ public class ChatSessionTests
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
@@ -373,12 +378,11 @@ public class ChatSessionTests
     }
 
     [Fact]
-    public async Task LoadTranscriptAsync_ShouldPopulateTranscriptAndReplayClientHistory()
+    public async Task LoadTranscriptAsync_ShouldPopulateTranscriptWithoutCallingProvider()
     {
         var llmClient = new Mock<IChatClient>();
         var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
-        var replayTransformer = new Mock<IChatTranscriptReplayTransformer>();
 
         var transcript = new ChatTranscriptEntry[]
         {
@@ -393,28 +397,162 @@ public class ChatSessionTests
             ),
         };
 
-        var replayTarget = new ReplayTarget("openai", "gpt-5");
-        var replayTranscript = new ProviderReplayTranscript(replayTarget, transcript);
-
-        llmClient.Setup(c => c.GetReplayTarget()).Returns(replayTarget);
-        replayTransformer
-            .Setup(t => t.Transform(
-                It.Is<IReadOnlyList<ChatTranscriptEntry>>(entries => entries.SequenceEqual(transcript)),
-                replayTarget
-            ))
-            .Returns(replayTranscript);
-
         var session = new ChatSession(
             llmClient.Object,
             mcpClient.Object,
             toolRegistry.Object,
-            NullLogger<ChatSession>.Instance,
-            replayTransformer.Object
+            NullLogger<ChatSession>.Instance
         );
 
         await session.LoadTranscriptAsync(transcript);
 
         session.Transcript.Should().Equal(transcript);
-        llmClient.Verify(c => c.LoadReplayTranscript(replayTranscript), Times.Once);
+        llmClient.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void SetSystemPrompt_ShouldUpdateSessionState()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        session.SetSystemPrompt("Be concise.");
+
+        session.GetSystemPrompt().Should().Be("Be concise.");
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromSessionState()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var registeredTool = new Tool
+        {
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+
+        ChatClientRequest? capturedRequest = null;
+        llmClient
+            .Setup(c => c.SendAsync(
+                It.IsAny<ChatClientRequest>(),
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
+            .Callback<ChatClientRequest, IProgress<ChatClientAssistantTurn>?, CancellationToken>(
+                (request, _, _) => capturedRequest = request
+            )
+            .ReturnsAsync(
+                new ChatClientAssistantTurn(
+                    "turn-1",
+                    "openai",
+                    "gpt-5",
+                    new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                )
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        session.SetSystemPrompt("Be concise.");
+        session.RegisterTools(new[] { registeredTool });
+        await session.SendUserMessageAsync("hello");
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.SystemPrompt.Should().Be("Be concise.");
+        capturedRequest.Tools.Should().ContainSingle();
+        capturedRequest.Tools[0].Name.Should().Be("search");
+        capturedRequest.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task ResetConversation_ShouldClearTranscriptWithoutCallingProvider()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-1), "hello", "turn-1"),
+        };
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        await session.LoadTranscriptAsync(transcript);
+
+        session.ResetConversation();
+
+        session.Transcript.Should().BeEmpty();
+        llmClient.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task RegisterTools_ShouldAffectNextProviderRequest()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+        var tools = new[]
+        {
+            new Tool
+            {
+                Name = "calculator_add",
+                Description = "Adds numbers",
+                InputSchema = schemaDocument.RootElement.Clone(),
+            },
+        };
+
+        ChatClientRequest? capturedRequest = null;
+        llmClient
+            .Setup(c => c.SendAsync(
+                It.IsAny<ChatClientRequest>(),
+                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
+                It.IsAny<CancellationToken>()
+            ))
+            .Callback<ChatClientRequest, IProgress<ChatClientAssistantTurn>?, CancellationToken>(
+                (request, _, _) => capturedRequest = request
+            )
+            .ReturnsAsync(
+                new ChatClientAssistantTurn(
+                    "turn-1",
+                    "openai",
+                    "gpt-5",
+                    new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                )
+            );
+
+        session.RegisterTools(tools);
+        await session.SendUserMessageAsync("hello");
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Tools.Should().ContainSingle();
+        capturedRequest.Tools[0].Name.Should().Be("calculator_add");
     }
 }

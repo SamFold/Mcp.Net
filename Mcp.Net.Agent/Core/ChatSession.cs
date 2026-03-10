@@ -2,9 +2,9 @@ using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.Client.Interfaces;
+using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
-using Mcp.Net.LLM.Replay;
 using Mcp.Net.Agent.Tools;
 using Microsoft.Extensions.Logging;
 
@@ -21,9 +21,10 @@ public class ChatSession : IChatSessionEvents
     private readonly IMcpClient _mcpClient;
     private readonly IToolRegistry _toolRegistry;
     private readonly ILogger<ChatSession> _logger;
-    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly List<ChatTranscriptEntry> _transcript = new();
+    private readonly List<Tool> _registeredTools = new();
     private string? _sessionId;
+    private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
     private DateTime _lastActivityAt;
 
@@ -53,11 +54,6 @@ public class ChatSession : IChatSessionEvents
     public event EventHandler<ToolCallActivityChangedEventArgs>? ToolCallActivityChanged;
 
     /// <summary>
-    /// Gets the underlying LLM client
-    /// </summary>
-    public IChatClient GetLlmClient() => _llmClient;
-
-    /// <summary>
     /// Gets or sets the session ID
     /// </summary>
     public string? SessionId
@@ -70,15 +66,13 @@ public class ChatSession : IChatSessionEvents
         IChatClient llmClient,
         IMcpClient mcpClient,
         IToolRegistry toolRegistry,
-        ILogger<ChatSession> logger,
-        IChatTranscriptReplayTransformer? replayTransformer = null
+        ILogger<ChatSession> logger
     )
     {
         _llmClient = llmClient;
         _mcpClient = mcpClient;
         _toolRegistry = toolRegistry;
         _logger = logger;
-        _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
         _createdAt = DateTime.UtcNow;
         _lastActivityAt = _createdAt;
     }
@@ -100,6 +94,7 @@ public class ChatSession : IChatSessionEvents
         {
             AgentDefinition = agent,
         };
+        session.ApplyAgentConfiguration(agent);
 
         return session;
     }
@@ -124,6 +119,7 @@ public class ChatSession : IChatSessionEvents
         {
             AgentDefinition = agent,
         };
+        session.ApplyAgentConfiguration(agent);
 
         return session;
     }
@@ -132,6 +128,40 @@ public class ChatSession : IChatSessionEvents
     {
         SessionStarted?.Invoke(this, EventArgs.Empty);
         _logger.LogDebug("Chat session started");
+    }
+
+    /// <summary>
+    /// Clears the in-memory transcript for the current conversation.
+    /// </summary>
+    public void ResetConversation()
+    {
+        _transcript.Clear();
+        _createdAt = DateTime.UtcNow;
+        _lastActivityAt = _createdAt;
+    }
+
+    /// <summary>
+    /// Updates the system prompt for the current provider session.
+    /// </summary>
+    public void SetSystemPrompt(string systemPrompt)
+    {
+        _systemPrompt = systemPrompt ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Returns the current provider system prompt.
+    /// </summary>
+    public string GetSystemPrompt() => _systemPrompt;
+
+    /// <summary>
+    /// Replaces the provider-facing tool set for the session.
+    /// </summary>
+    public void RegisterTools(IEnumerable<Tool> tools)
+    {
+        ArgumentNullException.ThrowIfNull(tools);
+
+        _registeredTools.Clear();
+        _registeredTools.AddRange(tools);
     }
 
     public Task LoadTranscriptAsync(IReadOnlyList<ChatTranscriptEntry> transcript)
@@ -146,12 +176,6 @@ public class ChatSession : IChatSessionEvents
             _createdAt = _transcript[0].Timestamp.UtcDateTime;
             _lastActivityAt = _transcript[^1].Timestamp.UtcDateTime;
         }
-
-        var replayTranscript = _replayTransformer.Transform(
-            _transcript,
-            _llmClient.GetReplayTarget()
-        );
-        _llmClient.LoadReplayTranscript(replayTranscript);
 
         return Task.CompletedTask;
     }
@@ -172,7 +196,7 @@ public class ChatSession : IChatSessionEvents
         );
 
         var nextTurn = await RequestProviderAsync(
-            () => _llmClient.SendMessageAsync(message, assistantTurnUpdates),
+            () => _llmClient.SendAsync(BuildRequest(), assistantTurnUpdates),
             turnId
         );
 
@@ -186,9 +210,9 @@ public class ChatSession : IChatSessionEvents
                 break;
             }
 
-            var toolResults = await ExecuteToolCallsAsync(toolCalls, turnId);
+            await ExecuteToolCallsAsync(toolCalls, turnId);
             nextTurn = await RequestProviderAsync(
-                () => _llmClient.SendToolResultsAsync(toolResults, assistantTurnUpdates),
+                () => _llmClient.SendAsync(BuildRequest(), assistantTurnUpdates),
                 turnId
             );
         }
@@ -397,6 +421,29 @@ public class ChatSession : IChatSessionEvents
         _transcript.Add(entry);
         TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
+
+    private void ApplyAgentConfiguration(AgentDefinition agent)
+    {
+        SetSystemPrompt(agent.SystemPrompt);
+        var enabledTools = _toolRegistry.EnabledTools ?? Array.Empty<Tool>();
+        var allTools = _toolRegistry.AllTools ?? Array.Empty<Tool>();
+
+        if (agent.ToolIds.Count == 0)
+        {
+            RegisterTools(enabledTools);
+            return;
+        }
+
+        var selectedTools = allTools.Where(tool => agent.ToolIds.Contains(tool.Name)).ToArray();
+        RegisterTools(selectedTools);
+    }
+
+    private ChatClientRequest BuildRequest() =>
+        new(
+            _systemPrompt,
+            _transcript,
+            _registeredTools.Select(tool => new ChatClientTool(tool.Name, tool.Description, tool.InputSchema)).ToArray()
+        );
 
     private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
     {

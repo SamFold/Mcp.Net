@@ -33,19 +33,21 @@ public class SignalRChatAdapterTests
         var completionService = new Mock<ICompletionService>();
 
         llmClient
-            .Setup(c => c.SendMessageAsync(
-                "Hi there",
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
+                ),
                 It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
             .Returns(
                 (
-                    string userMessage,
+                    ChatClientRequest request,
                     IProgress<ChatClientAssistantTurn>? assistantTurnUpdates,
                     CancellationToken cancellationToken
                 ) =>
                 {
-                    userMessage.Should().Be("Hi there");
+                    request.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("Hi there");
                     cancellationToken.Should().Be(CancellationToken.None);
                     assistantTurnUpdates!
                         .Report(

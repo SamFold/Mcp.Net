@@ -10,7 +10,6 @@ using Anthropic.SDK.Messaging;
 using FluentAssertions;
 using Mcp.Net.LLM.Anthropic;
 using Mcp.Net.LLM.Models;
-using McpTool = Mcp.Net.Core.Models.Tools.Tool;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -41,7 +40,9 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        var response = await client.SendMessageAsync("Count r characters");
+        var response = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("Count r characters"))
+        );
 
         response.Should().BeOfType<ChatClientAssistantTurn>();
         var assistantTurn = (ChatClientAssistantTurn)response;
@@ -84,7 +85,7 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var response = await client.SendMessageAsync("hi");
+        var response = await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hi")));
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -100,7 +101,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task RegisterTools_CalledTwice_ShouldNotDuplicateToolsInOutboundRequest()
+    public async Task SendAsync_ShouldUseOnlyRequestToolsInOutboundRequest()
     {
         var options = new ChatClientOptions
         {
@@ -115,24 +116,11 @@ public class AnthropicChatClientTests
 
         var tools = new[]
         {
-            new McpTool
-            {
-                Name = "search",
-                Description = "Search tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
-            new McpTool
-            {
-                Name = "calculate",
-                Description = "Calculator",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
         };
 
-        client.RegisterTools(tools);
-        client.RegisterTools(tools);
-
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), tools));
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Tools.Should().HaveCount(2);
@@ -143,7 +131,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task RegisterTools_WithDifferentSets_ShouldReplaceNotAppend()
+    public async Task SendAsync_TwoCallsWithDifferentToolSets_ShouldNotRetainPriorToolState()
     {
         var options = new ChatClientOptions
         {
@@ -158,33 +146,16 @@ public class AnthropicChatClientTests
 
         var firstSet = new[]
         {
-            new McpTool
-            {
-                Name = "search",
-                Description = "Search tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("search", "Search tool"),
         };
         var secondSet = new[]
         {
-            new McpTool
-            {
-                Name = "calculate",
-                Description = "Calculator",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
-            new McpTool
-            {
-                Name = "weather",
-                Description = "Weather tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("calculate", "Calculator"),
+            CreateTool("weather", "Weather tool"),
         };
 
-        client.RegisterTools(firstSet);
-        client.RegisterTools(secondSet);
-
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("first"), firstSet));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), secondSet));
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Tools.Should().HaveCount(2);
@@ -215,7 +186,9 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var response = await client.SendMessageAsync("find weather");
+        var response = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("find weather"))
+        );
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -259,7 +232,9 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var response = await client.SendMessageAsync("find nested arguments");
+        var response = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("find nested arguments"))
+        );
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -287,7 +262,9 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var response = await client.SendMessageAsync("hello");
+        var response = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("hello"))
+        );
 
         // Assert
         response.Should().BeOfType<ChatClientFailure>();
@@ -313,7 +290,7 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
@@ -336,11 +313,10 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
-        client.GetSystemPrompt().Should().BeEmpty();
         messageClient.LastParameters!.System.Should().BeEmpty();
     }
 
@@ -360,7 +336,7 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Temperature.Should().Be(0.3m);
@@ -368,7 +344,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task LoadReplayTranscript_ShouldIncludePriorHistoryInOutboundRequest()
+    public async Task SendAsync_ShouldIncludePriorHistoryInOutboundRequest()
     {
         var options = new ChatClientOptions
         {
@@ -381,9 +357,9 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        client.LoadReplayTranscript(
-            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
-                client.GetReplayTarget(),
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-3), "Use the tool", "turn-1"),
@@ -421,11 +397,10 @@ public class AnthropicChatClientTests
                         false,
                         "turn-1"
                     ),
+                    new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
         );
-
-        await client.SendMessageAsync("continue");
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Messages.Should().HaveCount(4);
@@ -454,7 +429,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task LoadReplayTranscript_VisibleReasoningWithoutReplayToken_ShouldReplayAsTextContent()
+    public async Task SendAsync_VisibleReasoningWithoutReplayToken_ShouldReplayAsTextContent()
     {
         var options = new ChatClientOptions
         {
@@ -467,9 +442,9 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        client.LoadReplayTranscript(
-            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
-                client.GetReplayTarget(),
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "Count r characters", "turn-1"),
@@ -489,11 +464,10 @@ public class AnthropicChatClientTests
                         "anthropic",
                         "claude-sonnet-4-6"
                     ),
+                    new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
         );
-
-        await client.SendMessageAsync("continue");
 
         var assistantContent = messageClient.LastParameters!.Messages[1].Content;
         assistantContent.Should().HaveCount(2);
@@ -535,8 +509,8 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendMessageAsync(
-            "Count r characters",
+        var result = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("Count r characters")),
             new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
         );
 
@@ -586,7 +560,7 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldAccumulateToolUseSnapshotsAndPersistHistory()
+    public async Task SendAsync_WithAssistantTurnUpdates_ShouldAccumulateToolUseSnapshots()
     {
         var options = new ChatClientOptions
         {
@@ -617,8 +591,8 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         var streamedTurns = new List<ChatClientAssistantTurn>();
-        var streamResult = await client.SendMessageAsync(
-            "find weather",
+        var streamResult = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("find weather")),
             new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
         );
 
@@ -657,47 +631,6 @@ public class AnthropicChatClientTests
         assistantTurn.StopReason.Should().Be("tool_use");
         assistantTurn.Usage.Should().BeEquivalentTo(finalStreamedTurn.Usage);
         assistantTurn.Blocks[1].Id.Should().Be(finalStreamedTurn.Blocks[1].Id);
-
-        await client.SendToolResultsAsync(
-            [
-                new ToolInvocationResult(
-                    "toolu_1",
-                    "search",
-                    false,
-                    ["sunny"],
-                    structured: null,
-                    resourceLinks: Array.Empty<ToolResultResourceLink>(),
-                    metadata: null
-                ),
-            ]
-        );
-
-        messageClient.LastParameters.Should().NotBeNull();
-        messageClient.LastParameters!.Messages.Should().HaveCount(3);
-        messageClient.LastParameters.Messages[1].Role.Should().Be(RoleType.Assistant);
-        messageClient.LastParameters.Messages[1]
-            .Content
-            .OfType<TextContent>()
-            .Select(content => content.Text)
-            .Should()
-            .ContainSingle()
-            .Which.Should().Be("Checking");
-        messageClient.LastParameters.Messages[1]
-            .Content
-            .OfType<ToolUseContent>()
-            .Should()
-            .ContainSingle()
-            .Which.Id.Should()
-            .Be("toolu_1");
-        messageClient.LastParameters.Messages[2].Role.Should().Be(RoleType.User);
-        messageClient.LastParameters.Messages[2]
-            .Content
-            .Should()
-            .ContainSingle()
-            .Which.Should()
-            .BeOfType<ToolResultContent>()
-            .Which.ToolUseId.Should()
-            .Be("toolu_1");
     }
 
     private sealed record AnthropicReasoningFixture(string Thinking, string Signature, string Text)
@@ -736,6 +669,28 @@ public class AnthropicChatClientTests
         }
 
         throw new InvalidOperationException("Could not locate the repository root.");
+    }
+
+    private static ChatClientRequest CreateRequest(
+        string? systemPrompt = null,
+        IEnumerable<ChatTranscriptEntry>? transcript = null,
+        IEnumerable<ChatClientTool>? tools = null
+    ) =>
+        new(
+            systemPrompt ?? string.Empty,
+            transcript?.ToArray() ?? Array.Empty<ChatTranscriptEntry>(),
+            tools?.ToArray() ?? Array.Empty<ChatClientTool>()
+        );
+
+    private static ChatTranscriptEntry[] CreateUserTranscript(string userMessage) =>
+        [
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow, userMessage, "turn-1"),
+        ];
+
+    private static ChatClientTool CreateTool(string name, string description)
+    {
+        using var schemaDocument = JsonDocument.Parse("{}");
+        return new ChatClientTool(name, description, schemaDocument.RootElement.Clone());
     }
 
     private static MessageResponse CreateContentBlockStart(

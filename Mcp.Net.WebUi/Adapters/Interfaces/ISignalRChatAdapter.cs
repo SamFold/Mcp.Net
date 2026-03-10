@@ -6,7 +6,6 @@ using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Prompts;
 using Mcp.Net.Core.Models.Resources;
 using Mcp.Net.Agent.Models;
-using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.SignalR;
 using Mcp.Net.WebUi.DTOs;
@@ -39,14 +38,19 @@ public interface ISignalRChatAdapter : IDisposable
     void ResetConversation();
 
     /// <summary>
+    /// Returns the current system prompt for the active session.
+    /// </summary>
+    string GetSystemPrompt();
+
+    /// <summary>
+    /// Updates the current system prompt for the active session.
+    /// </summary>
+    void SetSystemPrompt(string systemPrompt);
+
+    /// <summary>
     /// Load conversation history from stored messages
     /// </summary>
     Task LoadHistoryAsync(IReadOnlyList<ChatTranscriptEntry> transcript);
-
-    /// <summary>
-    /// Get the LLM client used by this session
-    /// </summary>
-    IChatClient? GetLlmClient();
 
     /// <summary>
     /// Notify clients that session metadata has been updated

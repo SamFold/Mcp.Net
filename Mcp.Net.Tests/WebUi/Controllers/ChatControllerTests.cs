@@ -69,4 +69,38 @@ public class ChatControllerTests
 
         result.Should().BeOfType<BadRequestObjectResult>();
     }
+
+    [Fact]
+    public async Task SetSystemPrompt_ShouldUpdateExistingAdapterThroughAdapterSeam()
+    {
+        var repository = new Mock<IChatRepository>();
+        repository
+            .Setup(r => r.SetSystemPromptAsync("session-1", "Be concise."))
+            .Returns(Task.CompletedTask);
+
+        var adapter = new Mock<ISignalRChatAdapter>();
+        adapter.SetupSequence(a => a.GetSystemPrompt()).Returns("Before").Returns("Be concise.");
+
+        var adapterManager = new Mock<IChatAdapterManager>();
+        adapterManager
+            .Setup(m => m.GetOrCreateAdapterAsync("session-1", It.IsAny<Func<string, Task<ISignalRChatAdapter>>>() ))
+            .ReturnsAsync(adapter.Object);
+
+        var controller = new ChatController(
+            NullLogger<ChatController>.Instance,
+            repository.Object,
+            new Mock<IChatFactory>().Object,
+            new Mock<ITitleGenerationService>().Object,
+            adapterManager.Object
+        );
+
+        var result = await controller.SetSystemPrompt(
+            "session-1",
+            new SystemPromptDto { Prompt = "Be concise." }
+        );
+
+        result.Should().BeOfType<OkResult>();
+        adapter.Verify(a => a.SetSystemPrompt("Be concise."), Times.Once);
+        adapterManager.Verify(m => m.MarkAdapterAsActive("session-1"), Times.Once);
+    }
 }

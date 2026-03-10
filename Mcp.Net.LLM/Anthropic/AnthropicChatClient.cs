@@ -17,38 +17,34 @@ namespace Mcp.Net.LLM.Anthropic;
 
 /// <summary>
 /// Adapter that bridges the MCP-friendly chat model to Anthropic's Claude API.
-/// Maintains message history, handles tool results, and normalises tool-use payloads.
+/// Builds Anthropic requests from an explicit conversation snapshot.
 /// </summary>
 public sealed class AnthropicChatClient : IChatClient
 {
-    private readonly List<Message> _messages = new();
-    private readonly List<SystemMessage> _systemMessages = new();
-    private readonly List<Tool> _anthropicTools = new();
     private readonly IAnthropicMessageClient _messagesClient;
+    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly string _model;
     private readonly ILogger<AnthropicChatClient> _logger;
     private readonly float _temperature;
     private readonly int? _maxOutputTokens;
-    private string _systemPrompt = string.Empty;
 
     public AnthropicChatClient(ChatClientOptions options, ILogger<AnthropicChatClient> logger)
-        : this(options, logger, new AnthropicMessageClient(options.ApiKey))
+        : this(options, logger, new AnthropicMessageClient(options.ApiKey), null)
     {
     }
 
     internal AnthropicChatClient(
         ChatClientOptions options,
         ILogger<AnthropicChatClient> logger,
-        IAnthropicMessageClient messagesClient
+        IAnthropicMessageClient messagesClient,
+        IChatTranscriptReplayTransformer? replayTransformer = null
     )
     {
         _logger = logger;
         _messagesClient = messagesClient ?? throw new ArgumentNullException(nameof(messagesClient));
+        _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
         _temperature = options.Temperature;
         _maxOutputTokens = options.MaxOutputTokens;
-        _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
-            ? string.Empty
-            : options.SystemPrompt;
 
         // Determine the model to use
         if (string.IsNullOrEmpty(options.Model) || !options.Model.StartsWith("claude"))
@@ -65,88 +61,22 @@ public sealed class AnthropicChatClient : IChatClient
             _model = options.Model;
             _logger.LogInformation("Using Anthropic model: {Model}", _model);
         }
-
-        RefreshSystemMessages();
     }
 
-    /// <summary>
-    /// Sets or updates the system prompt for the chat session
-    /// </summary>
-    public void SetSystemPrompt(string systemPrompt)
+    private static Tool ConvertToAnthropicTool(ChatClientTool tool)
     {
-        _logger.LogInformation("Setting system prompt for Anthropic chat client");
-        _systemPrompt = systemPrompt;
-        RefreshSystemMessages();
-    }
+        var toolSchema = JsonNode.Parse(tool.InputSchema.GetRawText());
 
-    /// <summary>
-    /// Resets the conversation history, clearing all past messages
-    /// </summary>
-    public void ResetConversation()
-    {
-        _logger.LogInformation("Resetting conversation history for Anthropic chat client");
-        _messages.Clear();
-        RefreshSystemMessages();
-    }
-
-    /// <summary>
-    /// Replaces the currently registered MCP tools so the Anthropic API can surface the supplied
-    /// tool set in tool-use responses.
-    /// </summary>
-    /// <param name="tools">Complete collection of MCP tool descriptors to expose to the model.</param>
-    public void RegisterTools(IEnumerable<Mcp.Net.Core.Models.Tools.Tool> tools)
-    {
-        _anthropicTools.Clear();
-
-        foreach (var tool in tools)
-        {
-            _logger.LogDebug("Registering Anthropic tool {ToolName}", tool.Name);
-            _anthropicTools.Add(ConvertToAnthropicTool(tool));
-        }
-    }
-
-    private static Tool ConvertToAnthropicTool(Mcp.Net.Core.Models.Tools.Tool mcpTool)
-    {
-        var toolName = mcpTool.Name;
-        var toolDescription = mcpTool.Description;
-        var toolSchema = JsonNode.Parse(mcpTool.InputSchema.GetRawText());
-
-        var function = new Function(toolName, toolDescription, toolSchema);
+        var function = new Function(tool.Name, tool.Description, toolSchema);
 
         return new Tool(function);
     }
 
     /// <summary>
-    /// Adds a tool result to the Anthropic message history without triggering an API request.
-    /// </summary>
-    /// <param name="result">The tool result returned from the MCP layer.</param>
-    private void AddToolResultToHistory(ToolInvocationResult? result)
-    {
-        if (result == null)
-        {
-            return;
-        }
-
-        _messages.Add(
-            new Message
-            {
-                Role = RoleType.User,
-                Content = new List<ContentBase>
-                {
-                    new ToolResultContent
-                    {
-                        ToolUseId = result.ToolCallId,
-                        Content = [new TextContent { Text = result.ToWireJson() }],
-                    },
-                },
-            }
-        );
-    }
-
-    /// <summary>
-    /// Generates a response from Claude using the accumulated message history.
+    /// Generates a response from Claude using the supplied conversation snapshot.
     /// </summary>
     private async Task<ChatClientTurnResult> GetTurnResultAsync(
+        MessageParameters parameters,
         IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
@@ -157,16 +87,14 @@ public sealed class AnthropicChatClient : IChatClient
 
             if (assistantTurnUpdates != null)
             {
-                return await GetStreamingTurnResultAsync(assistantTurnUpdates, cancellationToken);
+                return await GetStreamingTurnResultAsync(
+                    parameters,
+                    assistantTurnUpdates,
+                    cancellationToken
+                );
             }
 
-            var response = await _messagesClient.GetResponseAsync(
-                CreateMessageParameters(),
-                cancellationToken
-            );
-            var assistantMessage = response.Content?.ToList() ?? new List<ContentBase>();
-
-            _messages.Add(new Message { Role = RoleType.Assistant, Content = assistantMessage });
+            var response = await _messagesClient.GetResponseAsync(parameters, cancellationToken);
 
             return BuildAssistantTurn(response);
         }
@@ -183,26 +111,19 @@ public sealed class AnthropicChatClient : IChatClient
         }
     }
 
-    private MessageParameters CreateMessageParameters(bool stream = false) =>
+    private MessageParameters CreateMessageParameters(ChatClientRequest request, bool stream = false) =>
         new()
         {
             Model = _model,
             MaxTokens = _maxOutputTokens ?? 1024,
             Temperature = Convert.ToDecimal(_temperature),
-            Messages = _messages.ToList(),
-            Tools = _anthropicTools.ToList(),
-            System = _systemMessages.ToList(),
+            Messages = BuildMessages(request),
+            Tools = request.Tools.Select(ConvertToAnthropicTool).ToList(),
+            System = string.IsNullOrWhiteSpace(request.SystemPrompt)
+                ? []
+                : [new SystemMessage(request.SystemPrompt)],
             Stream = stream,
         };
-
-    private void RefreshSystemMessages()
-    {
-        _systemMessages.Clear();
-        if (!string.IsNullOrWhiteSpace(_systemPrompt))
-        {
-            _systemMessages.Add(new SystemMessage(_systemPrompt));
-        }
-    }
 
     private static ChatUsage? ToChatUsage(Usage? usage)
     {
@@ -392,59 +313,24 @@ public sealed class AnthropicChatClient : IChatClient
         return document.RootElement.Clone();
     }
 
-    /// <summary>
-    /// Sends a user message to Claude and returns the resulting response.
-    /// </summary>
-    public async Task<ChatClientTurnResult> SendMessageAsync(
-        string userMessage,
+    public Task<ChatClientTurnResult> SendAsync(
+        ChatClientRequest request,
         IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
+        ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        _messages.Add(
-            new Message
-            {
-                Role = RoleType.User,
-                Content = new List<ContentBase>
-                {
-                    new TextContent { Text = userMessage },
-                },
-            }
+        return GetTurnResultAsync(
+            CreateMessageParameters(request, stream: assistantTurnUpdates != null),
+            assistantTurnUpdates,
+            cancellationToken
         );
-
-        _logger.LogDebug("User message added to history (Anthropic): {Message}", userMessage);
-        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
-    }
-
-    /// <summary>
-     /// Appends tool execution results and requests the next assistant response batch.
-     /// </summary>
-    public async Task<ChatClientTurnResult> SendToolResultsAsync(
-        IEnumerable<ToolInvocationResult> toolResults,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
-        CancellationToken cancellationToken = default
-    )
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        foreach (var toolResult in toolResults)
-        {
-            _logger.LogDebug(
-                "Adding tool result for {ToolName} with ID {ToolId} to history",
-                toolResult.ToolName,
-                toolResult.ToolCallId
-            );
-
-            AddToolResultToHistory(toolResult);
-        }
-
-        _logger.LogDebug("Making single API call after adding all tool results");
-        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
     }
 
     private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
+        MessageParameters parameters,
         IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
         CancellationToken cancellationToken
     )
@@ -453,7 +339,7 @@ public sealed class AnthropicChatClient : IChatClient
         ChatClientAssistantTurn? lastReportedTurn = null;
 
         await foreach (var response in _messagesClient
-                           .StreamResponseAsync(CreateMessageParameters(stream: true), cancellationToken)
+                           .StreamResponseAsync(parameters, cancellationToken)
                            .WithCancellation(cancellationToken))
         {
             accumulator.Apply(response);
@@ -479,17 +365,6 @@ public sealed class AnthropicChatClient : IChatClient
         }
 
         var finalTurn = accumulator.BuildFinalTurn(_model);
-        AppendAssistantReplayEntry(
-            new AssistantChatEntry(
-                finalTurn.Id,
-                DateTimeOffset.UtcNow,
-                finalTurn.Blocks,
-                Provider: "anthropic",
-                Model: _model,
-                StopReason: finalTurn.StopReason,
-                Usage: finalTurn.Usage
-            )
-        );
 
         return finalTurn;
     }
@@ -506,28 +381,20 @@ public sealed class AnthropicChatClient : IChatClient
         && Equals(current.Usage, previous.Usage)
         && current.Blocks.SequenceEqual(previous.Blocks);
 
-    /// <summary>
-    /// Gets the currently configured system prompt.
-    /// </summary>
-    public string GetSystemPrompt()
+    private List<Message> BuildMessages(ChatClientRequest request)
     {
-        return _systemPrompt;
-    }
-
-    public ReplayTarget GetReplayTarget() => new("anthropic", _model);
-
-    public void LoadReplayTranscript(ProviderReplayTranscript replayTranscript)
-    {
-        ArgumentNullException.ThrowIfNull(replayTranscript);
-
-        _messages.Clear();
+        var messages = new List<Message>();
+        var replayTranscript = _replayTransformer.Transform(
+            request.Transcript,
+            new ReplayTarget("anthropic", _model)
+        );
 
         foreach (var entry in replayTranscript.Entries)
         {
             switch (entry)
             {
                 case UserChatEntry user:
-                    _messages.Add(
+                    messages.Add(
                         new Message
                         {
                             Role = RoleType.User,
@@ -539,16 +406,44 @@ public sealed class AnthropicChatClient : IChatClient
                     );
                     break;
                 case AssistantChatEntry assistant:
-                    AppendAssistantReplayEntry(assistant);
+                    AppendAssistantReplayEntry(messages, assistant);
                     break;
                 case ToolResultChatEntry toolResult:
-                    AddToolResultToHistory(toolResult.Result);
+                    AppendToolResult(messages, toolResult.Result);
                     break;
             }
         }
+
+        return messages;
     }
 
-    private void AppendAssistantReplayEntry(AssistantChatEntry assistant)
+    private static void AppendToolResult(ICollection<Message> messages, ToolInvocationResult? result)
+    {
+        if (result == null)
+        {
+            return;
+        }
+
+        messages.Add(
+            new Message
+            {
+                Role = RoleType.User,
+                Content = new List<ContentBase>
+                {
+                    new ToolResultContent
+                    {
+                        ToolUseId = result.ToolCallId,
+                        Content = [new TextContent { Text = result.ToWireJson() }],
+                    },
+                },
+            }
+        );
+    }
+
+    private static void AppendAssistantReplayEntry(
+        ICollection<Message> messages,
+        AssistantChatEntry assistant
+    )
     {
         var replayContent = assistant.Blocks.Select(ToReplayContent).OfType<ContentBase>().ToList();
 
@@ -557,7 +452,7 @@ public sealed class AnthropicChatClient : IChatClient
             return;
         }
 
-        _messages.Add(
+        messages.Add(
             new Message
             {
                 Role = RoleType.Assistant,

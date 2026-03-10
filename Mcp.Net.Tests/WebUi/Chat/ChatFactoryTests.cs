@@ -75,7 +75,7 @@ public class ChatFactoryTests
         options.Model.Should().Be("gpt-5");
         options.Temperature.Should().Be(0.25f);
         options.MaxOutputTokens.Should().Be(1536);
-        client.GetSystemPrompt().Should().Be(agent.SystemPrompt);
+        options.SystemPrompt.Should().Be(agent.SystemPrompt);
     }
 
     private static ChatFactory CreateChatFactory()

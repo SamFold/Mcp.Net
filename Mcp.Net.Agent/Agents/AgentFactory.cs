@@ -121,7 +121,7 @@ public class AgentFactory : IAgentFactory
         // Create the chat client
         var chatClient = _chatClientFactory.Create(agent.Provider, clientOptions);
 
-        // Register tools if specified
+        // Validate requested tools early even though session state now owns tool registration.
         if (agent.ToolIds.Count > 0)
         {
             var availableToolNames = _toolRegistry.AllTools.Select(t => t.Name).ToHashSet();
@@ -137,10 +137,6 @@ public class AgentFactory : IAgentFactory
                 _logger.LogError(errorMessage);
                 throw new ToolNotFoundException(missingToolIds, errorMessage);
             }
-
-            var tools = _toolRegistry.AllTools.Where(t => agent.ToolIds.Contains(t.Name)).ToList();
-            _logger.LogDebug("Registering {ToolCount} tools with the chat client", tools.Count);
-            chatClient.RegisterTools(tools);
         }
 
         return chatClient;

@@ -232,13 +232,21 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
     /// </summary>
     public void ResetConversation()
     {
-        // Access the LLM client through the chat session
-        if (GetLlmClient() is IChatClient client)
-        {
-            client.ResetConversation();
-            _chatSession.LoadTranscriptAsync(Array.Empty<ChatTranscriptEntry>()).GetAwaiter().GetResult();
-            _logger.LogInformation("Reset conversation for session {SessionId}", _sessionId);
-        }
+        _chatSession.ResetConversation();
+        _logger.LogInformation("Reset conversation for session {SessionId}", _sessionId);
+    }
+
+    /// <summary>
+    /// Returns the current system prompt for the backing session.
+    /// </summary>
+    public string GetSystemPrompt() => _chatSession.GetSystemPrompt();
+
+    /// <summary>
+    /// Updates the current system prompt for the backing session.
+    /// </summary>
+    public void SetSystemPrompt(string systemPrompt)
+    {
+        _chatSession.SetSystemPrompt(systemPrompt);
     }
 
     /// <summary>
@@ -255,15 +263,6 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         );
 
         await _chatSession.LoadTranscriptAsync(transcript);
-    }
-
-    /// <summary>
-    /// Get the LLM client used by this session
-    /// </summary>
-    public IChatClient? GetLlmClient()
-    {
-        // Use the accessor method we added to ChatSession
-        return _chatSession.GetLlmClient();
     }
 
     private async void OnSessionStarted(object? sender, EventArgs e)
@@ -361,7 +360,7 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
     {
         try
         {
-            GetLlmClient()?.RegisterTools(_toolRegistry.EnabledTools);
+            _chatSession.RegisterTools(_toolRegistry.EnabledTools);
         }
         catch (Exception ex)
         {

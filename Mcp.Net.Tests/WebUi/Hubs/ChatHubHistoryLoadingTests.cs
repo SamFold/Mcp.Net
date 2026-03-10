@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Mcp.Net.Agent.Models;
-using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.Adapters.Interfaces;
 using Mcp.Net.WebUi.Chat.Interfaces;
@@ -57,8 +56,6 @@ public class ChatHubHistoryLoadingTests
                 It.Is<IReadOnlyList<ChatTranscriptEntry>>(entries => entries.Count == transcript.Length)
             ))
             .Returns(Task.CompletedTask);
-        adapter.Setup(a => a.GetLlmClient()).Returns((IChatClient?)null);
-
         var chatFactory = new Mock<IChatFactory>();
         chatFactory
             .Setup(f => f.CreateSignalRAdapterAsync(

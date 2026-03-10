@@ -1,6 +1,7 @@
 using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Interfaces;
+using Mcp.Net.LLM.Models;
 using Microsoft.Extensions.Logging;
 
 namespace Mcp.Net.Examples.LLMConsole.UI;
@@ -22,9 +23,9 @@ public class ChatUIHandler : IUserInputProvider
 
         // Subscribe to events
         sessionEvents.SessionStarted += OnSessionStarted;
-        sessionEvents.AssistantMessageReceived += OnAssistantMessageReceived;
-        sessionEvents.ToolExecutionUpdated += OnToolExecutionUpdated;
-        sessionEvents.ThinkingStateChanged += OnThinkingStateChanged;
+        sessionEvents.TranscriptChanged += OnTranscriptChanged;
+        sessionEvents.ActivityChanged += OnActivityChanged;
+        sessionEvents.ToolCallActivityChanged += OnToolCallActivityChanged;
     }
 
     private void OnSessionStarted(object? sender, EventArgs e)
@@ -33,53 +34,66 @@ public class ChatUIHandler : IUserInputProvider
         _ui.DrawChatInterface();
     }
 
-    private void OnAssistantMessageReceived(object? sender, string message)
+    private void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)
     {
-        _logger.LogDebug("Displaying assistant message");
-        _ui.DisplayAssistantMessage(message);
+        switch (args.Entry)
+        {
+            case AssistantChatEntry assistant:
+                var textBlocks = assistant.Blocks.OfType<TextAssistantBlock>().ToList();
+                if (textBlocks.Count > 0)
+                {
+                    var message = string.Join(
+                        Environment.NewLine,
+                        textBlocks.Select(b => b.Text)
+                    );
+                    _logger.LogDebug("Displaying assistant message");
+                    _ui.DisplayAssistantMessage(message);
+                }
+                break;
+
+            case ErrorChatEntry error:
+                _logger.LogDebug("Displaying error: {Message}", error.Message);
+                _ui.DisplayToolError("Error", error.Message);
+                break;
+        }
     }
 
-    private void OnToolExecutionUpdated(object? sender, ToolExecutionEventArgs args)
+    private void OnActivityChanged(object? sender, ChatSessionActivityChangedEventArgs args)
+    {
+        switch (args.Activity)
+        {
+            case ChatSessionActivity.WaitingForProvider:
+                StartThinkingAnimation("Waiting for LLM");
+                break;
+
+            case ChatSessionActivity.Idle:
+                StopThinkingAnimation();
+                break;
+        }
+    }
+
+    private void OnToolCallActivityChanged(object? sender, ToolCallActivityChangedEventArgs args)
     {
         switch (args.ExecutionState)
         {
-            case ToolExecutionState.Starting:
+            case ToolCallExecutionState.Running:
                 _logger.LogDebug("Displaying tool execution start for {ToolName}", args.ToolName);
                 _ui.DisplayToolExecution(args.ToolName);
                 break;
 
-            case ToolExecutionState.Completed:
-                if (args.Success && args.Result != null)
+            case ToolCallExecutionState.Completed:
+                if (args.Result != null)
                 {
                     _logger.LogDebug("Displaying tool execution results for {ToolName}", args.ToolName);
                     _ui.DisplayToolResults(args.Result);
                 }
-                else
-                {
-                    var message = args.ErrorMessage ?? "Tool returned an error";
-                    _logger.LogDebug("Displaying tool error for {ToolName}: {Error}", args.ToolName, message);
-                    _ui.DisplayToolError(args.ToolName, message);
-                }
                 break;
 
-            case ToolExecutionState.Failed:
-            default:
+            case ToolCallExecutionState.Failed:
                 var error = args.ErrorMessage ?? "Tool execution failed";
                 _logger.LogDebug("Displaying tool failure for {ToolName}: {Error}", args.ToolName, error);
                 _ui.DisplayToolError(args.ToolName, error);
                 break;
-        }
-    }
-
-    private void OnThinkingStateChanged(object? sender, ThinkingStateEventArgs args)
-    {
-        if (args.IsThinking)
-        {
-            StartThinkingAnimation(args.Context);
-        }
-        else
-        {
-            StopThinkingAnimation();
         }
     }
 

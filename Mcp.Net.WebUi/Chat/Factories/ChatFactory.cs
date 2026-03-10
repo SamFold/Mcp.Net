@@ -46,7 +46,6 @@ public class ChatFactory : IChatFactory
     private readonly DefaultLlmSettings _defaultSettings;
     private readonly IConfiguration _configuration;
     private readonly IMcpClientBuilderConfigurator _authConfigurator;
-    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly ConcurrentDictionary<string, ElicitationCoordinator> _elicitationCoordinators = new();
     private readonly ConcurrentDictionary<string, IMcpClient> _sessionClients = new();
     private readonly ConcurrentDictionary<string, Action<JsonRpcNotificationMessage>> _toolNotificationHandlers = new();
@@ -73,7 +72,6 @@ public class ChatFactory : IChatFactory
         _defaultSettings = defaultSettings;
         _configuration = configuration;
         _authConfigurator = authConfigurator;
-        _replayTransformer = replayTransformer;
     }
 
     /// <summary>
@@ -92,14 +90,7 @@ public class ChatFactory : IChatFactory
         // Create a new dedicated LLM client for this chat session
         IChatClient sessionClient = CreateClientForSession(sessionId, model, provider);
 
-        // Set system prompt if provided and different from default
         string effectiveSystemPrompt = systemPrompt ?? _defaultSettings.DefaultSystemPrompt;
-
-        if (effectiveSystemPrompt != sessionClient.GetSystemPrompt())
-        {
-            _logger.LogInformation("Setting system prompt for session {SessionId}", sessionId);
-            sessionClient.SetSystemPrompt(effectiveSystemPrompt);
-        }
 
         // Create dedicated MCP client for this session
         var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
@@ -112,9 +103,10 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger,
-            _replayTransformer
+            chatSessionLogger
         );
+        chatSession.SetSystemPrompt(effectiveSystemPrompt);
+        chatSession.RegisterTools(_toolRegistry.EnabledTools);
 
         // Create adapter logger
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
@@ -162,9 +154,10 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger,
-            _replayTransformer
+            chatSessionLogger
         );
+        chatSession.SetSystemPrompt(agent.SystemPrompt);
+        chatSession.RegisterTools(ResolveToolsForAgent(agent));
 
         // Create adapter logger
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
@@ -226,9 +219,6 @@ public class ChatFactory : IChatFactory
         // Create LLM client through factory
         var client = _clientFactory.Create(providerEnum, options);
 
-        // Register available tools with the client
-        client.RegisterTools(_toolRegistry.EnabledTools);
-
         _logger.LogInformation(
             "Created new {Provider} client with model {Model} for session {SessionId}",
             providerEnum,
@@ -286,38 +276,6 @@ public class ChatFactory : IChatFactory
         // Create LLM client through factory
         var client = _clientFactory.Create(agent.Provider, options);
 
-        // Set system prompt from agent
-        client.SetSystemPrompt(agent.SystemPrompt);
-
-        // Register specific tools from agent (if any)
-        if (agent.ToolIds != null && agent.ToolIds.Any())
-        {
-            var tools = _toolRegistry
-                .EnabledTools.Where(t => agent.ToolIds.Contains(t.Name))
-                .ToList();
-
-            if (tools.Any())
-            {
-                _logger.LogDebug("Registering {Count} tools from agent definition", tools.Count);
-                client.RegisterTools(tools);
-            }
-            else
-            {
-                // Fall back to all tools if none of the specified tools are found
-                _logger.LogWarning(
-                    "None of the {0} specified tools in agent {1} were found, using all enabled tools",
-                    agent.ToolIds.Count,
-                    agent.Id
-                );
-                client.RegisterTools(_toolRegistry.EnabledTools);
-            }
-        }
-        else
-        {
-            // Register all available tools as fallback
-            client.RegisterTools(_toolRegistry.EnabledTools);
-        }
-
         _logger.LogInformation(
             "Created new {Provider} client with model {Model} for session {SessionId} using agent {AgentName}",
             agent.Provider,
@@ -327,6 +285,27 @@ public class ChatFactory : IChatFactory
         );
 
         return client;
+    }
+
+    private IReadOnlyList<Mcp.Net.Core.Models.Tools.Tool> ResolveToolsForAgent(AgentDefinition agent)
+    {
+        if (agent.ToolIds == null || agent.ToolIds.Count == 0)
+        {
+            return _toolRegistry.EnabledTools.ToArray();
+        }
+
+        var tools = _toolRegistry.EnabledTools.Where(t => agent.ToolIds.Contains(t.Name)).ToArray();
+        if (tools.Length > 0)
+        {
+            return tools;
+        }
+
+        _logger.LogWarning(
+            "None of the {ToolCount} specified tools in agent {AgentId} were found, using all enabled tools",
+            agent.ToolIds.Count,
+            agent.Id
+        );
+        return _toolRegistry.EnabledTools.ToArray();
     }
 
     private static bool TryGetFloatParameter(

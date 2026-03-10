@@ -3,11 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text;
-using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
-using Mcp.Net.LLM.Tools;
 using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Chat;
@@ -60,73 +58,73 @@ public sealed class OpenAiChatClient : IChatClient
 {
     private readonly ILogger<OpenAiChatClient> _logger;
     private readonly ChatClient _chatClient;
-    private readonly ChatCompletionOptions _completionOptions;
     private readonly IOpenAiChatCompletionInvoker _completionInvoker;
-    private readonly List<ChatMessage> _history = new();
+    private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly string _modelName;
-    private string _systemPrompt = string.Empty;
+    private readonly float _temperature;
+    private readonly int? _maxOutputTokens;
 
     public OpenAiChatClient(ChatClientOptions options, ILogger<OpenAiChatClient> logger)
-        : this(options, logger, new OpenAiChatCompletionInvoker())
+        : this(options, logger, new OpenAiChatCompletionInvoker(), null)
     {
     }
 
     internal OpenAiChatClient(
         ChatClientOptions options,
         ILogger<OpenAiChatClient> logger,
-        IOpenAiChatCompletionInvoker completionInvoker
+        IOpenAiChatCompletionInvoker completionInvoker,
+        IChatTranscriptReplayTransformer? replayTransformer = null
     )
     {
         _logger = logger;
         _completionInvoker =
             completionInvoker ?? throw new ArgumentNullException(nameof(completionInvoker));
-        _systemPrompt = string.IsNullOrWhiteSpace(options.SystemPrompt)
-            ? string.Empty
-            : options.SystemPrompt;
+        _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
+        _temperature = options.Temperature;
+        _maxOutputTokens = options.MaxOutputTokens;
 
         _modelName = ResolveModelName(options);
         _logger.LogInformation("Using OpenAI model: {Model}", _modelName);
         _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(_modelName);
-
-        _completionOptions = BuildCompletionOptions(_modelName, options);
-        InitializeHistory();
     }
 
     private static string ResolveModelName(ChatClientOptions options) =>
         string.IsNullOrWhiteSpace(options.Model) ? "gpt-5" : options.Model;
 
-    private ChatCompletionOptions BuildCompletionOptions(
-        string modelName,
-        ChatClientOptions options
-    )
+    private ChatCompletionOptions CreateCompletionOptions(IReadOnlyList<ChatClientTool> tools)
     {
         var completionOptions = new ChatCompletionOptions();
 
-        if (IsTemperatureSupported(modelName))
+        if (IsTemperatureSupported(_modelName))
         {
-            completionOptions.Temperature = options.Temperature;
+            completionOptions.Temperature = _temperature;
             _logger.LogDebug(
                 "Using temperature {Temperature} for model {Model}",
-                options.Temperature,
-                modelName
+                _temperature,
+                _modelName
             );
         }
         else
         {
             _logger.LogDebug(
                 "Model {Model} does not support temperature; omitting parameter",
-                modelName
+                _modelName
             );
         }
 
-        if (options.MaxOutputTokens is > 0)
+        if (_maxOutputTokens is > 0)
         {
-            completionOptions.MaxOutputTokenCount = options.MaxOutputTokens.Value;
+            completionOptions.MaxOutputTokenCount = _maxOutputTokens.Value;
             _logger.LogDebug(
                 "Using max output tokens {MaxOutputTokens} for model {Model}",
                 completionOptions.MaxOutputTokenCount,
-                modelName
+                _modelName
             );
+        }
+
+        foreach (var tool in tools)
+        {
+            completionOptions.Tools.Add(ConvertToChatTool(tool));
         }
 
         return completionOptions;
@@ -212,28 +210,8 @@ public sealed class OpenAiChatClient : IChatClient
         return new ToolInvocation(toolCall.Id, toolCall.FunctionName, arguments);
     }
 
-    /// <summary>
-    /// Replaces the currently registered MCP tools so the OpenAI request options reflect the
-    /// supplied tool set without accumulating duplicates across refreshes.
-    /// </summary>
-    /// <param name="tools">Complete collection of MCP tool descriptors to expose to the model.</param>
-    public void RegisterTools(IEnumerable<Tool> tools)
-    {
-        _completionOptions.Tools.Clear();
-
-        foreach (var tool in tools)
-        {
-            _completionOptions.Tools.Add(ToolConverter.ConvertToChatTool(tool));
-        }
-    }
-
-    private ToolChatMessage BuildToolChatMessage(ToolInvocationResult result) =>
-        new(result.ToolCallId, result.ToWireJson());
-
     private ChatClientAssistantTurn BuildAssistantTurn(ChatCompletion completion)
     {
-        _history.Add(new AssistantChatMessage(completion));
-
         var blocks = new List<AssistantContentBlock>();
         var responseText = completion.Content?.FirstOrDefault()?.Text;
         if (!string.IsNullOrWhiteSpace(responseText))
@@ -288,32 +266,9 @@ public sealed class OpenAiChatClient : IChatClient
             _ => value.GetString() ?? string.Empty,
         };
 
-    private void AppendToolResult(ToolInvocationResult? result)
-    {
-        if (result == null)
-        {
-            return;
-        }
-
-        _history.Add(new ToolChatMessage(result.ToolCallId, result.ToWireJson()));
-    }
-
-    private void InitializeHistory()
-    {
-        _history.Clear();
-        if (!string.IsNullOrWhiteSpace(_systemPrompt))
-        {
-            _history.Add(new SystemChatMessage(_systemPrompt));
-        }
-    }
-
-    public void ResetConversation()
-    {
-        _logger.LogInformation("Resetting conversation history for OpenAI chat client");
-        InitializeHistory();
-    }
-
     private async Task<ChatClientTurnResult> GetTurnResultAsync(
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions completionOptions,
         IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
@@ -322,10 +277,15 @@ public sealed class OpenAiChatClient : IChatClient
         {
             if (assistantTurnUpdates != null)
             {
-                return await GetStreamingTurnResultAsync(assistantTurnUpdates, cancellationToken);
+                return await GetStreamingTurnResultAsync(
+                    messages,
+                    completionOptions,
+                    assistantTurnUpdates,
+                    cancellationToken
+                );
             }
 
-            var completion = _completionInvoker.CompleteChat(_chatClient, _history, _completionOptions);
+            var completion = _completionInvoker.CompleteChat(_chatClient, messages, completionOptions);
 
             ChatClientTurnResult response = completion.FinishReason switch
             {
@@ -354,104 +314,55 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 
-    public Task<ChatClientTurnResult> SendMessageAsync(
-        string userMessage,
+    public Task<ChatClientTurnResult> SendAsync(
+        ChatClientRequest request,
         IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
-        _ = assistantTurnUpdates;
+        ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var chatMessage = new UserChatMessage(userMessage);
-        _history.Add(chatMessage);
-        _logger.LogDebug("User message added to history (OpenAI): {Message}", userMessage);
+        var messages = BuildMessages(request);
+        var completionOptions = CreateCompletionOptions(request.Tools);
 
-        return GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
+        return GetTurnResultAsync(messages, completionOptions, assistantTurnUpdates, cancellationToken);
     }
 
-    public async Task<ChatClientTurnResult> SendToolResultsAsync(
-        IEnumerable<ToolInvocationResult> toolResults,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
-        CancellationToken cancellationToken = default
-    )
+    private IReadOnlyList<ChatMessage> BuildMessages(ChatClientRequest request)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        var messages = new List<ChatMessage>();
 
-        foreach (var toolResult in toolResults)
+        if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
         {
-            _logger.LogDebug(
-                "Adding tool result for {ToolName} with ID {ToolId} to history.",
-                toolResult.ToolName,
-                toolResult.ToolCallId
-            );
-
-            AppendToolResult(toolResult);
+            messages.Add(new SystemChatMessage(request.SystemPrompt));
         }
 
-        _logger.LogDebug("Making single API call after adding all tool results");
-        return await GetTurnResultAsync(assistantTurnUpdates, cancellationToken);
-    }
-
-    public string GetSystemPrompt() => _systemPrompt;
-
-    public ReplayTarget GetReplayTarget() => new("openai", _modelName);
-
-    public void LoadReplayTranscript(ProviderReplayTranscript replayTranscript)
-    {
-        ArgumentNullException.ThrowIfNull(replayTranscript);
-
-        InitializeHistory();
+        var replayTranscript = _replayTransformer.Transform(
+            request.Transcript,
+            new ReplayTarget("openai", _modelName)
+        );
 
         foreach (var entry in replayTranscript.Entries)
         {
             switch (entry)
             {
                 case UserChatEntry user:
-                    _history.Add(new UserChatMessage(user.Content));
+                    messages.Add(new UserChatMessage(user.Content));
                     break;
                 case AssistantChatEntry assistant:
-                    AppendAssistantReplayEntry(assistant);
+                    AppendAssistantReplayEntry(messages, assistant);
                     break;
                 case ToolResultChatEntry toolResult:
-                    AppendToolResult(toolResult.Result);
+                    AppendToolResult(messages, toolResult.Result);
                     break;
             }
         }
+
+        return messages;
     }
 
-    /// <summary>
-    /// Sets or updates the system prompt for the chat session
-    /// </summary>
-    public void SetSystemPrompt(string systemPrompt)
-    {
-        _logger.LogInformation("Setting system prompt for OpenAI chat client");
-        _systemPrompt = systemPrompt;
-
-        var existingSystemMessage = _history.FirstOrDefault(m => m is SystemChatMessage);
-
-        if (string.IsNullOrWhiteSpace(systemPrompt))
-        {
-            if (existingSystemMessage != null)
-            {
-                _history.Remove(existingSystemMessage);
-            }
-
-            return;
-        }
-
-        if (existingSystemMessage != null)
-        {
-            int index = _history.IndexOf(existingSystemMessage);
-            _history[index] = new SystemChatMessage(systemPrompt);
-        }
-        else
-        {
-            _history.Insert(0, new SystemChatMessage(systemPrompt));
-        }
-    }
-
-    private void AppendAssistantReplayEntry(AssistantChatEntry assistant)
+    private void AppendAssistantReplayEntry(ICollection<ChatMessage> history, AssistantChatEntry assistant)
     {
         var textParts = assistant
             .Blocks.SelectMany(ToReplayTextParts)
@@ -475,19 +386,32 @@ public sealed class OpenAiChatClient : IChatClient
 
         if (toolCalls.Count == 0)
         {
-            _history.Add(new AssistantChatMessage(textParts));
+            history.Add(new AssistantChatMessage(textParts));
             return;
         }
 
         if (textParts.Count == 0)
         {
-            _history.Add(new AssistantChatMessage(toolCalls));
+            history.Add(new AssistantChatMessage(toolCalls));
             return;
         }
 
-        _history.Add(
+        history.Add(
             new AssistantChatMessage(CreateReplayChatCompletion(assistant, textParts, toolCalls))
         );
+    }
+
+    private static void AppendToolResult(
+        ICollection<ChatMessage> history,
+        ToolInvocationResult? result
+    )
+    {
+        if (result == null)
+        {
+            return;
+        }
+
+        history.Add(new ToolChatMessage(result.ToolCallId, result.ToWireJson()));
     }
 
     private static IEnumerable<ChatMessageContentPart> ToReplayTextParts(AssistantContentBlock block)
@@ -526,6 +450,8 @@ public sealed class OpenAiChatClient : IChatClient
         );
 
     private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions completionOptions,
         IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
         CancellationToken cancellationToken
     )
@@ -536,8 +462,8 @@ public sealed class OpenAiChatClient : IChatClient
         await foreach (var update in _completionInvoker
                            .CompleteChatStreamingAsync(
                                _chatClient,
-                               _history,
-                               _completionOptions,
+                               messages,
+                               completionOptions,
                                cancellationToken
                            )
                            .WithCancellation(cancellationToken))
@@ -577,20 +503,15 @@ public sealed class OpenAiChatClient : IChatClient
 
         var finalTurn = accumulator.BuildFinalTurn(_modelName);
 
-        AppendAssistantReplayEntry(
-            new AssistantChatEntry(
-                finalTurn.Id,
-                DateTimeOffset.UtcNow,
-                finalTurn.Blocks,
-                Provider: "openai",
-                Model: _modelName,
-                StopReason: finalTurn.StopReason,
-                Usage: finalTurn.Usage
-            )
-        );
-
         return finalTurn;
     }
+
+    private static ChatTool ConvertToChatTool(ChatClientTool tool) =>
+        ChatTool.CreateFunctionTool(
+            functionName: tool.Name,
+            functionDescription: tool.Description,
+            functionParameters: BinaryData.FromString(tool.InputSchema.GetRawText())
+        );
 
     private sealed class StreamingAssistantTurnAccumulator
     {

@@ -89,15 +89,15 @@ public class Program
         var toolRegistryLogger = loggerFactory.CreateLogger<ToolRegistry>();
         var toolRegistry = new ToolRegistry(toolRegistryLogger);
 
-        IChatClient? activeChatClient = null;
+        ChatSession? activeChatSession = null;
         toolRegistry.ToolsUpdated += (_, tools) =>
         {
             AvailableTools = tools.ToArray();
-            if (activeChatClient != null)
+            if (activeChatSession != null)
             {
                 try
                 {
-                    activeChatClient.RegisterTools(toolRegistry.EnabledTools);
+                    activeChatSession.RegisterTools(toolRegistry.EnabledTools);
                 }
                 catch (Exception ex)
                 {
@@ -227,10 +227,9 @@ public class Program
                 : new LLM.OpenAI.OpenAiChatClient(chatClientOptions, openAiLogger)
                     as LLM.Interfaces.IChatClient;
 
-        activeChatClient = chatClient;
-        chatClient.RegisterTools(toolRegistry.EnabledTools);
-
         var chatSession = new ChatSession(chatClient, mcpClient, toolRegistry, chatSessionLogger);
+        chatSession.RegisterTools(toolRegistry.EnabledTools);
+        activeChatSession = chatSession;
 
         var chatUIHandler = new ChatUIHandler(chatUI, chatSession, chatUIHandlerLogger);
 

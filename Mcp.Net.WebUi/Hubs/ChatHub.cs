@@ -84,12 +84,12 @@ public class ChatHub : Hub
             var adapter = await GetOrCreateAdapterAsync(sessionId);
 
             // Log the current system prompt to debug the issue
-            if (adapter?.GetLlmClient() is var client && client != null)
+            if (adapter != null)
             {
-            _logger.LogDebug(
-                "Current system prompt when sending message: {SystemPrompt}",
-                client.GetSystemPrompt()
-            );
+                _logger.LogDebug(
+                    "Current system prompt when sending message: {SystemPrompt}",
+                    adapter.GetSystemPrompt()
+                );
             }
 
             // Mark the adapter as active
@@ -368,16 +368,13 @@ public class ChatHub : Hub
             var adapter = await GetExistingAdapterAsync(sessionId);
             if (adapter != null)
             {
-                if (adapter.GetLlmClient() is var client && client != null)
-                {
-                    _logger.LogInformation(
-                        "Updating system prompt in existing adapter for session {SessionId}",
-                        sessionId
-                    );
-                    client.SetSystemPrompt(systemPrompt);
-                    // Mark as active since we just used it
-                    _adapterManager.MarkAdapterAsActive(sessionId);
-                }
+                _logger.LogInformation(
+                    "Updating system prompt in existing adapter for session {SessionId}",
+                    sessionId
+                );
+                adapter.SetSystemPrompt(systemPrompt);
+                // Mark as active since we just used it
+                _adapterManager.MarkAdapterAsActive(sessionId);
             }
             else
             {

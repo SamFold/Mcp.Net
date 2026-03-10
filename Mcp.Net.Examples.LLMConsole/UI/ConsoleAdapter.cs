@@ -40,10 +40,7 @@ public class ConsoleAdapter : IDisposable
 
         // Subscribe to events
         _chatSession.SessionStarted += OnSessionStarted;
-        _chatSession.UserMessageReceived += OnUserMessageReceived;
-        _chatSession.AssistantMessageReceived += OnAssistantMessageReceived;
-        _chatSession.ToolExecutionUpdated += OnToolExecutionUpdated;
-        _chatSession.ThinkingStateChanged += OnThinkingStateChanged;
+        _chatSession.ActivityChanged += OnActivityChanged;
         _catalog.PromptsUpdated += OnPromptCatalogUpdated;
         _catalog.ResourcesUpdated += OnResourceCatalogUpdated;
     }
@@ -482,31 +479,12 @@ public class ConsoleAdapter : IDisposable
         _logger.LogDebug("Session started");
     }
 
-    private void OnUserMessageReceived(object? sender, string message)
-    {
-        _logger.LogDebug("User message received: {Message}", message);
-    }
-
-    private void OnAssistantMessageReceived(object? sender, string message)
-    {
-        _logger.LogDebug("Assistant message received: {Message}", message);
-    }
-
-    private void OnToolExecutionUpdated(object? sender, ToolExecutionEventArgs args)
+    private void OnActivityChanged(object? sender, ChatSessionActivityChangedEventArgs args)
     {
         _logger.LogDebug(
-            "Tool execution updated: {ToolName}, Success: {Success}",
-            args.ToolName,
-            args.Success
-        );
-    }
-
-    private void OnThinkingStateChanged(object? sender, ThinkingStateEventArgs args)
-    {
-        _logger.LogDebug(
-            "Thinking state changed: {IsThinking}, Context: {Context}",
-            args.IsThinking,
-            args.Context
+            "Activity changed: {Activity}, TurnId: {TurnId}",
+            args.Activity,
+            args.TurnId
         );
     }
 
@@ -526,10 +504,7 @@ public class ConsoleAdapter : IDisposable
 
         // Unsubscribe from events
         _chatSession.SessionStarted -= OnSessionStarted;
-        _chatSession.UserMessageReceived -= OnUserMessageReceived;
-        _chatSession.AssistantMessageReceived -= OnAssistantMessageReceived;
-        _chatSession.ToolExecutionUpdated -= OnToolExecutionUpdated;
-        _chatSession.ThinkingStateChanged -= OnThinkingStateChanged;
+        _chatSession.ActivityChanged -= OnActivityChanged;
         _catalog.PromptsUpdated -= OnPromptCatalogUpdated;
         _catalog.ResourcesUpdated -= OnResourceCatalogUpdated;
 

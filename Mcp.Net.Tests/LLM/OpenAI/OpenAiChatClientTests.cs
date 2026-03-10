@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -54,7 +53,12 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        var result = await client.SendMessageAsync("hello");
+        var result = await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
+                CreateUserTranscript("hello")
+            )
+        );
 
         var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
         assistantTurn.StopReason.Should().Be("stop");
@@ -68,7 +72,7 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task RegisterTools_CalledTwice_ShouldNotDuplicateToolsInOutboundRequest()
+    public async Task SendAsync_ShouldUseOnlyRequestToolsInOutboundRequest()
     {
         var options = new ChatClientOptions
         {
@@ -86,24 +90,15 @@ public class OpenAiChatClientTests
 
         var tools = new[]
         {
-            new Tool
-            {
-                Name = "search",
-                Description = "Search tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
-            new Tool
-            {
-                Name = "calculate",
-                Description = "Calculator",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
         };
 
-        client.RegisterTools(tools);
-        client.RegisterTools(tools);
-
-        try { await client.SendMessageAsync("hello"); } catch (InvalidOperationException) { }
+        try
+        {
+            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("hello"), tools));
+        }
+        catch (InvalidOperationException) { }
 
         completionInvoker.CapturedOptions.Should().NotBeNull();
         completionInvoker.CapturedOptions!.Tools.Should().HaveCount(2);
@@ -114,7 +109,7 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task RegisterTools_WithDifferentSets_ShouldReplaceNotAppend()
+    public async Task SendAsync_TwoCallsWithDifferentToolSets_ShouldNotRetainPriorToolState()
     {
         var options = new ChatClientOptions
         {
@@ -132,33 +127,25 @@ public class OpenAiChatClientTests
 
         var firstSet = new[]
         {
-            new Tool
-            {
-                Name = "search",
-                Description = "Search tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("search", "Search tool"),
         };
         var secondSet = new[]
         {
-            new Tool
-            {
-                Name = "calculate",
-                Description = "Calculator",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
-            new Tool
-            {
-                Name = "weather",
-                Description = "Weather tool",
-                InputSchema = JsonDocument.Parse("{}").RootElement,
-            },
+            CreateTool("calculate", "Calculator"),
+            CreateTool("weather", "Weather tool"),
         };
 
-        client.RegisterTools(firstSet);
-        client.RegisterTools(secondSet);
+        try
+        {
+            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("first"), firstSet));
+        }
+        catch (InvalidOperationException) { }
 
-        try { await client.SendMessageAsync("hello"); } catch (InvalidOperationException) { }
+        try
+        {
+            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("hello"), secondSet));
+        }
+        catch (InvalidOperationException) { }
 
         completionInvoker.CapturedOptions.Should().NotBeNull();
         completionInvoker.CapturedOptions!.Tools.Should().HaveCount(2);
@@ -187,7 +174,7 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
@@ -213,13 +200,12 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages.Should().HaveCount(1);
         completionInvoker.CapturedMessages![0].Should().BeOfType<UserChatMessage>();
-        client.GetSystemPrompt().Should().BeEmpty();
     }
 
     [Fact]
@@ -240,7 +226,7 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        await client.SendMessageAsync("hello");
+        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
 
         completionInvoker.CapturedOptions.Should().NotBeNull();
         completionInvoker.CapturedOptions!.MaxOutputTokenCount.Should().Be(321);
@@ -276,7 +262,7 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task LoadReplayTranscript_ShouldIncludePriorHistoryInFirstOutboundRequest()
+    public async Task SendAsync_ShouldIncludePriorHistoryInOutboundRequest()
     {
         var options = new ChatClientOptions
         {
@@ -292,9 +278,9 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        client.LoadReplayTranscript(
-            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
-                client.GetReplayTarget(),
+        await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "Earlier user", "turn-1"),
@@ -306,11 +292,10 @@ public class OpenAiChatClientTests
                         "openai",
                         "gpt-5"
                     ),
+                    new UserChatEntry("user-2", DateTimeOffset.UtcNow, "New question", "turn-2"),
                 }
             )
         );
-
-        await client.SendMessageAsync("New question");
 
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages!.Should().HaveCount(4);
@@ -322,7 +307,7 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task LoadReplayTranscript_WithAssistantTextAndToolCall_ShouldKeepSingleAssistantHistoryMessage()
+    public async Task SendAsync_WithAssistantTextAndToolCallHistory_ShouldKeepSingleAssistantHistoryMessage()
     {
         var options = new ChatClientOptions
         {
@@ -338,9 +323,9 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        client.LoadReplayTranscript(
-            new Mcp.Net.LLM.Replay.ProviderReplayTranscript(
-                client.GetReplayTarget(),
+        await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-3), "Use the tool", "turn-1"),
@@ -382,11 +367,10 @@ public class OpenAiChatClientTests
                         false,
                         "turn-1"
                     ),
+                    new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
         );
-
-        await client.SendMessageAsync("continue");
 
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages!.Should().HaveCount(5);
@@ -438,8 +422,8 @@ public class OpenAiChatClientTests
         );
 
         var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendMessageAsync(
-            "hello",
+        var result = await client.SendAsync(
+            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")),
             new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
         );
 
@@ -508,8 +492,8 @@ public class OpenAiChatClientTests
         );
 
         var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendMessageAsync(
-            "find weather",
+        var result = await client.SendAsync(
+            CreateRequest(options.SystemPrompt, CreateUserTranscript("find weather")),
             new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
         );
 
@@ -544,6 +528,28 @@ public class OpenAiChatClientTests
     {
         messages[0].Should().BeOfType<SystemChatMessage>();
         return messages[0].Content.Single().Text;
+    }
+
+    private static ChatClientRequest CreateRequest(
+        string? systemPrompt = null,
+        IEnumerable<ChatTranscriptEntry>? transcript = null,
+        IEnumerable<ChatClientTool>? tools = null
+    ) =>
+        new(
+            systemPrompt ?? string.Empty,
+            transcript?.ToArray() ?? Array.Empty<ChatTranscriptEntry>(),
+            tools?.ToArray() ?? Array.Empty<ChatClientTool>()
+        );
+
+    private static ChatTranscriptEntry[] CreateUserTranscript(string userMessage) =>
+        [
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow, userMessage, "turn-1"),
+        ];
+
+    private static ChatClientTool CreateTool(string name, string description)
+    {
+        using var schemaDocument = JsonDocument.Parse("{}");
+        return new ChatClientTool(name, description, schemaDocument.RootElement.Clone());
     }
 
     private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argumentsJson)

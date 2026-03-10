@@ -401,7 +401,7 @@ public class ChatController : ControllerBase
             {
                 var adapter = await GetOrCreateAdapterAsync(sessionId);
 
-                if (adapter?.GetLlmClient() is var client && client != null)
+                if (adapter != null)
                 {
                     _logger.LogInformation(
                         "Updating system prompt in existing adapter for session {SessionId}",
@@ -409,10 +409,10 @@ public class ChatController : ControllerBase
                     );
                     _logger.LogDebug(
                         "Previous system prompt: {PreviousPrompt}",
-                        client.GetSystemPrompt()
+                        adapter.GetSystemPrompt()
                     );
-                    client.SetSystemPrompt(systemPromptDto.Prompt);
-                    _logger.LogDebug("New system prompt: {NewPrompt}", client.GetSystemPrompt());
+                    adapter.SetSystemPrompt(systemPromptDto.Prompt);
+                    _logger.LogDebug("New system prompt: {NewPrompt}", adapter.GetSystemPrompt());
                     _adapterManager.MarkAdapterAsActive(sessionId);
                 }
             }

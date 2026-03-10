@@ -197,6 +197,45 @@ public class ChatHubTests
         adapterManager.Verify(m => m.MarkAdapterAsActive("session-complete"), Times.Once);
     }
 
+    [Fact]
+    public async Task SetSystemPrompt_ShouldUpdateExistingAdapterThroughAdapterSeam()
+    {
+        var repository = new Mock<IChatRepository>();
+        repository
+            .Setup(r => r.SetSystemPromptAsync("session-1", "Be concise."))
+            .Returns(Task.CompletedTask);
+
+        var adapter = new Mock<ISignalRChatAdapter>();
+
+        var adapterManager = new Mock<IChatAdapterManager>();
+        ISignalRChatAdapter adapterInstance = adapter.Object;
+        adapterManager
+            .Setup(m => m.TryGetAdapter("session-1", out adapterInstance))
+            .Returns(true);
+
+        var groupProxy = new TestClientProxy();
+        var clientsMock = new Mock<IHubCallerClients>();
+        clientsMock.Setup(c => c.Caller).Returns(new TestClientProxy());
+        clientsMock.Setup(c => c.Group("session-1")).Returns(groupProxy);
+
+        var hub = new ChatHub(
+            NullLogger<ChatHub>.Instance,
+            repository.Object,
+            new Mock<IChatFactory>().Object,
+            adapterManager.Object,
+            new Mock<ITitleGenerationService>().Object
+        )
+        {
+            Clients = clientsMock.Object,
+        };
+
+        await hub.SetSystemPrompt("session-1", "Be concise.");
+
+        adapter.Verify(a => a.SetSystemPrompt("Be concise."), Times.Once);
+        adapterManager.Verify(m => m.MarkAdapterAsActive("session-1"), Times.Once);
+        groupProxy.Messages.Should().ContainSingle(m => m.Method == "SystemPromptUpdated");
+    }
+
     private static ChatHub CreateHub(IChatAdapterManager adapterManager)
     {
         var repository = new Mock<IChatRepository>().Object;
@@ -217,6 +256,7 @@ public class ChatHubTests
         var clientsProxy = new TestClientProxy();
         var clientsMock = new Mock<IHubCallerClients>();
         clientsMock.Setup(c => c.Caller).Returns(clientsProxy);
+        clientsMock.Setup(c => c.Group(It.IsAny<string>())).Returns(clientsProxy);
         return clientsMock.Object;
     }
 
