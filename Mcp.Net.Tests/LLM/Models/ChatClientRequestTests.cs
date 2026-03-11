@@ -16,7 +16,12 @@ public class ChatClientRequestTests
     [Fact]
     public void Constructor_WithOptions_ShouldCaptureOptionsAsSnapshot()
     {
-        var options = new ChatRequestOptions { Temperature = 0.3f, MaxOutputTokens = 512 };
+        var options = new ChatRequestOptions
+        {
+            Temperature = 0.3f,
+            MaxOutputTokens = 512,
+            ToolChoice = ChatToolChoice.ForTool("search"),
+        };
 
         var request = new ChatClientRequest(
             "Be concise.",
@@ -27,5 +32,6 @@ public class ChatClientRequestTests
         request.Options.Should().NotBeNull();
         request.Options.Should().BeEquivalentTo(options);
         request.Options.Should().NotBeSameAs(options);
+        request.Options!.ToolChoice.Should().Be(options.ToolChoice);
     }
 }

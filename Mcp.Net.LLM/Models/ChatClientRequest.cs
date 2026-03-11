@@ -26,6 +26,7 @@ public sealed class ChatClientRequest
             {
                 Temperature = options.Temperature,
                 MaxOutputTokens = options.MaxOutputTokens,
+                ToolChoice = options.ToolChoice,
             };
     }
 }

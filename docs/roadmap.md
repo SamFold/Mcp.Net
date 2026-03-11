@@ -11,25 +11,30 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
-2. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
-3. Continue the `Mcp.Net.LLM` post-boundary lane: revisit the long-term provider streaming surface now that the standalone provider boundary is complete
+1. Continue the `Mcp.Net.Agent` orchestration lane with parallel tool execution after landing the first context-window management seam
+2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
+3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
+- `Mcp.Net.Agent`: `docs/roadmap/agent.md`
+  - Current focus: parallelize tool execution next, then add abort plumbing and revisit persistence/hook surfaces.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`
   - Current focus: reconnect, retry, stale-state cleanup, and HTTP `404` session-expiry behavior for Streamable HTTP request and SSE flows.
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
   - Current focus: close the remaining logging/debuggability and hidden mutable-state review findings.
-- `Mcp.Net.LLM`: `docs/roadmap/llm.md`
-  - Current focus: revisit the long-term provider streaming surface now that `Mcp.Net.LLM` is a standalone provider library; cancellation stays deferred.
 - Cross-cutting: `docs/roadmap/cross-cutting.md`
   - Current focus: repo-wide review closure, spec alignment, and examples/diagnostics work that does not belong to one owning project.
 
+## Stable / On-Demand Roadmaps
+
+- `Mcp.Net.LLM`: `docs/roadmap/llm.md`
+  - Current status: stable provider boundary with snapshot streaming ratified; reopen only when a new consumer needs another shared provider capability.
+
 ## Current cross-project dependencies
 
-- `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is now deferred rather than the next active slice.
-- The completed `Mcp.Net.LLM` metadata, option-cleanup, tool-registration, review-follow-on, `Mcp.Net.Agent` extraction, raw-client seam cleanup, helper re-home, and tool-result conversion slices already touched `Mcp.Net.WebUi`; the next LLM lane is primarily an API-shape decision rather than another project-boundary move.
+- `Mcp.Net.Agent` compaction and any later abort work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
+- `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is deferred until the client contract changes.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 
 ## On-Demand Roadmaps
@@ -45,4 +50,4 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 
 - `docs/roadmap/README.md` describes the roadmap file pattern.
 - `docs/vnext.md` is the repo-level index for commit-sized execution slices.
-- The currently active medium-term lanes are `docs/roadmap/client.md`, `docs/roadmap/server.md`, `docs/roadmap/llm.md`, and `docs/roadmap/cross-cutting.md`.
+- The currently active medium-term lanes are `docs/roadmap/agent.md`, `docs/roadmap/client.md`, `docs/roadmap/server.md`, and `docs/roadmap/cross-cutting.md`.

@@ -13,16 +13,17 @@ Use it to see which component or system tracks are active and where each next sl
 
 ## Active Tracks
 
+- `Mcp.Net.Agent`: `docs/vnext/agent.md`
+  - Current slice: parallelize independent tool execution in `ChatSession` while preserving deterministic transcript ordering and failure semantics.
 - `Mcp.Net.Server`: `docs/vnext/server.md`
   - Current slice: continue the logging/debuggability and hidden mutable state review.
 - `Mcp.Net.Client`: `docs/vnext/client.md`
   - Current slice: review reconnect, retry, and stale-state cleanup for Streamable HTTP request and SSE flows.
-- `Mcp.Net.LLM`: `docs/vnext/llm.md`
-  - Current slice: revisit whether provider streaming should stay snapshot-based or move to a breaking `IAsyncEnumerable<T>` surface.
-  - Post-parity milestone: finish converging `Mcp.Net.LLM` into a pure provider abstraction and keep session/MCP helpers on the agent side.
 
 ## On-Demand Tracks
 
+- `Mcp.Net.LLM`: `docs/vnext/llm.md`
+  - Current status: stable provider boundary; snapshot streaming is ratified, and further work is on-demand rather than an active execution lane.
 - Create additional track files under `docs/vnext/` when a component needs an independent next slice.
 - Recommended names:
   - `core.md`

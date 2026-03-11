@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ClientModel.Primitives;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -11,6 +12,7 @@ using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenAI.Chat;
+using SharedChatToolChoice = Mcp.Net.LLM.Models.ChatToolChoice;
 
 namespace Mcp.Net.Tests.LLM.OpenAI;
 
@@ -302,6 +304,84 @@ public class OpenAiChatClientTests
         completionInvoker.CapturedOptions!.Temperature.Should().BeNull();
     }
 
+    [Theory]
+    [MemberData(nameof(GetPredefinedToolChoices))]
+    public async Task SendMessageAsync_WithPredefinedRequestToolChoice_ShouldSetCompletionToolChoice(
+        SharedChatToolChoice toolChoice,
+        string expectedJson
+    )
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+        var requestOptions = new ChatRequestOptions { ToolChoice = toolChoice };
+        var tools = new[]
+        {
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                "Use tools when needed.",
+                CreateUserTranscript("hello"),
+                tools,
+                requestOptions
+            )
+        ).GetResultAsync();
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().HaveCount(2);
+        completionInvoker.CapturedOptions.ToolChoice.Should().NotBeNull();
+        SerializeOpenAiToolChoice(completionInvoker.CapturedOptions.ToolChoice!).Should().Be(expectedJson);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithSpecificRequestToolChoice_ShouldSetFunctionChoice()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+        var requestOptions = new ChatRequestOptions
+        {
+            ToolChoice = SharedChatToolChoice.ForTool("search"),
+        };
+        var tools = new[]
+        {
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
+        };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                "Use tools when needed.",
+                CreateUserTranscript("hello"),
+                tools,
+                requestOptions
+            )
+        ).GetResultAsync();
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.ToolChoice.Should().NotBeNull();
+
+        using var json = JsonDocument.Parse(
+            ModelReaderWriter.Write(completionInvoker.CapturedOptions.ToolChoice!)
+        );
+
+        json.RootElement.GetProperty("type").GetString().Should().Be("function");
+        json.RootElement.GetProperty("function").GetProperty("name").GetString().Should().Be("search");
+    }
+
     [Fact]
     public void ParseToolArguments_WithNestedObjectAndArray_ShouldPreserveStructuredValues()
     {
@@ -580,6 +660,13 @@ public class OpenAiChatClientTests
         return messages[0].Content.Single().Text;
     }
 
+    public static IEnumerable<object[]> GetPredefinedToolChoices()
+    {
+        yield return [SharedChatToolChoice.Auto, "\"auto\""];
+        yield return [SharedChatToolChoice.None, "\"none\""];
+        yield return [SharedChatToolChoice.Required, "\"required\""];
+    }
+
     private static ChatClientRequest CreateRequest(
         string? systemPrompt = null,
         IEnumerable<ChatTranscriptEntry>? transcript = null,
@@ -616,6 +703,9 @@ public class OpenAiChatClientTests
         return (IReadOnlyDictionary<string, object?>)
             parseMethod!.Invoke(null, new object[] { argumentsJson })!;
     }
+
+    private static string SerializeOpenAiToolChoice(global::OpenAI.Chat.ChatToolChoice toolChoice) =>
+        ModelReaderWriter.Write(toolChoice).ToString();
 
     private static async Task<(List<ChatClientAssistantTurn> Updates, ChatClientTurnResult Result)>
         ExecuteStreamAsync(IChatCompletionStream stream, CancellationToken cancellationToken = default)

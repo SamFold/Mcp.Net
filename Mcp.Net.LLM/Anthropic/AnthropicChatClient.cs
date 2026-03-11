@@ -100,12 +100,16 @@ public sealed class AnthropicChatClient : IChatClient
 
     private MessageParameters CreateMessageParameters(ChatClientRequest request, bool stream = false)
     {
+        var tools = request.Options?.ToolChoice?.Kind == ChatToolChoiceKind.None
+            ? new List<Tool>()
+            : request.Tools.Select(ConvertToAnthropicTool).ToList();
+
         var parameters = new MessageParameters
         {
             Model = _model,
             MaxTokens = request.Options?.MaxOutputTokens ?? 1024,
             Messages = BuildMessages(request),
-            Tools = request.Tools.Select(ConvertToAnthropicTool).ToList(),
+            Tools = tools,
             System = string.IsNullOrWhiteSpace(request.SystemPrompt)
                 ? []
                 : [new SystemMessage(request.SystemPrompt)],
@@ -115,6 +119,22 @@ public sealed class AnthropicChatClient : IChatClient
         if (request.Options?.Temperature is float temperature)
         {
             parameters.Temperature = Convert.ToDecimal(temperature);
+        }
+
+        if (request.Options?.ToolChoice is { } toolChoice)
+        {
+            parameters.ToolChoice = toolChoice.Kind switch
+            {
+                ChatToolChoiceKind.Auto => new ToolChoice { Type = ToolChoiceType.Auto },
+                ChatToolChoiceKind.None => null,
+                ChatToolChoiceKind.Required => new ToolChoice { Type = ToolChoiceType.Any },
+                ChatToolChoiceKind.Specific => new ToolChoice
+                {
+                    Type = ToolChoiceType.Tool,
+                    Name = toolChoice.ToolName!,
+                },
+                _ => throw new ArgumentOutOfRangeException(nameof(toolChoice)),
+            };
         }
 
         return parameters;

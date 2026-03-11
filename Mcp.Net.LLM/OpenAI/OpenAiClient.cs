@@ -10,6 +10,7 @@ using Mcp.Net.LLM.Replay;
 using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Chat;
+using SharedChatToolChoiceKind = Mcp.Net.LLM.Models.ChatToolChoiceKind;
 
 namespace Mcp.Net.LLM.OpenAI;
 
@@ -122,6 +123,20 @@ public sealed class OpenAiChatClient : IChatClient
         foreach (var tool in request.Tools)
         {
             completionOptions.Tools.Add(ConvertToChatTool(tool));
+        }
+
+        if (request.Options?.ToolChoice is { } toolChoice)
+        {
+            completionOptions.ToolChoice = toolChoice.Kind switch
+            {
+                SharedChatToolChoiceKind.Auto => global::OpenAI.Chat.ChatToolChoice.CreateAutoChoice(),
+                SharedChatToolChoiceKind.None => global::OpenAI.Chat.ChatToolChoice.CreateNoneChoice(),
+                SharedChatToolChoiceKind.Required => global::OpenAI.Chat.ChatToolChoice.CreateRequiredChoice(),
+                SharedChatToolChoiceKind.Specific => global::OpenAI.Chat.ChatToolChoice.CreateFunctionChoice(
+                    toolChoice.ToolName!
+                ),
+                _ => throw new ArgumentOutOfRangeException(nameof(toolChoice)),
+            };
         }
 
         return completionOptions;

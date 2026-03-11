@@ -1,6 +1,7 @@
 using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
+using Mcp.Net.Agent.Compaction;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
@@ -20,6 +21,7 @@ public class ChatSession : IChatSessionEvents
     private readonly IChatClient _llmClient;
     private readonly IMcpClient _mcpClient;
     private readonly IToolRegistry _toolRegistry;
+    private readonly IChatTranscriptCompactor _transcriptCompactor;
     private readonly ILogger<ChatSession> _logger;
     private readonly List<ChatTranscriptEntry> _transcript = new();
     private readonly List<Tool> _registeredTools = new();
@@ -67,12 +69,14 @@ public class ChatSession : IChatSessionEvents
         IChatClient llmClient,
         IMcpClient mcpClient,
         IToolRegistry toolRegistry,
-        ILogger<ChatSession> logger
+        ILogger<ChatSession> logger,
+        IChatTranscriptCompactor? transcriptCompactor = null
     )
     {
         _llmClient = llmClient;
         _mcpClient = mcpClient;
         _toolRegistry = toolRegistry;
+        _transcriptCompactor = transcriptCompactor ?? EntryCountChatTranscriptCompactor.Default;
         _logger = logger;
         _createdAt = DateTime.UtcNow;
         _lastActivityAt = _createdAt;
@@ -455,17 +459,33 @@ public class ChatSession : IChatSessionEvents
         RegisterTools(selectedTools);
     }
 
-    private ChatClientRequest BuildRequest() =>
-        new(
+    private ChatClientRequest BuildRequest()
+    {
+        var compactedTranscript = _transcriptCompactor.Compact(_transcript);
+        if (compactedTranscript.Count != _transcript.Count)
+        {
+            _logger.LogDebug(
+                "Compacted transcript from {OriginalCount} to {CompactedCount} entries before provider request",
+                _transcript.Count,
+                compactedTranscript.Count
+            );
+        }
+
+        return new ChatClientRequest(
             _systemPrompt,
-            _transcript,
+            compactedTranscript,
             _registeredTools.Select(tool => new ChatClientTool(tool.Name, tool.Description, tool.InputSchema)).ToArray(),
             BuildRequestOptions()
         );
+    }
 
     private ChatRequestOptions? BuildRequestOptions()
     {
-        if (_executionDefaults.Temperature is null && _executionDefaults.MaxOutputTokens is null)
+        if (
+            _executionDefaults.Temperature is null
+            && _executionDefaults.MaxOutputTokens is null
+            && _executionDefaults.ToolChoice is null
+        )
         {
             return null;
         }
@@ -474,6 +494,7 @@ public class ChatSession : IChatSessionEvents
         {
             Temperature = _executionDefaults.Temperature,
             MaxOutputTokens = _executionDefaults.MaxOutputTokens,
+            ToolChoice = _executionDefaults.ToolChoice,
         };
     }
 

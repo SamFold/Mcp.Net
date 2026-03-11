@@ -406,6 +406,130 @@ public class AnthropicChatClientTests
         messageClient.LastParameters.MaxTokens.Should().Be(999);
     }
 
+    [Theory]
+    [InlineData(ChatToolChoiceKind.Auto, ToolChoiceType.Auto)]
+    [InlineData(ChatToolChoiceKind.Required, ToolChoiceType.Any)]
+    public async Task SendMessageAsync_WithPredefinedRequestToolChoice_ShouldMapToolChoice(
+        ChatToolChoiceKind choiceKind,
+        ToolChoiceType expectedType
+    )
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+        var requestOptions = new ChatRequestOptions
+        {
+            ToolChoice = choiceKind switch
+            {
+                ChatToolChoiceKind.Auto => ChatToolChoice.Auto,
+                ChatToolChoiceKind.Required => ChatToolChoice.Required,
+                _ => throw new InvalidOperationException("Unexpected tool choice kind."),
+            },
+        };
+        var tools = new[]
+        {
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("hello"),
+                tools,
+                requestOptions
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Tools.Should().HaveCount(2);
+        messageClient.LastParameters.ToolChoice.Should().NotBeNull();
+        messageClient.LastParameters.ToolChoice!.Type.Should().Be(expectedType);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithSpecificRequestToolChoice_ShouldMapToolChoiceName()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+        var requestOptions = new ChatRequestOptions
+        {
+            ToolChoice = ChatToolChoice.ForTool("search"),
+        };
+        var tools = new[]
+        {
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("hello"),
+                tools,
+                requestOptions
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Tools.Should().HaveCount(2);
+        messageClient.LastParameters.ToolChoice.Should().NotBeNull();
+        messageClient.LastParameters.ToolChoice!.Type.Should().Be(ToolChoiceType.Tool);
+        messageClient.LastParameters.ToolChoice.Name.Should().Be("search");
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestToolChoiceNone_ShouldSuppressToolsForAnthropic()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+        var requestOptions = new ChatRequestOptions
+        {
+            ToolChoice = ChatToolChoice.None,
+        };
+        var tools = new[]
+        {
+            CreateTool("search", "Search tool"),
+            CreateTool("calculate", "Calculator"),
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("hello"),
+                tools,
+                requestOptions
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Tools.Should().BeEmpty();
+        messageClient.LastParameters.ToolChoice.Should().BeNull();
+    }
+
     [Fact]
     public async Task SendAsync_ShouldIncludePriorHistoryInOutboundRequest()
     {

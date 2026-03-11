@@ -4,6 +4,7 @@ using FluentAssertions;
 using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
+using Mcp.Net.Agent.Compaction;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
@@ -538,6 +539,51 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_ShouldIncludeConfiguredToolChoiceInProviderRequest()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        toolRegistry.SetupGet(r => r.EnabledTools).Returns(Array.Empty<Tool>());
+        toolRegistry.SetupGet(r => r.AllTools).Returns(Array.Empty<Tool>());
+
+        ChatClientRequest? capturedRequest = null;
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ChatClientRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                    )
+                )
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        session.SetExecutionDefaults(
+            new AgentExecutionDefaults
+            {
+                ToolChoice = ChatToolChoice.ForTool("search"),
+            }
+        );
+
+        await session.SendUserMessageAsync("hello");
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Options.Should().NotBeNull();
+        capturedRequest.Options!.ToolChoice.Should().BeEquivalentTo(ChatToolChoice.ForTool("search"));
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromSessionState()
     {
         var llmClient = new Mock<IChatClient>();
@@ -586,6 +632,77 @@ public class ChatSessionTests
         capturedRequest.Tools.Should().ContainSingle();
         capturedRequest.Tools[0].Name.Should().Be("search");
         capturedRequest.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_ShouldCompactTranscriptBeforeBuildingProviderRequest()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var compactor = new EntryCountChatTranscriptCompactor(
+            new ChatTranscriptCompactionOptions
+            {
+                MaxEntryCount = 4,
+                PreservedRecentEntryCount = 2,
+                SummaryEntryCount = 6,
+            }
+        );
+
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-5), "first question", "turn-1"),
+            new AssistantChatEntry(
+                "assistant-1",
+                DateTimeOffset.UtcNow.AddMinutes(-4),
+                new AssistantContentBlock[] { new TextAssistantBlock("text-1", "first answer") },
+                "turn-1"
+            ),
+            new UserChatEntry("user-2", DateTimeOffset.UtcNow.AddMinutes(-3), "second question", "turn-2"),
+            new AssistantChatEntry(
+                "assistant-2",
+                DateTimeOffset.UtcNow.AddMinutes(-2),
+                new AssistantContentBlock[] { new TextAssistantBlock("text-2", "second answer") },
+                "turn-2"
+            ),
+        };
+
+        ChatClientRequest? capturedRequest = null;
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ChatClientRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-3",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-3", "current answer") }
+                    )
+                )
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance,
+            compactor
+        );
+
+        await session.LoadTranscriptAsync(transcript);
+        await session.SendUserMessageAsync("current question");
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Transcript.Should().HaveCount(4);
+        capturedRequest.Transcript[0].Should().BeOfType<AssistantChatEntry>();
+        capturedRequest.Transcript[1].Id.Should().Be("user-2");
+        capturedRequest.Transcript[2].Id.Should().Be("assistant-2");
+        capturedRequest.Transcript[3].Should().BeOfType<UserChatEntry>().Which.Content.Should().Be("current question");
+
+        session.Transcript.Should().HaveCount(6);
+        session.Transcript.Select(entry => entry.Id).Should().Contain("user-1");
+        session.Transcript.Select(entry => entry.Id).Should().Contain("assistant-1");
     }
 
     [Fact]
