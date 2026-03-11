@@ -45,14 +45,12 @@ The provider boundary is now clean: `Mcp.Net.LLM` is a standalone provider libra
 The target shape is closer to a provider executor:
 
 ```csharp
-var request = new ChatRequestContext(
+var request = new ChatClientRequest(
     systemPrompt,
     transcript,
-    tools,
-    pendingUserMessage,
-    pendingToolResults);
+    tools);
 
-var result = await chatClient.SendAsync(request, updates, cancellationToken);
+var result = await chatClient.SendAsync(request, cancellationToken: cancellationToken);
 ```
 
 In that model:
@@ -60,6 +58,7 @@ In that model:
 - `ChatSession` owns prompt, tools, transcript, and resume/reset behavior.
 - `Mcp.Net.LLM` translates an explicit request into provider SDK calls.
 - replay transforms run when building the provider request from transcript state.
+- The streaming transport now uses an async-stream wrapper: callers can `await foreach` `ChatClientAssistantTurn` snapshots and separately await `GetResultAsync()` for the final `ChatClientTurnResult`.
 
 ## Immediate follow-on slices
 
@@ -67,4 +66,5 @@ In that model:
 2. Completed: move `PromptResourceCatalog`, `CompletionService`, `ElicitationCoordinator`, and related interfaces out of `Mcp.Net.LLM` to the agent/session side.
 3. Completed: move MCP `ToolCallResult` / content-model conversion out of `ToolInvocationResult` so `Mcp.Net.LLM` no longer needs any project references.
 4. Completed: remove the old MCP tool-model coupling from `Mcp.Net.LLM` by replacing `ToolConverter` and `Mcp.Net.Core.Models.Tools.Tool` usage with an LLM-local tool contract.
-5. Next: revisit whether the provider streaming API should stay snapshot-based or move to a breaking `IAsyncEnumerable<T>` surface now that the boundary work is done.
+5. Completed: add the Anthropic streamed reasoning/text/tool-call ordering regression, then replace the `IProgress<ChatClientAssistantTurn>` transport with an async-stream wrapper while keeping `ChatClientAssistantTurn` as the streamed payload for that slice.
+6. Next: decide whether `ChatClientAssistantTurn` snapshots remain the long-term async-stream payload or whether concrete consumer pressure warrants a richer event model.
