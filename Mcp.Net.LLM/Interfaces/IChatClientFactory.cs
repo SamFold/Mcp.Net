@@ -1,5 +1,6 @@
-using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
+
+namespace Mcp.Net.LLM.Interfaces;
 
 public interface IChatClientFactory
 {
