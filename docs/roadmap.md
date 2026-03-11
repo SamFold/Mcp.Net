@@ -11,14 +11,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Continue the `Mcp.Net.Agent` orchestration lane with parallel tool execution after landing the first context-window management seam
+1. Continue the `Mcp.Net.Agent` orchestration lane with session-level abort plumbing after landing compaction and parallel tool execution
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: parallelize tool execution next, then add abort plumbing and revisit persistence/hook surfaces.
+  - Current focus: add abort plumbing next, then revisit persistence and hook/extension surfaces.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`
   - Current focus: reconnect, retry, stale-state cleanup, and HTTP `404` session-expiry behavior for Streamable HTTP request and SSE flows.
 - `Mcp.Net.Server`: `docs/roadmap/server.md`

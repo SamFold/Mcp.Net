@@ -14,7 +14,7 @@ Use it to see which component or system tracks are active and where each next sl
 ## Active Tracks
 
 - `Mcp.Net.Agent`: `docs/vnext/agent.md`
-  - Current slice: parallelize independent tool execution in `ChatSession` while preserving deterministic transcript ordering and failure semantics.
+  - Current slice: add session-level abort plumbing in `ChatSession` without claiming full MCP tool-call cancellation yet.
 - `Mcp.Net.Server`: `docs/vnext/server.md`
   - Current slice: continue the logging/debuggability and hidden mutable state review.
 - `Mcp.Net.Client`: `docs/vnext/client.md`

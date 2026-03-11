@@ -281,14 +281,17 @@ public class ChatSession : IChatSessionEvents
 
         try
         {
-            var results = new List<ToolInvocationResult>();
+            var tasks = toolCalls
+                .Select(toolCall => ExecuteToolCallAsync(toolCall, turnId))
+                .ToArray();
+            var results = await Task.WhenAll(tasks);
 
-            foreach (var toolCall in toolCalls)
+            for (var index = 0; index < toolCalls.Count; index++)
             {
-                results.Add(await ExecuteToolCallAsync(toolCall, turnId));
+                AppendToolResultTranscript(toolCalls[index], results[index], turnId);
             }
 
-            return results;
+            return results.ToList();
         }
         finally
         {
@@ -330,18 +333,6 @@ public class ChatSession : IChatSessionEvents
                 )
             );
 
-            AppendTranscript(
-                new ToolResultChatEntry(
-                    Guid.NewGuid().ToString("n"),
-                    DateTimeOffset.UtcNow,
-                    toolCall.ToolCallId,
-                    toolCall.ToolName,
-                    missingResult,
-                    true,
-                    turnId
-                )
-            );
-
             return missingResult;
         }
 
@@ -380,18 +371,6 @@ public class ChatSession : IChatSessionEvents
                 )
             );
 
-            AppendTranscript(
-                new ToolResultChatEntry(
-                    Guid.NewGuid().ToString("n"),
-                    DateTimeOffset.UtcNow,
-                    toolCall.ToolCallId,
-                    toolCall.ToolName,
-                    invocationResult,
-                    invocationResult.IsError,
-                    turnId
-                )
-            );
-
             return invocationResult;
         }
         catch (Exception ex)
@@ -417,20 +396,27 @@ public class ChatSession : IChatSessionEvents
                 )
             );
 
-            AppendTranscript(
-                new ToolResultChatEntry(
-                    Guid.NewGuid().ToString("n"),
-                    DateTimeOffset.UtcNow,
-                    toolCall.ToolCallId,
-                    toolCall.ToolName,
-                    errorResult,
-                    true,
-                    turnId
-                )
-            );
-
             return errorResult;
         }
+    }
+
+    private void AppendToolResultTranscript(
+        ToolCallAssistantBlock toolCall,
+        ToolInvocationResult result,
+        string turnId
+    )
+    {
+        AppendTranscript(
+            new ToolResultChatEntry(
+                Guid.NewGuid().ToString("n"),
+                DateTimeOffset.UtcNow,
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                result,
+                result.IsError,
+                turnId
+            )
+        );
     }
 
     private void AppendTranscript(

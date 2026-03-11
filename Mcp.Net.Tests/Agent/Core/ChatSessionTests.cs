@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
@@ -336,6 +337,285 @@ public class ChatSessionTests
         toolActivities.Select(activity => activity.ExecutionState)
             .Should()
             .ContainInOrder(ToolCallExecutionState.Queued, ToolCallExecutionState.Running, ToolCallExecutionState.Completed);
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_MultipleToolCalls_ShouldAppendTranscriptEntriesInToolCallOrder()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var runningToolCalls = new ConcurrentDictionary<string, byte>();
+        var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
+        var capturedRequests = new ConcurrentQueue<ChatClientRequest>();
+
+        using var searchSchema = System.Text.Json.JsonDocument.Parse("{}");
+        var searchTool = new Tool
+        {
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = searchSchema.RootElement.Clone(),
+        };
+
+        using var calculatorSchema = System.Text.Json.JsonDocument.Parse("{}");
+        var calculatorTool = new Tool
+        {
+            Name = "calculate",
+            Description = "Performs calculations",
+            InputSchema = calculatorSchema.RootElement.Clone(),
+        };
+
+        toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
+        toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
+
+        var searchCompletion = new TaskCompletionSource<ToolCallResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var calculatorCompletion = new TaskCompletionSource<ToolCallResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        mcpClient
+            .Setup(c => c.CallTool("search", It.IsAny<object?>()))
+            .Returns(() => searchCompletion.Task);
+        mcpClient
+            .Setup(c => c.CallTool("calculate", It.IsAny<object?>()))
+            .Returns(() => calculatorCompletion.Task);
+
+        var providerCallCount = 0;
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (
+                    ChatClientRequest request,
+                    CancellationToken _
+                ) =>
+                {
+                    capturedRequests.Enqueue(request);
+                    providerCallCount++;
+
+                    return providerCallCount == 1
+                        ? CreateResultStream(
+                            new ChatClientAssistantTurn(
+                                "turn-1",
+                                "openai",
+                                "gpt-5",
+                                new AssistantContentBlock[]
+                                {
+                                    new ToolCallAssistantBlock(
+                                        "tool-block-1",
+                                        "call-1",
+                                        "search",
+                                        new Dictionary<string, object?> { ["query"] = "weather" }
+                                    ),
+                                    new ToolCallAssistantBlock(
+                                        "tool-block-2",
+                                        "call-2",
+                                        "calculate",
+                                        new Dictionary<string, object?> { ["expression"] = "2+2" }
+                                    ),
+                                }
+                            )
+                        )
+                        : CreateResultStream(
+                            new ChatClientAssistantTurn(
+                                "turn-2",
+                                "openai",
+                                "gpt-5",
+                                new AssistantContentBlock[]
+                                {
+                                    new TextAssistantBlock("text-1", "done"),
+                                }
+                            )
+                        );
+                }
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        session.ToolCallActivityChanged += (_, args) =>
+        {
+            toolActivities.Enqueue(args);
+
+            if (args.ExecutionState == ToolCallExecutionState.Running)
+            {
+                runningToolCalls.TryAdd(args.ToolCallId, 0);
+                if (runningToolCalls.Count == 2)
+                {
+                    allToolsRunning.TrySetResult();
+                }
+            }
+        };
+
+        var sendTask = session.SendUserMessageAsync("run both tools");
+
+        await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        toolActivities
+            .Select(activity => activity.ExecutionState)
+            .Should()
+            .OnlyContain(state =>
+                state == ToolCallExecutionState.Queued || state == ToolCallExecutionState.Running
+            );
+
+        calculatorCompletion.SetResult(
+            new ToolCallResult
+            {
+                IsError = false,
+                Content = new ContentBase[] { new TextContent { Text = "4" } },
+            }
+        );
+        searchCompletion.SetResult(
+            new ToolCallResult
+            {
+                IsError = false,
+                Content = new ContentBase[] { new TextContent { Text = "sunny" } },
+            }
+        );
+
+        await sendTask;
+
+        var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
+        toolResults.Should().HaveCount(2);
+        toolResults.Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
+        toolResults.SelectMany(entry => entry.Result.Text).Should().Contain(new[] { "sunny", "4" });
+
+        capturedRequests.Should().HaveCount(2);
+        var secondRequest = capturedRequests.Last();
+        secondRequest.Transcript.OfType<ToolResultChatEntry>().Select(entry => entry.ToolCallId)
+            .Should()
+            .Equal("call-1", "call-2");
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_MultipleToolCalls_ShouldAppendAllResultsInOrderWhenOneToolFails()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var runningToolCalls = new ConcurrentDictionary<string, byte>();
+        var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var searchSchema = System.Text.Json.JsonDocument.Parse("{}");
+        var searchTool = new Tool
+        {
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = searchSchema.RootElement.Clone(),
+        };
+
+        using var calculatorSchema = System.Text.Json.JsonDocument.Parse("{}");
+        var calculatorTool = new Tool
+        {
+            Name = "calculate",
+            Description = "Performs calculations",
+            InputSchema = calculatorSchema.RootElement.Clone(),
+        };
+
+        toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
+        toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
+
+        var searchCompletion = new TaskCompletionSource<ToolCallResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var calculatorCompletion = new TaskCompletionSource<ToolCallResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        mcpClient
+            .Setup(c => c.CallTool("search", It.IsAny<object?>()))
+            .Returns(() => searchCompletion.Task);
+        mcpClient
+            .Setup(c => c.CallTool("calculate", It.IsAny<object?>()))
+            .Returns(() => calculatorCompletion.Task);
+
+        llmClient
+            .SetupSequence(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                "tool-block-1",
+                                "call-1",
+                                "search",
+                                new Dictionary<string, object?> { ["query"] = "weather" }
+                            ),
+                            new ToolCallAssistantBlock(
+                                "tool-block-2",
+                                "call-2",
+                                "calculate",
+                                new Dictionary<string, object?> { ["expression"] = "2+2" }
+                            ),
+                        }
+                    )
+                )
+            )
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-2",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new TextAssistantBlock("text-1", "done"),
+                        }
+                    )
+                )
+            );
+
+        var session = new ChatSession(
+            llmClient.Object,
+            mcpClient.Object,
+            toolRegistry.Object,
+            NullLogger<ChatSession>.Instance
+        );
+
+        session.ToolCallActivityChanged += (_, args) =>
+        {
+            if (args.ExecutionState == ToolCallExecutionState.Running)
+            {
+                runningToolCalls.TryAdd(args.ToolCallId, 0);
+                if (runningToolCalls.Count == 2)
+                {
+                    allToolsRunning.TrySetResult();
+                }
+            }
+        };
+
+        var sendTask = session.SendUserMessageAsync("run both tools");
+
+        await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        calculatorCompletion.SetException(new InvalidOperationException("calculation failed"));
+        searchCompletion.SetResult(
+            new ToolCallResult
+            {
+                IsError = false,
+                Content = new ContentBase[] { new TextContent { Text = "sunny" } },
+            }
+        );
+
+        await sendTask;
+
+        var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
+        toolResults.Should().HaveCount(2);
+        toolResults.Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
+        toolResults[0].IsError.Should().BeFalse();
+        toolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
+        toolResults[1].IsError.Should().BeTrue();
+        toolResults[1].Result.Text.Single().Should().Contain("calculation failed");
     }
 
     [Fact]
