@@ -46,7 +46,6 @@ public static class AgentExtensions
         return new ChatSession(
             chatClient,
             toolExecutor,
-            toolRegistry,
             logger,
             agent.ToChatSessionConfiguration(toolRegistry)
         );
@@ -79,7 +78,6 @@ public static class AgentExtensions
         return new ChatSession(
             chatClient,
             toolExecutor,
-            toolRegistry,
             logger,
             agent.ToChatSessionConfiguration(toolRegistry)
         );

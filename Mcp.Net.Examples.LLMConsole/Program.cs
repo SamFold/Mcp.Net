@@ -338,7 +338,6 @@ public class Program
         var chatSession = new ChatSession(
             chatClient,
             new McpToolExecutor(mcpClient, toolExecutorLogger),
-            toolRegistry,
             chatSessionLogger
         );
         chatSession.RegisterTools(toolRegistry.EnabledTools);

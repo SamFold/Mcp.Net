@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using Mcp.Net.Client.Interfaces;
+using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Agent.Compaction;
 using Mcp.Net.Agent.Core;
@@ -230,11 +232,66 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_WhenProviderRequestIsCanceled_ShouldThrowWithoutAppendingErrorEntry()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var activities = new List<ChatSessionActivity>();
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            cancellationToken.Should().Be(cancellationTokenSource.Token);
+                            providerStarted.TrySetResult();
+
+                            using var registration = streamCancellationToken.Register(() =>
+                                providerCanceled.TrySetResult()
+                            );
+
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        session.ActivityChanged += (_, args) => activities.Add(args.Activity);
+
+        var sendTask = session.SendUserMessageAsync("hello", cancellationTokenSource.Token);
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        cancellationTokenSource.Cancel();
+
+        await providerCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+
+        session.Transcript.Should().ContainSingle(entry => entry is UserChatEntry);
+        session.Transcript.Should().NotContain(entry => entry is ErrorChatEntry);
+        activities.Should().ContainInOrder(ChatSessionActivity.WaitingForProvider, ChatSessionActivity.Idle);
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ToolExecution_ShouldEmitActivityAndAppendToolResultEntry()
     {
         var llmClient = new Mock<IChatClient>();
         var toolExecutor = new Mock<IToolExecutor>();
-        var toolRegistry = new Mock<IToolRegistry>();
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
 
         var toolInvocationBlock = new ToolCallAssistantBlock(
             "tool-block-1",
@@ -275,8 +332,6 @@ public class ChatSessionTests
             InputSchema = schemaDocument.RootElement.Clone(),
         };
 
-        toolRegistry.Setup(r => r.GetToolByName("calculator_add")).Returns(tool);
-
         toolExecutor
             .Setup(e => e.ExecuteAsync(
                 It.Is<RuntimeToolInvocation>(invocation =>
@@ -291,6 +346,7 @@ public class ChatSessionTests
             .ReturnsAsync(CreateToolResult("call-1", "calculator_add", "5"));
 
         var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { tool });
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         var toolActivities = new List<ToolCallActivityChangedEventArgs>();
@@ -317,7 +373,7 @@ public class ChatSessionTests
     {
         var llmClient = new Mock<IChatClient>();
         var toolExecutor = new Mock<IToolExecutor>();
-        var toolRegistry = new Mock<IToolRegistry>();
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
         var runningToolCalls = new ConcurrentDictionary<string, byte>();
         var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
@@ -338,9 +394,6 @@ public class ChatSessionTests
             Description = "Performs calculations",
             InputSchema = calculatorSchema.RootElement.Clone(),
         };
-
-        toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
-        toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
 
         var searchCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -416,6 +469,7 @@ public class ChatSessionTests
             );
 
         var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { searchTool, calculatorTool });
 
         session.ToolCallActivityChanged += (_, args) =>
         {
@@ -464,7 +518,7 @@ public class ChatSessionTests
     {
         var llmClient = new Mock<IChatClient>();
         var toolExecutor = new Mock<IToolExecutor>();
-        var toolRegistry = new Mock<IToolRegistry>();
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
         var runningToolCalls = new ConcurrentDictionary<string, byte>();
         var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
@@ -484,9 +538,6 @@ public class ChatSessionTests
             Description = "Performs calculations",
             InputSchema = calculatorSchema.RootElement.Clone(),
         };
-
-        toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
-        toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
 
         var searchCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -553,6 +604,7 @@ public class ChatSessionTests
             );
 
         var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { searchTool, calculatorTool });
 
         session.ToolCallActivityChanged += (_, args) =>
         {
@@ -599,6 +651,311 @@ public class ChatSessionTests
                 ToolCallExecutionState.Running,
                 ToolCallExecutionState.Failed
             );
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_MixedLocalAndMcpToolCalls_ShouldAppendTranscriptEntriesInToolCallOrder()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var mcpClient = new Mock<IMcpClient>();
+        var runningToolCalls = new ConcurrentDictionary<string, byte>();
+        var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
+
+        var localCompletion = new TaskCompletionSource<ToolInvocationResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var remoteCompletion = new TaskCompletionSource<ToolCallResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        var localTool = new TestLocalTool(
+            CreateToolDescriptor("search_local", "Searches local documents"),
+            (_, _) => localCompletion.Task
+        );
+        var remoteTool = CreateToolDescriptor("calculate_remote", "Performs remote calculations");
+
+        mcpClient
+            .Setup(client => client.CallTool("calculate_remote", It.IsAny<object?>()))
+            .Returns(() => remoteCompletion.Task);
+
+        llmClient
+            .SetupSequence(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                "tool-block-1",
+                                "call-1",
+                                "search_local",
+                                new Dictionary<string, object?> { ["query"] = "weather" }
+                            ),
+                            new ToolCallAssistantBlock(
+                                "tool-block-2",
+                                "call-2",
+                                "calculate_remote",
+                                new Dictionary<string, object?> { ["expression"] = "2+2" }
+                            ),
+                        }
+                    )
+                )
+            )
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-2",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new TextAssistantBlock("text-1", "done"),
+                        }
+                    )
+                )
+            );
+
+        var toolExecutor = new CompositeToolExecutor(
+            new LocalToolExecutor(new[] { localTool }),
+            new McpToolExecutor(mcpClient.Object, NullLogger<McpToolExecutor>.Instance)
+        );
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>(), toolExecutor: toolExecutor);
+        session.RegisterTools(new[] { localTool.Descriptor, remoteTool });
+
+        session.ToolCallActivityChanged += (_, args) =>
+        {
+            toolActivities.Enqueue(args);
+
+            if (args.ExecutionState == ToolCallExecutionState.Running)
+            {
+                runningToolCalls.TryAdd(args.ToolCallId, 0);
+                if (runningToolCalls.Count == 2)
+                {
+                    allToolsRunning.TrySetResult();
+                }
+            }
+        };
+
+        var sendTask = session.SendUserMessageAsync("run both tools");
+
+        await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        remoteCompletion.SetResult(CreateMcpToolCallResult("4"));
+        localCompletion.SetResult(CreateToolResult("call-1", "search_local", "sunny"));
+
+        await sendTask;
+
+        var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
+        toolResults.Should().HaveCount(2);
+        toolResults.Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
+        toolResults[0].ToolName.Should().Be("search_local");
+        toolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
+        toolResults[1].ToolName.Should().Be("calculate_remote");
+        toolResults[1].Result.Text.Should().ContainSingle().Which.Should().Be("4");
+
+        toolActivities.Where(activity => activity.ToolCallId == "call-1").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Completed
+            );
+        toolActivities.Where(activity => activity.ToolCallId == "call-2").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Completed
+            );
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_WhenToolExecutionIsCanceled_ShouldAppendCompletedResultsAndCancelRemainingTools()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
+        var runningToolCalls = new ConcurrentDictionary<string, byte>();
+        var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var completedTool = CreateToolDescriptor("search", "Searches documents");
+        var canceledTool = CreateToolDescriptor("calculate", "Performs calculations");
+        var completedToolResult = new TaskCompletionSource<ToolInvocationResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var canceledToolObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-1" && invocation.ToolName == "search"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(() => completedToolResult.Task);
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-2" && invocation.ToolName == "calculate"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(
+                async (RuntimeToolInvocation _, CancellationToken cancellationToken) =>
+                {
+                    using var registration = cancellationToken.Register(() =>
+                        canceledToolObserved.TrySetResult()
+                    );
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return CreateToolResult("call-2", "calculate", "unreachable");
+                }
+            );
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                "tool-block-1",
+                                "call-1",
+                                "search",
+                                new Dictionary<string, object?> { ["query"] = "weather" }
+                            ),
+                            new ToolCallAssistantBlock(
+                                "tool-block-2",
+                                "call-2",
+                                "calculate",
+                                new Dictionary<string, object?> { ["expression"] = "2+2" }
+                            ),
+                        }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { completedTool, canceledTool });
+        session.ToolCallActivityChanged += (_, args) =>
+        {
+            toolActivities.Enqueue(args);
+
+            if (args.ExecutionState == ToolCallExecutionState.Running)
+            {
+                runningToolCalls.TryAdd(args.ToolCallId, 0);
+                if (runningToolCalls.Count == 2)
+                {
+                    allToolsRunning.TrySetResult();
+                }
+            }
+        };
+
+        var sendTask = session.SendUserMessageAsync("run both tools", cancellationTokenSource.Token);
+
+        await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completedToolResult.SetResult(CreateToolResult("call-1", "search", "sunny"));
+        cancellationTokenSource.Cancel();
+
+        await canceledToolObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+
+        var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
+        toolResults.Should().ContainSingle();
+        toolResults[0].ToolCallId.Should().Be("call-1");
+        toolResults[0].ToolName.Should().Be("search");
+        toolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
+
+        toolActivities.Where(activity => activity.ToolCallId == "call-1").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Completed
+            );
+        toolActivities.Where(activity => activity.ToolCallId == "call-2").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Cancelled
+            );
+
+        llmClient.Verify(
+            c => c.SendAsync(It.IsAny<ChatClientRequest>(), cancellationTokenSource.Token),
+            Times.Once
+        );
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_MissingSessionTool_ShouldAppendErrorResultAndFailedActivity()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolExecutor = new Mock<IToolExecutor>(MockBehavior.Strict);
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
+        var toolActivities = new List<ToolCallActivityChangedEventArgs>();
+
+        llmClient
+            .SetupSequence(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                "tool-block-1",
+                                "call-1",
+                                "missing_tool",
+                                new Dictionary<string, object?> { ["query"] = "weather" }
+                            ),
+                        }
+                    )
+                )
+            )
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-2",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new TextAssistantBlock("text-1", "done"),
+                        }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.ToolCallActivityChanged += (_, args) => toolActivities.Add(args);
+
+        await session.SendUserMessageAsync("run missing tool");
+
+        var toolResult = session.Transcript.OfType<ToolResultChatEntry>().Single();
+        toolResult.ToolCallId.Should().Be("call-1");
+        toolResult.ToolName.Should().Be("missing_tool");
+        toolResult.IsError.Should().BeTrue();
+        toolResult.Result.Text.Single().Should().Contain("Tool not registered for this session");
+
+        toolActivities.Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(ToolCallExecutionState.Queued, ToolCallExecutionState.Failed);
+        toolActivities.Last().ErrorMessage.Should().Contain("Tool not registered for this session");
+
+        toolExecutor.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -995,14 +1352,12 @@ public class ChatSessionTests
             ? new ChatSession(
                 llmClient,
                 toolExecutor ?? Mock.Of<IToolExecutor>(),
-                toolRegistry,
                 NullLogger<ChatSession>.Instance,
                 transcriptCompactor
             )
             : new ChatSession(
                 llmClient,
                 toolExecutor ?? Mock.Of<IToolExecutor>(),
-                toolRegistry,
                 NullLogger<ChatSession>.Instance,
                 configuration,
                 transcriptCompactor
@@ -1037,4 +1392,35 @@ public class ChatSessionTests
             resourceLinks: Array.Empty<ToolResultResourceLink>(),
             metadata: null
         );
+
+    private static Tool CreateToolDescriptor(string name, string description)
+    {
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        return new Tool
+        {
+            Name = name,
+            Description = description,
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+    }
+
+    private static ToolCallResult CreateMcpToolCallResult(params string[] text) =>
+        new()
+        {
+            IsError = false,
+            Content = text.Select(fragment => new TextContent { Text = fragment }).ToArray(),
+        };
+
+    private sealed class TestLocalTool(
+        Tool descriptor,
+        Func<RuntimeToolInvocation, CancellationToken, Task<ToolInvocationResult>> executeAsync
+    ) : ILocalTool
+    {
+        public Tool Descriptor { get; } = descriptor;
+
+        public Task<ToolInvocationResult> ExecuteAsync(
+            RuntimeToolInvocation invocation,
+            CancellationToken cancellationToken = default
+        ) => executeAsync(invocation, cancellationToken);
+    }
 }

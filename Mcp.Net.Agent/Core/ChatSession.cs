@@ -20,11 +20,13 @@ public class ChatSession : IChatSessionEvents
 {
     private readonly IChatClient _llmClient;
     private readonly IToolExecutor _toolExecutor;
-    private readonly IToolRegistry _toolRegistry;
     private readonly IChatTranscriptCompactor _transcriptCompactor;
     private readonly ILogger<ChatSession> _logger;
     private readonly List<ChatTranscriptEntry> _transcript = new();
     private readonly List<Tool> _registeredTools = new();
+    private readonly Dictionary<string, Tool> _registeredToolsByName = new(
+        StringComparer.OrdinalIgnoreCase
+    );
     private ChatRequestOptions? _requestDefaults;
     private string? _sessionId;
     private string _systemPrompt = string.Empty;
@@ -63,14 +65,12 @@ public class ChatSession : IChatSessionEvents
     public ChatSession(
         IChatClient llmClient,
         IToolExecutor toolExecutor,
-        IToolRegistry toolRegistry,
         ILogger<ChatSession> logger,
         IChatTranscriptCompactor? transcriptCompactor = null
     )
     {
         _llmClient = llmClient;
         _toolExecutor = toolExecutor;
-        _toolRegistry = toolRegistry;
         _transcriptCompactor = transcriptCompactor ?? EntryCountChatTranscriptCompactor.Default;
         _logger = logger;
         _createdAt = DateTime.UtcNow;
@@ -80,12 +80,11 @@ public class ChatSession : IChatSessionEvents
     public ChatSession(
         IChatClient llmClient,
         IToolExecutor toolExecutor,
-        IToolRegistry toolRegistry,
         ILogger<ChatSession> logger,
         ChatSessionConfiguration configuration,
         IChatTranscriptCompactor? transcriptCompactor = null
     )
-        : this(llmClient, toolExecutor, toolRegistry, logger, transcriptCompactor)
+        : this(llmClient, toolExecutor, logger, transcriptCompactor)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ApplyConfiguration(configuration);
@@ -148,7 +147,13 @@ public class ChatSession : IChatSessionEvents
         ArgumentNullException.ThrowIfNull(tools);
 
         _registeredTools.Clear();
-        _registeredTools.AddRange(tools);
+        _registeredToolsByName.Clear();
+
+        foreach (var tool in tools)
+        {
+            _registeredTools.Add(tool);
+            _registeredToolsByName[tool.Name] = tool;
+        }
     }
 
     public Task LoadTranscriptAsync(IReadOnlyList<ChatTranscriptEntry> transcript)
@@ -167,8 +172,12 @@ public class ChatSession : IChatSessionEvents
         return Task.CompletedTask;
     }
 
-    public async Task SendUserMessageAsync(string message)
+    public async Task SendUserMessageAsync(
+        string message,
+        CancellationToken cancellationToken = default
+    )
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _lastActivityAt = DateTime.UtcNow;
         var turnId = Guid.NewGuid().ToString("n");
 
@@ -181,39 +190,49 @@ public class ChatSession : IChatSessionEvents
             )
         );
 
-        var nextTurn = await RequestProviderAsync(
-            () => _llmClient.SendAsync(BuildRequest()),
-            turnId
-        );
-
-        while (nextTurn is ChatClientAssistantTurn assistantTurn)
+        try
         {
-            UpsertAssistantEntry(assistantTurn, turnId);
+            var nextTurn = await RequestProviderAsync(
+                () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
+                turnId,
+                cancellationToken
+            );
 
-            var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
-            if (toolCalls.Count == 0)
+            while (nextTurn is ChatClientAssistantTurn assistantTurn)
             {
-                break;
+                UpsertAssistantEntry(assistantTurn, turnId);
+
+                var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
+                if (toolCalls.Count == 0)
+                {
+                    break;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                await ExecuteToolCallsAsync(toolCalls, turnId, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                nextTurn = await RequestProviderAsync(
+                    () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
+                    turnId,
+                    cancellationToken
+                );
             }
 
-            await ExecuteToolCallsAsync(toolCalls, turnId);
-            nextTurn = await RequestProviderAsync(
-                () => _llmClient.SendAsync(BuildRequest()),
-                turnId
-            );
+            if (nextTurn is ChatClientFailure failure)
+            {
+                AppendTranscript(ToErrorEntry(failure, turnId));
+            }
         }
-
-        if (nextTurn is ChatClientFailure failure)
+        finally
         {
-            AppendTranscript(ToErrorEntry(failure, turnId));
+            _lastActivityAt = DateTime.UtcNow;
         }
-
-        _lastActivityAt = DateTime.UtcNow;
     }
 
     private async Task<ChatClientTurnResult> RequestProviderAsync(
         Func<IChatCompletionStream> operation,
-        string turnId
+        string turnId,
+        CancellationToken cancellationToken
     )
     {
         SetActivity(ChatSessionActivity.WaitingForProvider, turnId);
@@ -222,12 +241,17 @@ public class ChatSession : IChatSessionEvents
         {
             var stream = operation();
 
-            await foreach (var assistantTurn in stream)
+            await foreach (var assistantTurn in stream.WithCancellation(cancellationToken))
             {
                 UpsertAssistantEntry(assistantTurn, turnId);
             }
 
-            return await stream.GetResultAsync();
+            return await stream.GetResultAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Provider request canceled for turn {TurnId}", turnId);
+            throw;
         }
         catch (Exception ex)
         {
@@ -247,17 +271,29 @@ public class ChatSession : IChatSessionEvents
 
     private async Task<List<ToolInvocationResult>> ExecuteToolCallsAsync(
         IReadOnlyList<ToolCallAssistantBlock> toolCalls,
-        string turnId
+        string turnId,
+        CancellationToken cancellationToken
     )
     {
+        cancellationToken.ThrowIfCancellationRequested();
         SetActivity(ChatSessionActivity.ExecutingTool, turnId);
 
         try
         {
             var tasks = toolCalls
-                .Select(toolCall => ExecuteToolCallAsync(toolCall, turnId))
+                .Select(toolCall => ExecuteToolCallAsync(toolCall, turnId, cancellationToken))
                 .ToArray();
-            var results = await Task.WhenAll(tasks);
+
+            ToolInvocationResult[] results;
+            try
+            {
+                results = await Task.WhenAll(tasks);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                AppendCompletedToolResults(toolCalls, tasks, turnId);
+                throw;
+            }
 
             for (var index = 0; index < toolCalls.Count; index++)
             {
@@ -274,7 +310,8 @@ public class ChatSession : IChatSessionEvents
 
     private async Task<ToolInvocationResult> ExecuteToolCallAsync(
         ToolCallAssistantBlock toolCall,
-        string turnId
+        string turnId,
+        CancellationToken cancellationToken
     )
     {
         ToolCallActivityChanged?.Invoke(
@@ -287,15 +324,14 @@ public class ChatSession : IChatSessionEvents
             )
         );
 
-        var tool = _toolRegistry.GetToolByName(toolCall.ToolName);
-        if (tool == null)
+        if (!_registeredToolsByName.TryGetValue(toolCall.ToolName, out var tool))
         {
-            _logger.LogError("Tool {ToolName} not found", toolCall.ToolName);
+            _logger.LogError("Tool {ToolName} not registered for this session", toolCall.ToolName);
 
             var missingResult = ToolInvocationResultFactory.CreateError(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
-                "Tool not found in registry"
+                "Tool not registered for this session"
             );
 
             ToolCallActivityChanged?.Invoke(
@@ -306,7 +342,7 @@ public class ChatSession : IChatSessionEvents
                     ToolCallExecutionState.Failed,
                     toolCall.Arguments,
                     missingResult,
-                    "Tool not found in registry"
+                    "Tool not registered for this session"
                 )
             );
 
@@ -331,7 +367,7 @@ public class ChatSession : IChatSessionEvents
                     tool.Name,
                     toolCall.Arguments
                 ),
-                CancellationToken.None
+                cancellationToken
             );
 
             ToolCallActivityChanged?.Invoke(
@@ -351,6 +387,22 @@ public class ChatSession : IChatSessionEvents
             );
 
             return invocationResult;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ToolCallActivityChanged?.Invoke(
+                this,
+                new ToolCallActivityChangedEventArgs(
+                    toolCall.ToolCallId,
+                    toolCall.ToolName,
+                    ToolCallExecutionState.Cancelled,
+                    toolCall.Arguments,
+                    null,
+                    "Tool execution canceled"
+                )
+            );
+
+            throw;
         }
         catch (Exception ex)
         {
@@ -380,6 +432,23 @@ public class ChatSession : IChatSessionEvents
             );
 
             return errorResult;
+        }
+    }
+
+    private void AppendCompletedToolResults(
+        IReadOnlyList<ToolCallAssistantBlock> toolCalls,
+        IReadOnlyList<Task<ToolInvocationResult>> tasks,
+        string turnId
+    )
+    {
+        for (var index = 0; index < toolCalls.Count; index++)
+        {
+            if (!tasks[index].IsCompletedSuccessfully)
+            {
+                continue;
+            }
+
+            AppendToolResultTranscript(toolCalls[index], tasks[index].Result, turnId);
         }
     }
 

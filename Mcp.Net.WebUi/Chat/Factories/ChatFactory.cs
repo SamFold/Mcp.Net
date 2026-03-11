@@ -103,7 +103,6 @@ public class ChatFactory : IChatFactory
         var chatSession = new ChatSession(
             sessionClient,
             toolExecutor,
-            _toolRegistry,
             chatSessionLogger,
             new ChatSessionConfiguration
             {
@@ -158,7 +157,6 @@ public class ChatFactory : IChatFactory
         var chatSession = new ChatSession(
             sessionClient,
             toolExecutor,
-            _toolRegistry,
             chatSessionLogger,
             new ChatSessionConfiguration
             {

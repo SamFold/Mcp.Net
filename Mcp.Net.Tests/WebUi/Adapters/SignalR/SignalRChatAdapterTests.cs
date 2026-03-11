@@ -74,7 +74,6 @@ public class SignalRChatAdapterTests
         var session = new ChatSession(
             llmClient.Object,
             Mock.Of<IToolExecutor>(),
-            toolRegistry,
             NullLogger<ChatSession>.Instance
         );
         using var adapter = new SignalRChatAdapter(

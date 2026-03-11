@@ -2,57 +2,70 @@
 
 ## Current focus
 
-- Keep the cleaned request/session split stable while `Mcp.Net.Agent` extracts the remaining MCP-specific runtime dependency from `ChatSession`.
-- The next immediate value is an `IToolExecutor` seam: it simplifies the core loop, makes abort work cleaner, and opens the door to non-MCP tool execution later.
+- Keep the cleaned request/session split stable while `Mcp.Net.Agent` starts using the local-tool runtime for real work.
+- The immediate value is now the first concrete built-in/local tools: `ChatSession` already owns tool validation, the runtime already executes mixed local and MCP-backed work through one executor seam, and cancellation already flows through the turn call path.
+- The current abort surface is intentionally token-based. A later `AbortCurrentTurn()` wrapper can remain optional unless a real consumer asks for it.
 
 ## What
 
-- Add a runtime `IToolExecutor` abstraction and a small agent-owned `ToolInvocation` model.
-- Move MCP-backed tool execution into `McpToolExecutor`.
-- Leave tool registry/discovery policy in `ChatSession`; only dispatch moves out.
+- Add the first concrete `ILocalTool` implementations.
+- Compose them into the existing `LocalToolExecutor` / `CompositeToolExecutor` path outside `ChatSession`.
+- Prove the concrete tool path through focused tests and runtime integration coverage.
+- Keep the cancellation-aware runtime seam intact while adding those tools.
 
 ## Why
 
-- `ChatSession` is already runtime-first for prompt, transcript, and request defaults; direct MCP tool execution is now the main remaining transport-specific coupling.
-- Abort plumbing is easier to introduce after tool execution sits behind a cancellable runtime seam.
-- The same split is the prerequisite for future local/built-in tools and composite routing without reopening the session loop contract.
+- The runtime seams are now in place and tested: session-owned tool catalogs, a provider boundary, a backend-agnostic executor graph, and token-driven cancellation through the active turn.
+- Until concrete local tools exist, the new local/composite execution design is still only infrastructure.
+- The next step should prove that the abstractions hold up under real in-process tool behavior before the repo adds more convenience APIs around them.
 
 ## How
 
-- Implement `McpToolExecutor` over `IMcpClient.CallTool(...)` and `ToolResultConverter`.
-- Change `ChatSession` to depend on `IToolExecutor` plus `IToolRegistry`.
-- Update DI and session-creation callers so each session builds the new executor from its own `IMcpClient`.
+### Concrete local tools
+
+- Start with a minimal, useful set of concrete local tools rather than a broad unfinished toolbox.
+- Keep the implementations cancellation-aware from the start by honoring the existing `CancellationToken` on `ILocalTool.ExecuteAsync(...)`.
+- Keep provider-facing descriptors and execution logic on the same concrete tool objects.
+
+### Composition boundary
+
+- Build descriptors and local-executor registrations from the same concrete tool objects.
+- Merge those descriptors with MCP descriptors before constructing `ChatSession`.
+- Keep `ChatSession` ignorant of backend details.
+
+### Verification
+
+- Add focused tests for the concrete local tools themselves.
+- Add runtime-level coverage proving the concrete tools execute correctly through the existing agent loop.
+- Keep cancellation tests in scope so concrete local tools do not regress the token-based abort seam.
 
 ## Near-term sequence
 
-1. Extract `IToolExecutor` and remove direct `IMcpClient` tool dispatch from `ChatSession`.
-2. Add session-level abort plumbing; full MCP tool-call cancellation can only complete after `IMcpClient.CallTool` accepts a `CancellationToken`.
+1. Add the first concrete built-in/local tools once the contracts, routing, and abort semantics are stable.
+2. Add an explicit `AbortCurrentTurn()` wrapper only if a real consumer needs a session-owned convenience API on top of the current token-based flow.
 3. Revisit agent-owned transcript persistence when non-Web UI consumers need durable session state.
 4. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
 5. Revisit context-window management with a stronger trigger or summarizer path once real conversation pressure justifies it.
-6. Revisit parallel execution limits or orchestration controls only if real tool fan-out makes them necessary.
 
 ## Recently completed
 
-- `Mcp.Net.Agent` now owns agent definitions, stores, session orchestration, tool inventory, MCP-backed prompt/resource helpers, and tool-result conversion.
-- `ChatSession` now builds request snapshots from session-owned prompt, tool, transcript, and execution-default state.
-- Shared execution defaults now flow from agent configuration into `ChatRequestOptions`, and `ToolChoice` is available end to end through the cleaned provider seam.
-- The Web UI session seam now works through `ChatSession` / adapter operations rather than mutating raw provider client state.
-- `ChatSession` now compacts oversized outbound provider transcripts through an agent-owned compaction seam, preserving recent turns and collapsing older context into a deterministic summary entry.
-- `ChatSession` now executes independent tool calls concurrently while preserving deterministic transcript ordering for `ToolResult` entries.
-- `ChatSession` now uses runtime-owned `ChatSessionConfiguration` / `ChatRequestOptions`, and agent-based session creation is translation glue outside the runtime type.
+- `ChatSession` now flows caller cancellation through provider requests and tool execution.
+- Abort behavior is now deterministic for provider waits and tool execution, including partial tool-result persistence when some tool work finished before cancellation.
+- `ChatSession` now validates tool execution against its own configured tool catalog and no longer depends on `IToolRegistry` at runtime.
+- `Mcp.Net.Agent.Tools` now includes `ILocalTool`, `LocalToolExecutor`, and `CompositeToolExecutor`.
+- Focused tests now cover mixed local+MCP turns plus missing-session-tool failure semantics through the shared executor seam.
 
 ## Dependencies and risks
 
-- Full session cancellation still depends partly on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
-- `IToolExecutor` needs to preserve the current split between registry-based policy in `ChatSession` and transport-specific dispatch in the executor so responsibilities do not blur.
-- The first executor cut should keep the invocation contract aligned with current provider-emitted tool-call arguments (`IReadOnlyDictionary<string, object?>`) rather than widening it speculatively.
+- Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
+- The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
+- Concrete local tools need disciplined scope. If the first tool set balloons, the repo will mix contract validation with product-surface sprawl and lose the value of the slice.
 - The current compaction trigger is intentionally simple; future pressure may require token-aware estimation or a stronger summarizer path.
-- Session abort work needs to make partial completion behavior explicit so callers do not get ambiguous transcript or activity state.
 
 ## Open questions
 
-- Should `Mcp.Net.Agent` grow a built-in/local executor immediately after `IToolExecutor`, or wait until abort plumbing lands?
-- Should transcript persistence remain a Web UI concern until another consumer needs it, or should it move into `Mcp.Net.Agent` once compaction lands?
-- What should the first abort surface look like for consumers, given that provider cancellation and tool cancellation do not yet have the same capabilities?
+- Should concrete built-in tools live under `Mcp.Net.Agent` temporarily, or should the repo create a dedicated `Mcp.Net.Tools` project as soon as the contracts land?
+- Should local tools always be app-owned reusable registrations, or should the runtime explicitly support session-owned local tool instances from the start?
+- Which concrete local tools are the best first proof of the seam?
+- Should a later `AbortCurrentTurn()` wrapper exist once a real consumer asks for it?
 - When context-window pressure grows further, should the next compaction improvement be token-aware estimation or provider-backed summarization?

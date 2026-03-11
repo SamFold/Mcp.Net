@@ -21,6 +21,7 @@ public enum ToolCallExecutionState
     Running,
     Completed,
     Failed,
+    Cancelled,
 }
 
 public sealed class ChatTranscriptChangedEventArgs : EventArgs

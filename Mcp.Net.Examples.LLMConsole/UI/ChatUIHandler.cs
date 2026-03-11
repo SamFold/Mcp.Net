@@ -94,6 +94,12 @@ public class ChatUIHandler : IUserInputProvider
                 _logger.LogDebug("Displaying tool failure for {ToolName}: {Error}", args.ToolName, error);
                 _ui.DisplayToolError(args.ToolName, error);
                 break;
+
+            case ToolCallExecutionState.Cancelled:
+                var canceled = args.ErrorMessage ?? "Tool execution canceled";
+                _logger.LogDebug("Displaying tool cancellation for {ToolName}: {Error}", args.ToolName, canceled);
+                _ui.DisplayToolError(args.ToolName, canceled);
+                break;
         }
     }
 
