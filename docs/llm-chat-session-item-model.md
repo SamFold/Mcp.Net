@@ -237,7 +237,6 @@ The canonical public event surface should separate durable transcript changes fr
 ```csharp
 public interface IChatSessionEvents
 {
-    event EventHandler? SessionStarted;
     event EventHandler<ChatTranscriptChangedEventArgs>? TranscriptChanged;
     event EventHandler<ChatSessionActivityChangedEventArgs>? ActivityChanged;
     event EventHandler<ToolCallActivityChangedEventArgs>? ToolCallActivityChanged;

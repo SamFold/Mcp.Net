@@ -27,5 +27,6 @@
 ## Dependencies and risks
 
 - Web UI still depends on `Mcp.Net.Agent` for `ChatSession`, tool execution, session metadata/history contracts, prompt/resource catalogs, completion, and elicitation coordination.
+- Session-start notification is now adapter-owned after the `Mcp.Net.Agent` session-start seam removal, so future runtime changes should keep re-running adapter lifecycle tests.
 - The deletion slice should not weaken the current per-session MCP-client lifecycle or tool-list refresh behavior.
 - Session titles and metadata defaults may need small follow-up cleanup after the agent-derived naming path disappears.

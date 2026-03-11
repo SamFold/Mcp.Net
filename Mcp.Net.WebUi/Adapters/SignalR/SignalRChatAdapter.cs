@@ -75,7 +75,6 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _chatSession.SessionId = sessionId;
 
         // Wire up event handlers
-        _chatSession.SessionStarted += OnSessionStarted;
         _chatSession.TranscriptChanged += OnTranscriptChanged;
         _chatSession.ToolCallActivityChanged += OnToolCallActivityChanged;
         _chatSession.ActivityChanged += OnActivityChanged;
@@ -199,9 +198,7 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
     public void Start()
     {
         _logger.LogInformation("Starting chat session {SessionId}", _sessionId);
-
-        // Start the chat session
-        _chatSession.StartSession();
+        _ = NotifySessionStartedAsync();
     }
 
     /// <summary>
@@ -265,10 +262,17 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         await _chatSession.LoadTranscriptAsync(transcript);
     }
 
-    private async void OnSessionStarted(object? sender, EventArgs e)
+    private async Task NotifySessionStartedAsync()
     {
-        _logger.LogDebug("Session started: {SessionId}", _sessionId);
-        await _hubContext.Clients.Group(_sessionId).SendAsync("SessionStarted", _sessionId);
+        try
+        {
+            _logger.LogDebug("Session started: {SessionId}", _sessionId);
+            await _hubContext.Clients.Group(_sessionId).SendAsync("SessionStarted", _sessionId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast session start for session {SessionId}", _sessionId);
+        }
     }
 
     private async void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)
@@ -468,7 +472,6 @@ public class SignalRChatAdapter : ISignalRChatAdapter, IElicitationPromptProvide
         _logger.LogInformation("Disposing chat session {SessionId}", _sessionId);
 
         // Unwire events
-        _chatSession.SessionStarted -= OnSessionStarted;
         _chatSession.TranscriptChanged -= OnTranscriptChanged;
         _chatSession.ToolCallActivityChanged -= OnToolCallActivityChanged;
         _chatSession.ActivityChanged -= OnActivityChanged;

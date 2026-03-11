@@ -39,7 +39,6 @@ public class ConsoleAdapter : IDisposable
         _completionService = completionService;
 
         // Subscribe to events
-        _chatSession.SessionStarted += OnSessionStarted;
         _chatSession.ActivityChanged += OnActivityChanged;
         _catalog.PromptsUpdated += OnPromptCatalogUpdated;
         _catalog.ResourcesUpdated += OnResourceCatalogUpdated;
@@ -51,9 +50,6 @@ public class ConsoleAdapter : IDisposable
     public async Task RunAsync()
     {
         _logger.LogDebug("Starting console adapter");
-
-        // Start the chat session
-        _chatSession.StartSession();
 
         try
         {
@@ -473,12 +469,6 @@ public class ConsoleAdapter : IDisposable
         _runTask = Task.Run(async () => await RunAsync(), _cts.Token);
     }
 
-    // Event handlers
-    private void OnSessionStarted(object? sender, EventArgs e)
-    {
-        _logger.LogDebug("Session started");
-    }
-
     private void OnActivityChanged(object? sender, ChatSessionActivityChangedEventArgs args)
     {
         _logger.LogDebug(
@@ -503,7 +493,6 @@ public class ConsoleAdapter : IDisposable
         _logger.LogInformation("Disposing console adapter");
 
         // Unsubscribe from events
-        _chatSession.SessionStarted -= OnSessionStarted;
         _chatSession.ActivityChanged -= OnActivityChanged;
         _catalog.PromptsUpdated -= OnPromptCatalogUpdated;
         _catalog.ResourcesUpdated -= OnResourceCatalogUpdated;

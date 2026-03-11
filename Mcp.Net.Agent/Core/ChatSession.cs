@@ -49,6 +49,26 @@ public class ChatSession : IChatSessionEvents
         }
     }
 
+    private sealed class TurnExecutionState
+    {
+        private readonly List<ChatTranscriptEntry> _addedEntries = new();
+        private readonly List<ChatTranscriptEntry> _updatedEntries = new();
+
+        public TurnExecutionState()
+        {
+            TurnId = Guid.NewGuid().ToString("n");
+        }
+
+        public string TurnId { get; }
+
+        public void RecordAdded(ChatTranscriptEntry entry) => _addedEntries.Add(entry);
+
+        public void RecordUpdated(ChatTranscriptEntry entry) => _updatedEntries.Add(entry);
+
+        public ChatTurnSummary CreateSummary(ChatTurnCompletion completion) =>
+            new(TurnId, _addedEntries.ToArray(), _updatedEntries.ToArray(), completion);
+    }
+
     private readonly object _stateGate = new();
     private readonly IChatClient _llmClient;
     private readonly IToolExecutor _toolExecutor;
@@ -79,8 +99,6 @@ public class ChatSession : IChatSessionEvents
     public bool IsProcessing => Volatile.Read(ref _activeTurn) != null;
 
     public IReadOnlyList<ChatTranscriptEntry> Transcript => _transcript;
-
-    public event EventHandler? SessionStarted;
 
     public event EventHandler<ChatTranscriptChangedEventArgs>? TranscriptChanged;
 
@@ -123,12 +141,6 @@ public class ChatSession : IChatSessionEvents
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ApplyConfiguration(configuration);
-    }
-
-    public void StartSession()
-    {
-        SessionStarted?.Invoke(this, EventArgs.Empty);
-        _logger.LogDebug("Chat session started");
     }
 
     /// <summary>
@@ -224,16 +236,42 @@ public class ChatSession : IChatSessionEvents
         return Task.CompletedTask;
     }
 
-    public async Task SendUserMessageAsync(
+    public async Task<ChatTurnSummary> SendUserMessageAsync(
         string message,
         CancellationToken cancellationToken = default
     )
     {
         var activeTurn = BeginTurn(cancellationToken);
+        var turn = new TurnExecutionState();
 
         try
         {
-            await SendUserMessageCoreAsync(message, activeTurn.CancellationToken);
+            return await SendUserMessageCoreAsync(message, turn, activeTurn.CancellationToken);
+        }
+        catch (OperationCanceledException) when (activeTurn.CancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Chat turn {TurnId} canceled", turn.TurnId);
+            return turn.CreateSummary(ChatTurnCompletion.Cancelled);
+        }
+        finally
+        {
+            EndTurn(activeTurn);
+        }
+    }
+
+    public async Task<ChatTurnSummary> ContinueAsync(CancellationToken cancellationToken = default)
+    {
+        var activeTurn = BeginTurn(cancellationToken);
+        var turn = new TurnExecutionState();
+
+        try
+        {
+            return await ContinueCoreAsync(turn, activeTurn.CancellationToken);
+        }
+        catch (OperationCanceledException) when (activeTurn.CancellationToken.IsCancellationRequested)
+        {
+            _logger.LogDebug("Chat turn {TurnId} canceled", turn.TurnId);
+            return turn.CreateSummary(ChatTurnCompletion.Cancelled);
         }
         finally
         {
@@ -267,35 +305,56 @@ public class ChatSession : IChatSessionEvents
             : activeTurn.Completion.Task.WaitAsync(cancellationToken);
     }
 
-    private async Task SendUserMessageCoreAsync(
+    private async Task<ChatTurnSummary> SendUserMessageCoreAsync(
         string message,
+        TurnExecutionState turn,
         CancellationToken cancellationToken
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
         _lastActivityAt = DateTime.UtcNow;
-        var turnId = Guid.NewGuid().ToString("n");
 
         AppendTranscript(
             new UserChatEntry(
                 Guid.NewGuid().ToString("n"),
                 DateTimeOffset.UtcNow,
                 message,
-                turnId
-            )
+                turn.TurnId
+            ),
+            turn
         );
 
+        return await RunTurnLoopAsync(turn, cancellationToken);
+    }
+
+    private async Task<ChatTurnSummary> ContinueCoreAsync(
+        TurnExecutionState turn,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateContinuePrecondition();
+        _lastActivityAt = DateTime.UtcNow;
+
+        return await RunTurnLoopAsync(turn, cancellationToken);
+    }
+
+    private async Task<ChatTurnSummary> RunTurnLoopAsync(
+        TurnExecutionState turn,
+        CancellationToken cancellationToken
+    )
+    {
         try
         {
             var nextTurn = await RequestProviderAsync(
                 () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
-                turnId,
+                turn,
                 cancellationToken
             );
 
             while (nextTurn is ChatClientAssistantTurn assistantTurn)
             {
-                UpsertAssistantEntry(assistantTurn, turnId);
+                UpsertAssistantEntry(assistantTurn, turn);
 
                 var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
                 if (toolCalls.Count == 0)
@@ -304,19 +363,21 @@ public class ChatSession : IChatSessionEvents
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                await ExecuteToolCallsAsync(toolCalls, turnId, cancellationToken);
+                await ExecuteToolCallsAsync(toolCalls, turn, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 nextTurn = await RequestProviderAsync(
                     () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
-                    turnId,
+                    turn,
                     cancellationToken
                 );
             }
 
             if (nextTurn is ChatClientFailure failure)
             {
-                AppendTranscript(ToErrorEntry(failure, turnId));
+                AppendTranscript(ToErrorEntry(failure, turn.TurnId), turn);
             }
+
+            return turn.CreateSummary(ChatTurnCompletion.Completed);
         }
         finally
         {
@@ -360,11 +421,11 @@ public class ChatSession : IChatSessionEvents
 
     private async Task<ChatClientTurnResult> RequestProviderAsync(
         Func<IChatCompletionStream> operation,
-        string turnId,
+        TurnExecutionState turn,
         CancellationToken cancellationToken
     )
     {
-        SetActivity(ChatSessionActivity.WaitingForProvider, turnId);
+        SetActivity(ChatSessionActivity.WaitingForProvider, turn.TurnId);
 
         try
         {
@@ -372,14 +433,14 @@ public class ChatSession : IChatSessionEvents
 
             await foreach (var assistantTurn in stream.WithCancellation(cancellationToken))
             {
-                UpsertAssistantEntry(assistantTurn, turnId);
+                UpsertAssistantEntry(assistantTurn, turn);
             }
 
             return await stream.GetResultAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogDebug("Provider request canceled for turn {TurnId}", turnId);
+            _logger.LogDebug("Provider request canceled for turn {TurnId}", turn.TurnId);
             throw;
         }
         catch (Exception ex)
@@ -394,23 +455,23 @@ public class ChatSession : IChatSessionEvents
         }
         finally
         {
-            SetActivity(ChatSessionActivity.Idle, turnId);
+            SetActivity(ChatSessionActivity.Idle, turn.TurnId);
         }
     }
 
     private async Task<List<ToolInvocationResult>> ExecuteToolCallsAsync(
         IReadOnlyList<ToolCallAssistantBlock> toolCalls,
-        string turnId,
+        TurnExecutionState turn,
         CancellationToken cancellationToken
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        SetActivity(ChatSessionActivity.ExecutingTool, turnId);
+        SetActivity(ChatSessionActivity.ExecutingTool, turn.TurnId);
 
         try
         {
             var tasks = toolCalls
-                .Select(toolCall => ExecuteToolCallAsync(toolCall, turnId, cancellationToken))
+                .Select(toolCall => ExecuteToolCallAsync(toolCall, turn.TurnId, cancellationToken))
                 .ToArray();
 
             ToolInvocationResult[] results;
@@ -420,20 +481,20 @@ public class ChatSession : IChatSessionEvents
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                AppendCompletedToolResults(toolCalls, tasks, turnId);
+                AppendCompletedToolResults(toolCalls, tasks, turn);
                 throw;
             }
 
             for (var index = 0; index < toolCalls.Count; index++)
             {
-                AppendToolResultTranscript(toolCalls[index], results[index], turnId);
+                AppendToolResultTranscript(toolCalls[index], results[index], turn);
             }
 
             return results.ToList();
         }
         finally
         {
-            SetActivity(ChatSessionActivity.Idle, turnId);
+            SetActivity(ChatSessionActivity.Idle, turn.TurnId);
         }
     }
 
@@ -567,7 +628,7 @@ public class ChatSession : IChatSessionEvents
     private void AppendCompletedToolResults(
         IReadOnlyList<ToolCallAssistantBlock> toolCalls,
         IReadOnlyList<Task<ToolInvocationResult>> tasks,
-        string turnId
+        TurnExecutionState turn
     )
     {
         for (var index = 0; index < toolCalls.Count; index++)
@@ -577,14 +638,14 @@ public class ChatSession : IChatSessionEvents
                 continue;
             }
 
-            AppendToolResultTranscript(toolCalls[index], tasks[index].Result, turnId);
+            AppendToolResultTranscript(toolCalls[index], tasks[index].Result, turn);
         }
     }
 
     private void AppendToolResultTranscript(
         ToolCallAssistantBlock toolCall,
         ToolInvocationResult result,
-        string turnId
+        TurnExecutionState turn
     )
     {
         AppendTranscript(
@@ -595,17 +656,20 @@ public class ChatSession : IChatSessionEvents
                 toolCall.ToolName,
                 result,
                 result.IsError,
-                turnId
-            )
+                turn.TurnId
+            ),
+            turn
         );
     }
 
     private void AppendTranscript(
         ChatTranscriptEntry entry,
+        TurnExecutionState? turn = null,
         ChatTranscriptChangeKind changeKind = ChatTranscriptChangeKind.Added
     )
     {
         _transcript.Add(entry);
+        turn?.RecordAdded(entry);
         TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
 
@@ -658,13 +722,13 @@ public class ChatSession : IChatSessionEvents
         }
     }
 
-    private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
+    private void UpsertAssistantEntry(ChatClientAssistantTurn turn, TurnExecutionState execution)
     {
-        var assistantEntry = ToAssistantEntry(turn, turnId);
+        var assistantEntry = ToAssistantEntry(turn, execution.TurnId);
         var existingIndex = _transcript.FindIndex(entry => entry.Id == assistantEntry.Id);
         if (existingIndex < 0)
         {
-            AppendTranscript(assistantEntry);
+            AppendTranscript(assistantEntry, execution);
             return;
         }
 
@@ -679,9 +743,30 @@ public class ChatSession : IChatSessionEvents
         }
 
         _transcript[existingIndex] = updatedEntry;
+        execution.RecordUpdated(updatedEntry);
         TranscriptChanged?.Invoke(
             this,
             new ChatTranscriptChangedEventArgs(updatedEntry, ChatTranscriptChangeKind.Updated)
+        );
+    }
+
+    private void ValidateContinuePrecondition()
+    {
+        if (_transcript.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Cannot continue because the transcript is empty."
+            );
+        }
+
+        var lastEntry = _transcript[^1];
+        if (lastEntry is UserChatEntry or ToolResultChatEntry or ErrorChatEntry)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "Cannot continue because the transcript does not end with a user, tool result, or error entry."
         );
     }
 

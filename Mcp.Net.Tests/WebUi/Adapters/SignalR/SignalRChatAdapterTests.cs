@@ -23,6 +23,29 @@ namespace Mcp.Net.Tests.WebUi.Adapters.SignalR;
 public class SignalRChatAdapterTests
 {
     [Fact]
+    public async Task Start_ShouldBroadcastSessionStarted()
+    {
+        var hubContext = CreateHubContext(out var clientProxy);
+        using var adapter = new SignalRChatAdapter(
+            new ChatSession(
+                Mock.Of<IChatClient>(),
+                Mock.Of<IToolExecutor>(),
+                NullLogger<ChatSession>.Instance
+            ),
+            hubContext.Object,
+            NullLogger<SignalRChatAdapter>.Instance,
+            "session-1",
+            new ToolRegistry(),
+            Mock.Of<IPromptResourceCatalog>(),
+            Mock.Of<ICompletionService>()
+        );
+
+        adapter.Start();
+
+        await AssertMessageAsync(clientProxy, "SessionStarted");
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_StreamingAssistantUpdate_ShouldBroadcastUpdateMessage()
     {
         var llmClient = new Mock<IChatClient>();
@@ -94,6 +117,22 @@ public class SignalRChatAdapterTests
         clientProxy.Messages.Should().Contain(message => message.Method == "ReceiveMessage");
         clientProxy.Messages.Should().Contain(message => message.Method == "UpdateMessage");
         messageEvents.Should().Contain(args => args.ChangeKind == ChatTranscriptChangeKind.Updated);
+    }
+
+    private static async Task AssertMessageAsync(TestClientProxy clientProxy, string method)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (clientProxy.Messages.Any(message => message.Method == method))
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected SignalR message '{method}' to be sent.");
     }
 
     private static Mock<IHubContext<ChatHub>> CreateHubContext(out TestClientProxy clientProxy)

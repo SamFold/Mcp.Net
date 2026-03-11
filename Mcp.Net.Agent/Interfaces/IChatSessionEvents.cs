@@ -7,8 +7,6 @@ namespace Mcp.Net.Agent.Interfaces;
 /// </summary>
 public interface IChatSessionEvents
 {
-    event EventHandler? SessionStarted;
-
     event EventHandler<ChatTranscriptChangedEventArgs>? TranscriptChanged;
 
     event EventHandler<ChatSessionActivityChangedEventArgs>? ActivityChanged;

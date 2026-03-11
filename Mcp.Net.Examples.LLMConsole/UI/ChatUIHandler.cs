@@ -21,17 +21,13 @@ public class ChatUIHandler : IUserInputProvider
         _ui = ui;
         _logger = logger;
 
+        _logger.LogDebug("Drawing chat interface");
+        _ui.DrawChatInterface();
+
         // Subscribe to events
-        sessionEvents.SessionStarted += OnSessionStarted;
         sessionEvents.TranscriptChanged += OnTranscriptChanged;
         sessionEvents.ActivityChanged += OnActivityChanged;
         sessionEvents.ToolCallActivityChanged += OnToolCallActivityChanged;
-    }
-
-    private void OnSessionStarted(object? sender, EventArgs e)
-    {
-        _logger.LogDebug("Session started, drawing chat interface");
-        _ui.DrawChatInterface();
     }
 
     private void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)

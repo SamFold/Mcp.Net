@@ -5,6 +5,7 @@
 - The primary chat experience already works without `AgentDefinition` selection by using `DefaultLlmSettings`, per-session MCP clients, and `ChatSession`.
 - The legacy agent-driven endpoints, DTOs, startup wiring, and chat-factory branches have been removed.
 - Web UI still constructs `ChatSession` inline inside `ChatFactory` even though the shared runtime now exposes `IChatSessionFactory`.
+- The SignalR chat adapter now owns session-start notification directly after the `ChatSession` session-start seam was removed.
 
 ## Goal
 
@@ -35,6 +36,7 @@
 - Preserve the existing metadata/history behavior and adapter lifecycle.
 - Keep the default-model flow green while changing the construction seam.
 - Avoid accidental behavior changes in tool refresh or prompt/resource/completion features.
+- Keep the adapter aligned with the current `ChatSession` event/runtime contract while the shared runtime keeps tightening its internals.
 
 ### 3. Verify the reduced duplication
 
@@ -47,6 +49,7 @@
   - evaluate moving Web UI `ChatSession` construction onto `IChatSessionFactory`
   - preserve the default-model chat path and shared chat-session runtime behavior
   - reduce duplicated session-composition code where the seam is already stable
+  - stay aligned with the current `ChatSession` runtime API while the shared runtime evolves
 - Out of scope:
   - redesigning the Web UI chat UX
   - reintroducing agent-definition concepts

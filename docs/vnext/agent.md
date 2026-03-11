@@ -12,69 +12,83 @@
 - `ChatSession` is now explicitly single-active-turn: overlapping sends are rejected, mutators are guarded while a turn is active, and the session exposes `IsProcessing`, `AbortCurrentTurn()`, and `WaitForIdleAsync(...)`.
 - The library now has a session-composition seam: `IChatSessionFactory`, `ChatSessionFactoryOptions`, and `ChatSessionFactory` can build sessions from local tools plus an optional caller-owned `IMcpClient`.
 - The obsolete `AgentDefinition` / manager / registry / store stack has been removed; `Mcp.Net.Agent` is now centered on runtime/session concerns only.
+- `ChatSession` now supports `ContinueAsync(...)` with explicit transcript-tail validation for resumed turns.
+- `SendUserMessageAsync(...)` and `ContinueAsync(...)` now return `ChatTurnSummary`, including per-turn transcript additions/updates plus completed/cancelled status.
+- `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification now lives in the Web UI adapter that actually broadcasts it.
 
 ## Goal
 
-- Add the first concrete built-in/local tools on top of the narrowed chat-session runtime and session factory seam.
+- Close the remaining observer and transcript-lifecycle hygiene gaps before shipping the first concrete built-in/local tools.
 
 ## What
 
-- Add the first real `ILocalTool` implementations that the factory and runtime can expose end to end.
-- Keep the tools bounded and deterministic so they validate the seam without reopening broader shell/process-policy work.
-- Compose them through `ChatSessionFactoryOptions.LocalTools` rather than pushing more construction logic into callers or `ChatSession`.
+- Guard event dispatch so subscriber exceptions cannot break otherwise healthy turns.
+- Change transcript compaction to `CompactAsync(...)` before more consumers depend on the synchronous contract.
+- Add explicit reset/load transcript notifications so observer-visible transcript state stays coherent.
 
 ## Why
 
 - The runtime and factory seams are now in place and the obsolete model layer is gone.
-- Adding concrete tools now validates the new factory composition path under real in-process behavior.
-- This is the next smallest slice that turns the current API surface into something a non-Web UI consumer can use directly.
+- Continue/resume and awaited turn summaries are now in place, so the next highest-value issues are correctness and lifecycle hygiene.
+- Today a throwing event subscriber can still fault a turn, and whole-transcript mutations are still invisible to observers.
+- This is the last narrow runtime cleanup before the first bounded built-in tools.
 
 ## How
 
-### 1. Keep the first tools small
+### 1. Harden event dispatch
 
-- Start with read-only, bounded tools such as `ReadFileTool` and `ListFilesTool`.
-- Keep inputs and outputs constrained so the tools are deterministic and easy to test.
-- Defer `BashTool` and any write/edit behavior until the public tool surface is more mature.
+- Wrap `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` dispatch in log-and-swallow guards.
+- Keep synchronous ordering for now; do not add async dispatch complexity until a real consumer needs it.
+- Preserve the current activity/transcript ordering that Web UI and tests already consume.
 
-### 2. Use the factory seam directly
+### 2. Make transcript lifecycle observable
 
-- Register local tools through `ChatSessionFactoryOptions.LocalTools`.
-- Let the factory merge provider-facing descriptors and choose the correct executor graph.
-- Keep `ChatSession` unchanged; it should only consume the already-composed tool catalog and executor.
+- Add reset/load transcript notifications via new change kinds or an equivalent explicit event shape.
+- Keep transcript mutation semantics stable while making whole-state changes visible to observers.
+- Re-run the Web UI adapter/event tests because they depend on the same event stream.
 
-### 3. Prove the real path
+### 3. Break the compactor contract once, early
 
-- Add focused unit tests for the concrete tool implementations.
-- Add at least one runtime-level test that constructs a session through `IChatSessionFactory` and executes a real local tool end to end.
-- Keep the completed lifecycle and mixed-tool execution tests green.
+- Change `IChatTranscriptCompactor.Compact(...)` to `CompactAsync(...)`.
+- Flow the async compactor through request building without weakening the current provider-boundary snapshot model.
+- Keep the default entry-count compactor behavior the same while changing the contract.
+
+### 4. Prove the contract
+
+- Add focused regressions proving observer exceptions are logged and swallowed instead of faulting turns.
+- Add coverage for reset/load transcript notifications and async compaction flow.
+- Keep the completed lifecycle, factory, executor, and provider-boundary tests green.
+- Re-run the impacted `Mcp.Net.WebUi` adapter coverage because it already depends on transcript/activity event behavior.
 
 ## Scope
 
 - In scope:
-  - add the first concrete built-in/local tools
-  - compose them through `ChatSessionFactory`
-  - add focused tool tests plus runtime coverage through the factory seam
-  - preserve the completed `ChatSession` lifecycle, executor, and tool-registry behavior
+  - guard runtime event dispatch against observer faults
+  - add explicit reset/load transcript notifications
+  - change transcript compaction to an async contract
+  - preserve the completed `ChatSession` lifecycle, executor, factory, and provider-boundary behavior
 - Out of scope:
   - `BashTool`, write/edit tools, or broad shell/process-policy work
+  - new consumer-facing runtime APIs beyond the already-landed continue/turn-summary slice
+  - concrete built-in/local tools in this slice
   - full MCP tool-call cancellation while `IMcpClient.CallTool(...)` lacks `CancellationToken`
   - transcript persistence redesign
   - changes to the provider request/stream contract beyond the current lifecycle surface
 
 ## Current slice
 
-1. Add the first concrete built-in/local tools on top of `ILocalTool`.
-2. Compose them through `ChatSessionFactoryOptions.LocalTools`.
-3. Add focused tool tests plus runtime coverage proving real local tool execution through the factory seam.
-4. Keep the current lifecycle contract and mixed local+MCP routing stable.
+1. Guard runtime event dispatch so observer exceptions are logged and swallowed instead of breaking turns.
+2. Change transcript compaction to `CompactAsync(...)`.
+3. Add explicit reset/load transcript notifications.
+4. Keep the current lifecycle contract, factory seam, mixed local+MCP routing, and Web UI adapter event behavior stable.
 
 ## Next slices
 
-1. Revisit `IMcpClient` ergonomics around `CallTool` cancellation and async disposal once a real caller needs it.
-2. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-3. Consider hook/extension or branching surfaces only after the core loop is more robust.
-4. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Add the first concrete built-in/local tools such as bounded `ReadFileTool` and `ListFilesTool` on top of the clarified consumer runtime surface.
+2. Revisit `IMcpClient` ergonomics around `CallTool` cancellation and async disposal once a real caller needs it.
+3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+4. Consider hook/extension or branching surfaces only after the core loop is more robust.
+5. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
 
@@ -86,6 +100,9 @@
 - Added a single-active-turn lifecycle contract to `ChatSession`, including overlap rejection, busy-state lifecycle APIs, and mutation guards while a turn is active.
 - Added `IChatSessionFactory`, `ChatSessionFactoryOptions`, and `ChatSessionFactory` so callers can compose sessions from local tools plus an optional caller-owned `IMcpClient`.
 - Removed the obsolete agent-definition / manager / registry / store layer from `Mcp.Net.Agent` and the corresponding agent-driven paths from `Mcp.Net.WebUi`.
+- Added `ContinueAsync(...)` with explicit transcript-tail validation.
+- Added `ChatTurnSummary` return values for awaited turn inspection, including completed/cancelled status.
+- Removed `StartSession()` / `SessionStarted` from `ChatSession` and moved session-start notification ownership into the Web UI adapter.
 
 ## Open decisions
 
@@ -95,6 +112,6 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while adding concrete tools.
-- Verify real local tools execute through `ChatSessionFactory` without reopening `ChatSession`.
+- Keep the completed `ChatSession` lifecycle contract stable while hardening events and transcript lifecycle behavior.
+- Verify observer bugs no longer fault turns and whole-transcript mutations become visible to subscribers.
 - Run broader `Mcp.Net.Tests.Agent` and relevant `Mcp.Net.Tests.WebUi` coverage after the focused pass is green.

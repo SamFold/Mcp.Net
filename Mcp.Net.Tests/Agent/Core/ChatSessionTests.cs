@@ -194,6 +194,54 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_ShouldReturnTurnSummaryWithAddedAndUpdatedEntries()
+    {
+        var llmClient = new Mock<IChatClient>();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                ChatCompletionStream.FromStreaming(
+                    [
+                        new ChatClientAssistantTurn(
+                            "assistant-1",
+                            "openai",
+                            "gpt-5",
+                            new AssistantContentBlock[]
+                            {
+                                new TextAssistantBlock("text-1", "Hel"),
+                            }
+                        ),
+                    ],
+                    new ChatClientAssistantTurn(
+                        "assistant-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new TextAssistantBlock("text-1", "Hello"),
+                        }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>());
+
+        var summary = await session.SendUserMessageAsync("Hi there");
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        summary.TurnId.Should().NotBeNullOrWhiteSpace();
+        summary.AddedEntries.Should().HaveCount(2);
+        summary.AddedEntries[0].Should().BeOfType<UserChatEntry>();
+        summary.AddedEntries[1].Should().BeOfType<AssistantChatEntry>();
+        summary.UpdatedEntries.Should().ContainSingle();
+        summary.UpdatedEntries[0].Should().BeOfType<AssistantChatEntry>();
+        summary.UpdatedEntries[0].Id.Should().Be(summary.AddedEntries[1].Id);
+        summary.AddedEntries.Select(entry => entry.TurnId).Should().OnlyContain(turnId => turnId == summary.TurnId);
+        summary.UpdatedEntries.Select(entry => entry.TurnId).Should().OnlyContain(turnId => turnId == summary.TurnId);
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ProviderFailure_ShouldAppendErrorEntry()
     {
         var llmClient = new Mock<IChatClient>();
@@ -232,7 +280,7 @@ public class ChatSessionTests
     }
 
     [Fact]
-    public async Task SendUserMessageAsync_WhenProviderRequestIsCanceled_ShouldThrowWithoutAppendingErrorEntry()
+    public async Task SendUserMessageAsync_WhenProviderRequestIsCanceled_ShouldReturnCancelledSummaryWithoutAppendingErrorEntry()
     {
         var llmClient = new Mock<IChatClient>();
         var toolRegistry = new Mock<IToolRegistry>();
@@ -279,10 +327,13 @@ public class ChatSessionTests
         cancellationTokenSource.Cancel();
 
         await providerCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
 
         session.Transcript.Should().ContainSingle(entry => entry is UserChatEntry);
         session.Transcript.Should().NotContain(entry => entry is ErrorChatEntry);
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
+        summary.AddedEntries.Should().ContainSingle(entry => entry is UserChatEntry);
+        summary.UpdatedEntries.Should().BeEmpty();
         activities.Should().ContainInOrder(ChatSessionActivity.WaitingForProvider, ChatSessionActivity.Idle);
     }
 
@@ -326,7 +377,8 @@ public class ChatSessionTests
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*already in progress*");
 
         cancellationTokenSource.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstTurn);
+        var firstSummary = await firstTurn;
+        firstSummary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
     }
 
     [Fact]
@@ -370,7 +422,8 @@ public class ChatSessionTests
 
         cancellationTokenSource.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
         session.IsProcessing.Should().BeFalse();
     }
 
@@ -413,7 +466,8 @@ public class ChatSessionTests
 
         session.AbortCurrentTurn();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
         session.IsProcessing.Should().BeFalse();
     }
 
@@ -439,7 +493,7 @@ public class ChatSessionTests
     }
 
     [Fact]
-    public async Task WaitForIdleAsync_ShouldCompleteWhenTheActiveTurnFinishesWithoutPropagatingTurnCancellation()
+    public async Task WaitForIdleAsync_ShouldCompleteWhenTheActiveTurnFinishesAndReturnCancelledSummary()
     {
         var llmClient = new Mock<IChatClient>();
         var toolRegistry = new Mock<IToolRegistry>();
@@ -476,7 +530,8 @@ public class ChatSessionTests
         session.AbortCurrentTurn();
 
         await waitTask;
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
         session.IsProcessing.Should().BeFalse();
     }
 
@@ -551,7 +606,8 @@ public class ChatSessionTests
         }
 
         cancellationTokenSource.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
     }
 
     [Fact]
@@ -1136,7 +1192,7 @@ public class ChatSessionTests
         cancellationTokenSource.Cancel();
 
         await canceledToolObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        var summary = await sendTask;
 
         var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
         toolResults.Should().ContainSingle();
@@ -1158,6 +1214,8 @@ public class ChatSessionTests
                 ToolCallExecutionState.Running,
                 ToolCallExecutionState.Cancelled
             );
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
+        summary.AddedEntries.Should().Contain(entry => entry is ToolResultChatEntry);
 
         llmClient.Verify(
             c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()),
@@ -1284,6 +1342,79 @@ public class ChatSessionTests
 
         session.Transcript.Should().Equal(transcript);
         llmClient.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ContinueAsync_ShouldResumeFromToolResultTailWithoutAppendingUserEntry()
+    {
+        var llmClient = new Mock<IChatClient>();
+
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "hello", "turn-1"),
+            new ToolResultChatEntry(
+                "tool-1",
+                DateTimeOffset.UtcNow.AddMinutes(-1),
+                "call-1",
+                "calculator_add",
+                CreateToolResult("call-1", "calculator_add", "5"),
+                false,
+                "turn-1"
+            ),
+        };
+
+        llmClient
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.Transcript.Count == 2
+                    && request.Transcript[0].Id == "user-1"
+                    && request.Transcript[1].Id == "tool-1"
+                    && request.Transcript.OfType<UserChatEntry>().Count() == 1
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "assistant-2",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "done") }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>());
+        await session.LoadTranscriptAsync(transcript);
+
+        var summary = await session.ContinueAsync();
+
+        session.Transcript.Should().HaveCount(3);
+        session.Transcript.OfType<UserChatEntry>().Should().ContainSingle();
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        summary.AddedEntries.Should().ContainSingle(entry => entry is AssistantChatEntry);
+        summary.UpdatedEntries.Should().BeEmpty();
+        summary.AddedEntries[0].TurnId.Should().Be(summary.TurnId);
+    }
+
+    [Fact]
+    public async Task ContinueAsync_WhenTranscriptEndsWithAssistantEntry_ShouldThrowInvalidOperationException()
+    {
+        var session = CreateSession(Mock.Of<IChatClient>(), Mock.Of<IToolRegistry>());
+        await session.LoadTranscriptAsync(
+            [
+                new AssistantChatEntry(
+                    "assistant-1",
+                    DateTimeOffset.UtcNow,
+                    new AssistantContentBlock[] { new TextAssistantBlock("text-1", "done") },
+                    "turn-1"
+                ),
+            ]
+        );
+
+        var act = () => session.ContinueAsync();
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Cannot continue*");
     }
 
     [Fact]
