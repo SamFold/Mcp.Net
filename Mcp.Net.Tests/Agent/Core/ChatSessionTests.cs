@@ -242,6 +242,134 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_WhenTranscriptChangedHandlerThrows_ShouldContinueTurnAndNotifyOtherHandlers()
+    {
+        var llmClient = new Mock<IChatClient>();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>());
+        var receivedEntries = new List<ChatTranscriptEntry>();
+
+        session.TranscriptChanged += (_, _) => throw new InvalidOperationException("broken observer");
+        session.TranscriptChanged += (_, args) => receivedEntries.Add(args.Entry);
+
+        var summary = await session.SendUserMessageAsync("hello");
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        receivedEntries.Should().HaveCount(2);
+        receivedEntries[0].Should().BeOfType<UserChatEntry>();
+        receivedEntries[1].Should().BeOfType<AssistantChatEntry>();
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_WhenActivityChangedHandlerThrows_ShouldContinueTurnAndNotifyOtherHandlers()
+    {
+        var llmClient = new Mock<IChatClient>();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>());
+        var activities = new List<ChatSessionActivity>();
+
+        session.ActivityChanged += (_, _) => throw new InvalidOperationException("broken observer");
+        session.ActivityChanged += (_, args) => activities.Add(args.Activity);
+
+        var summary = await session.SendUserMessageAsync("hello");
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        activities.Should().ContainInOrder(ChatSessionActivity.WaitingForProvider, ChatSessionActivity.Idle);
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_WhenToolCallActivityChangedHandlerThrows_ShouldContinueTurnAndNotifyOtherHandlers()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
+
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var tool = new Tool
+        {
+            Name = "calculator_add",
+            Description = "Adds two numbers",
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+
+        llmClient
+            .SetupSequence(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                "tool-block-1",
+                                "call-1",
+                                "calculator_add",
+                                new Dictionary<string, object?> { ["a"] = 2.0, ["b"] = 3.0 }
+                            ),
+                        }
+                    )
+                )
+            )
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-2",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "done") }
+                    )
+                )
+            );
+
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(It.IsAny<RuntimeToolInvocation>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateToolResult("call-1", "calculator_add", "5"));
+
+        var session = CreateSession(llmClient.Object, Mock.Of<IToolRegistry>(), toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { tool });
+
+        var activities = new List<ToolCallExecutionState>();
+        session.ToolCallActivityChanged += (_, _) => throw new InvalidOperationException("broken observer");
+        session.ToolCallActivityChanged += (_, args) => activities.Add(args.ExecutionState);
+
+        var summary = await session.SendUserMessageAsync("hello");
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        activities.Should().ContainInOrder(
+            ToolCallExecutionState.Queued,
+            ToolCallExecutionState.Running,
+            ToolCallExecutionState.Completed
+        );
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ProviderFailure_ShouldAppendErrorEntry()
     {
         var llmClient = new Mock<IChatClient>();

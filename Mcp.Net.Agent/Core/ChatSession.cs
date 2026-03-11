@@ -504,8 +504,7 @@ public class ChatSession : IChatSessionEvents
         CancellationToken cancellationToken
     )
     {
-        ToolCallActivityChanged?.Invoke(
-            this,
+        RaiseToolCallActivityChanged(
             new ToolCallActivityChangedEventArgs(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
@@ -524,8 +523,7 @@ public class ChatSession : IChatSessionEvents
                 "Tool not registered for this session"
             );
 
-            ToolCallActivityChanged?.Invoke(
-                this,
+            RaiseToolCallActivityChanged(
                 new ToolCallActivityChangedEventArgs(
                     toolCall.ToolCallId,
                     toolCall.ToolName,
@@ -539,8 +537,7 @@ public class ChatSession : IChatSessionEvents
             return missingResult;
         }
 
-        ToolCallActivityChanged?.Invoke(
-            this,
+        RaiseToolCallActivityChanged(
             new ToolCallActivityChangedEventArgs(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
@@ -560,8 +557,7 @@ public class ChatSession : IChatSessionEvents
                 cancellationToken
             );
 
-            ToolCallActivityChanged?.Invoke(
-                this,
+            RaiseToolCallActivityChanged(
                 new ToolCallActivityChangedEventArgs(
                     toolCall.ToolCallId,
                     toolCall.ToolName,
@@ -580,8 +576,7 @@ public class ChatSession : IChatSessionEvents
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            ToolCallActivityChanged?.Invoke(
-                this,
+            RaiseToolCallActivityChanged(
                 new ToolCallActivityChangedEventArgs(
                     toolCall.ToolCallId,
                     toolCall.ToolName,
@@ -609,8 +604,7 @@ public class ChatSession : IChatSessionEvents
                 ex.Message
             );
 
-            ToolCallActivityChanged?.Invoke(
-                this,
+            RaiseToolCallActivityChanged(
                 new ToolCallActivityChangedEventArgs(
                     toolCall.ToolCallId,
                     toolCall.ToolName,
@@ -670,7 +664,7 @@ public class ChatSession : IChatSessionEvents
     {
         _transcript.Add(entry);
         turn?.RecordAdded(entry);
-        TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
+        RaiseTranscriptChanged(new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
 
     private ChatClientRequest BuildRequest()
@@ -744,8 +738,7 @@ public class ChatSession : IChatSessionEvents
 
         _transcript[existingIndex] = updatedEntry;
         execution.RecordUpdated(updatedEntry);
-        TranscriptChanged?.Invoke(
-            this,
+        RaiseTranscriptChanged(
             new ChatTranscriptChangedEventArgs(updatedEntry, ChatTranscriptChangeKind.Updated)
         );
     }
@@ -778,10 +771,43 @@ public class ChatSession : IChatSessionEvents
             turnId
         );
 
-        ActivityChanged?.Invoke(
-            this,
+        RaiseActivityChanged(
             new ChatSessionActivityChangedEventArgs(activity, turnId, _sessionId)
         );
+    }
+
+    private void RaiseTranscriptChanged(ChatTranscriptChangedEventArgs args) =>
+        RaiseEvent(TranscriptChanged, args, nameof(TranscriptChanged));
+
+    private void RaiseActivityChanged(ChatSessionActivityChangedEventArgs args) =>
+        RaiseEvent(ActivityChanged, args, nameof(ActivityChanged));
+
+    private void RaiseToolCallActivityChanged(ToolCallActivityChangedEventArgs args) =>
+        RaiseEvent(ToolCallActivityChanged, args, nameof(ToolCallActivityChanged));
+
+    private void RaiseEvent<TEventArgs>(
+        EventHandler<TEventArgs>? handler,
+        TEventArgs args,
+        string eventName
+    )
+        where TEventArgs : EventArgs
+    {
+        if (handler == null)
+        {
+            return;
+        }
+
+        foreach (EventHandler<TEventArgs> subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "{EventName} handler faulted", eventName);
+            }
+        }
     }
 
     private static AssistantChatEntry ToAssistantEntry(
