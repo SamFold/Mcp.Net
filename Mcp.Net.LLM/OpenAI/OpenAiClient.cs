@@ -62,8 +62,6 @@ public sealed class OpenAiChatClient : IChatClient
     private readonly IOpenAiChatCompletionInvoker _completionInvoker;
     private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly string _modelName;
-    private readonly float _temperature;
-    private readonly int? _maxOutputTokens;
 
     public OpenAiChatClient(ChatClientOptions options, ILogger<OpenAiChatClient> logger)
         : this(options, logger, new OpenAiChatCompletionInvoker(), null)
@@ -81,8 +79,6 @@ public sealed class OpenAiChatClient : IChatClient
         _completionInvoker =
             completionInvoker ?? throw new ArgumentNullException(nameof(completionInvoker));
         _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
-        _temperature = options.Temperature;
-        _maxOutputTokens = options.MaxOutputTokens;
 
         _modelName = ResolveModelName(options);
         _logger.LogInformation("Using OpenAI model: {Model}", _modelName);
@@ -95,10 +91,8 @@ public sealed class OpenAiChatClient : IChatClient
     private ChatCompletionOptions CreateCompletionOptions(ChatClientRequest request)
     {
         var completionOptions = new ChatCompletionOptions();
-        var temperature = request.Options?.Temperature ?? _temperature;
-        var maxOutputTokens = request.Options?.MaxOutputTokens ?? _maxOutputTokens;
 
-        if (IsTemperatureSupported(_modelName))
+        if (request.Options?.Temperature is float temperature && IsTemperatureSupported(_modelName))
         {
             completionOptions.Temperature = temperature;
             _logger.LogDebug(
@@ -107,7 +101,7 @@ public sealed class OpenAiChatClient : IChatClient
                 _modelName
             );
         }
-        else
+        else if (request.Options?.Temperature is float)
         {
             _logger.LogDebug(
                 "Model {Model} does not support temperature; omitting parameter",
@@ -115,9 +109,9 @@ public sealed class OpenAiChatClient : IChatClient
             );
         }
 
-        if (maxOutputTokens is > 0)
+        if (request.Options?.MaxOutputTokens is int maxOutputTokens && maxOutputTokens > 0)
         {
-            completionOptions.MaxOutputTokenCount = maxOutputTokens.Value;
+            completionOptions.MaxOutputTokenCount = maxOutputTokens;
             _logger.LogDebug(
                 "Using max output tokens {MaxOutputTokens} for model {Model}",
                 completionOptions.MaxOutputTokenCount,

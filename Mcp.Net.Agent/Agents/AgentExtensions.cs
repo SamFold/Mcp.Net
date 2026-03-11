@@ -74,7 +74,7 @@ public static class AgentExtensions
         // Ensure temperature is within valid range
         temperature = Math.Clamp(temperature, 0.0f, 1.0f);
 
-        agent.Parameters["temperature"] = temperature;
+        agent.ExecutionDefaults = agent.ExecutionDefaults with { Temperature = temperature };
         agent.UpdatedAt = DateTime.UtcNow;
         return agent;
     }
@@ -93,7 +93,7 @@ public static class AgentExtensions
             throw new ArgumentOutOfRangeException(nameof(maxTokens), "Max tokens must be positive");
         }
 
-        agent.Parameters["max_tokens"] = maxTokens;
+        agent.ExecutionDefaults = agent.ExecutionDefaults with { MaxOutputTokens = maxTokens };
         agent.UpdatedAt = DateTime.UtcNow;
         return agent;
     }
@@ -109,19 +109,28 @@ public static class AgentExtensions
         switch (agent.Provider)
         {
             case LlmProvider.OpenAI:
-                agent.Parameters["temperature"] = 0.7f;
-                agent.Parameters["max_tokens"] = 2048;
+                agent.ExecutionDefaults = new AgentExecutionDefaults
+                {
+                    Temperature = 0.7f,
+                    MaxOutputTokens = 2048,
+                };
                 agent.Parameters["top_p"] = 1.0f;
                 break;
 
             case LlmProvider.Anthropic:
-                agent.Parameters["temperature"] = 1.0f;
-                agent.Parameters["max_tokens"] = 1024;
+                agent.ExecutionDefaults = new AgentExecutionDefaults
+                {
+                    Temperature = 1.0f,
+                    MaxOutputTokens = 1024,
+                };
                 break;
 
             default:
-                agent.Parameters["temperature"] = 0.7f;
-                agent.Parameters["max_tokens"] = 2048;
+                agent.ExecutionDefaults = new AgentExecutionDefaults
+                {
+                    Temperature = 0.7f,
+                    MaxOutputTokens = 2048,
+                };
                 break;
         }
 

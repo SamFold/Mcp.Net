@@ -280,14 +280,14 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithConfiguredSystemPrompt_ShouldIncludePromptInOutboundRequest()
+    public async Task SendMessageAsync_WithRequestSystemPrompt_ShouldIncludePromptInOutboundRequest()
     {
         // Arrange
+        const string systemPrompt = "Anthropic configured prompt";
         var options = new ChatClientOptions
         {
             ApiKey = "test",
             Model = "claude-sonnet-4-5-20250929",
-            SystemPrompt = "Anthropic configured prompt",
         };
 
         var messageClient = new StubAnthropicMessageClient(
@@ -297,12 +297,12 @@ public class AnthropicChatClientTests
 
         // Act
         await client.SendAsync(
-            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+            CreateRequest(systemPrompt, CreateUserTranscript("hello"))
         ).GetResultAsync();
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
-        JsonSerializer.Serialize(messageClient.LastParameters).Should().Contain(options.SystemPrompt);
+        JsonSerializer.Serialize(messageClient.LastParameters).Should().Contain(systemPrompt);
     }
 
     [Fact]
@@ -330,14 +330,12 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithConfiguredTemperatureAndMaxOutputTokens_ShouldIncludeSharedOptionsInOutboundRequest()
+    public async Task SendMessageAsync_WithoutRequestSharedOptions_ShouldUseAnthropicDefaultMaxTokens()
     {
         var options = new ChatClientOptions
         {
             ApiKey = "test",
             Model = "claude-sonnet-4-5-20250929",
-            Temperature = 0.3f,
-            MaxOutputTokens = 777,
         };
 
         var messageClient = new StubAnthropicMessageClient(
@@ -349,8 +347,7 @@ public class AnthropicChatClientTests
             .GetResultAsync();
 
         messageClient.LastParameters.Should().NotBeNull();
-        messageClient.LastParameters!.Temperature.Should().Be(0.3m);
-        messageClient.LastParameters.MaxTokens.Should().Be(777);
+        messageClient.LastParameters!.MaxTokens.Should().Be(1024);
     }
 
     [Fact]
@@ -382,14 +379,12 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithRequestOptions_ShouldPreferRequestValuesOverConfiguredDefaults()
+    public async Task SendMessageAsync_WithRequestOptions_ShouldSetOnlyRequestValues()
     {
         var options = new ChatClientOptions
         {
             ApiKey = "test",
             Model = "claude-sonnet-4-5-20250929",
-            Temperature = 0.3f,
-            MaxOutputTokens = 777,
         };
         var requestOptions = new ChatRequestOptions { Temperature = 0.1f, MaxOutputTokens = 999 };
 

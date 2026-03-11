@@ -38,20 +38,18 @@ public class SignalRChatAdapterTests
                 It.Is<ChatClientRequest>(request =>
                     request.Transcript.OfType<UserChatEntry>().Single().Content == "Hi there"
                 ),
-                It.IsAny<IProgress<ChatClientAssistantTurn>>(),
                 It.IsAny<CancellationToken>()
             ))
             .Returns(
                 (
                     ChatClientRequest request,
-                    IProgress<ChatClientAssistantTurn>? assistantTurnUpdates,
                     CancellationToken cancellationToken
                 ) =>
                 {
                     request.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("Hi there");
                     cancellationToken.Should().Be(CancellationToken.None);
-                    assistantTurnUpdates!
-                        .Report(
+                    return ChatCompletionStream.FromStreaming(
+                        [
                             new ChatClientAssistantTurn(
                                 "assistant-1",
                                 "openai",
@@ -60,10 +58,8 @@ public class SignalRChatAdapterTests
                                 {
                                     new TextAssistantBlock("text-1", "Hel"),
                                 }
-                            )
-                        );
-
-                    return Task.FromResult<ChatClientTurnResult>(
+                            ),
+                        ],
                         new ChatClientAssistantTurn(
                             "assistant-1",
                             "openai",

@@ -5,6 +5,8 @@ namespace Mcp.Net.Agent.Models;
 
 public class AgentDefinition
 {
+    private Dictionary<string, object> _parameters = new();
+
     /// <summary>
     /// Unique identifier for the agent
     /// </summary>
@@ -43,7 +45,26 @@ public class AgentDefinition
     /// <summary>
     /// Additional configuration parameters (temperature, max tokens, etc.)
     /// </summary>
-    public Dictionary<string, object> Parameters { get; set; } = new();
+    public Dictionary<string, object> Parameters
+    {
+        get => _parameters;
+        set => _parameters = value ?? new Dictionary<string, object>();
+    }
+
+    /// <summary>
+    /// Typed execution defaults for shared request-time controls.
+    /// Legacy parameter storage remains the persistence format during the migration.
+    /// </summary>
+    [JsonIgnore]
+    public AgentExecutionDefaults ExecutionDefaults
+    {
+        get => AgentExecutionDefaults.FromLegacyParameters(Parameters);
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            value.ApplyToLegacyParameters(Parameters);
+        }
+    }
 
     /// <summary>
     /// The category this agent belongs to

@@ -26,13 +26,11 @@ public class StubChatClient : IChatClient
         );
     }
 
-    public Task<ChatClientTurnResult> SendAsync(
+    public IChatCompletionStream SendAsync(
         ChatClientRequest request,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
-        _ = assistantTurnUpdates;
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -47,7 +45,7 @@ public class StubChatClient : IChatClient
         var response =
             $"[DEBUG] This is a stub response to your request: '{latestUserMessage}' at {DateTime.Now}";
 
-        return Task.FromResult<ChatClientTurnResult>(
+        return ChatCompletionStream.FromResult(
             new ChatClientAssistantTurn(
                 Guid.NewGuid().ToString("n"),
                 _provider.ToString().ToLowerInvariant(),

@@ -12,8 +12,9 @@
 - Provider streaming now uses an async-stream wrapper: `IChatClient.SendAsync(...)` returns a stream that supports `await foreach` for `ChatClientAssistantTurn` snapshots plus `GetResultAsync()` for the final `ChatClientTurnResult`.
 - `ChatCompletionStream` now has direct regression coverage for result-only execution, stream-then-result consumption, single-enumerator enforcement, cancellation propagation, early-exit cancellation, and streaming failure surfacing.
 - `ChatClientRequest` now has an optional typed `ChatRequestOptions` seam so request-time execution controls can move off `ChatClientOptions` without another request-shape rewrite.
-- OpenAI and Anthropic now read shared generation controls from `ChatClientRequest.Options`, with constructor-level `ChatClientOptions` values kept only as a compatibility fallback while agent/session defaults move over.
+- OpenAI and Anthropic now read shared generation controls only from `ChatClientRequest.Options`; `ChatClientOptions` is back to client-construction concerns (`ApiKey` and `Model`) and no longer carries shared execution defaults.
 - `ChatSession` now owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap, then builds provider requests from that state for each turn.
+- `AgentDefinition` now exposes typed execution defaults hydrated from legacy parameter storage, and `ChatSession.BuildRequest()` now emits `ChatRequestOptions` from session-owned defaults instead of relying on raw parameter dictionaries at request time.
 - `Mcp.Net.LLM` no longer depends on the MCP tool model or `ToolConverter`; provider tool payloads now cross the boundary through the LLM-local request/tool contract.
 - MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`.
 - MCP tool-result translation now lives in `Mcp.Net.Agent.Tools.ToolResultConverter`, `ToolInvocationResult` is a pure LLM-local data/serialization type, and `Mcp.Net.LLM` has no project references at all.
@@ -32,28 +33,26 @@
   - keep provider implementations, request/response models, replay types, and provider factory in `Mcp.Net.LLM`
   - move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM`
   - remove `Mcp.Net.Core.Models.Tools.Tool` coupling from the `Mcp.Net.LLM` provider boundary
-  - keep the async-stream provider boundary stable while deciding whether `ChatClientAssistantTurn` snapshots remain the long-term streamed payload
-  - keep the replay/history transformer and block-based transcript architecture stable while the next API decision lands
+  - keep the async-stream provider boundary stable while request-owned execution defaults move into place
+  - keep the replay/history transformer and block-based transcript architecture stable while the request-options/defaults cleanup lands
 - Out of scope:
-  - session-level cancellation until after the payload-shape decision; `IMcpClient.CallTool` still exposes no `CancellationToken`
+  - session-level cancellation until after the request-defaults cleanup and any later payload-shape decision; `IMcpClient.CallTool` still exposes no `CancellationToken`
   - another full transcript or message-model rewrite
   - low-level memory or serialization optimization work
   - another transport rewrite now that the async-stream wrapper is in place
 
 ## Current slice
 
-Separate client construction config from per-request execution config so future provider controls have the right seam:
+Use the cleaned request seam for the first new shared execution control before widening provider-specific surfaces:
 
-1. **Follow with typed agent/session defaults instead of raw parameter dictionaries**: keep compatibility with legacy `AgentDefinition.Parameters` keys briefly, but make `ChatSession.BuildRequest()` the durable path for execution defaults.
-   - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.Agent/Agents/AgentFactory.cs`, `Mcp.Net.Agent/Models/AgentDefinition.cs`, `Mcp.Net.WebUi/Chat/Factories/ChatFactory.cs`
-
-2. **Remove the temporary constructor fallback once session-owned defaults are in place**: after request options are supplied consistently by the caller side, `ChatClientOptions` should shrink to client-construction concerns such as API key and model selection.
-   - Code references: `Mcp.Net.LLM/Models/ChatClientOptions.cs`, `Mcp.Net.LLM/OpenAI/OpenAiClient.cs`, `Mcp.Net.LLM/Anthropic/AnthropicChatClient.cs`
-
-3. **Add the first new shared execution control only after the seam and defaults are in place**: `ToolChoice` is the best first candidate because it is useful for determinism and maps across providers more cleanly than reasoning budgets.
+1. **Add the first new shared execution control now that the seam is clean**: `ToolChoice` is the best first candidate because it is useful for determinism and maps across providers more cleanly than reasoning budgets.
    - Code references: `Mcp.Net.LLM/Models/ChatRequestOptions.cs`, `Mcp.Net.LLM/OpenAI/*`, `Mcp.Net.LLM/Anthropic/*`
+   - Current implementation target:
+     - add a provider-agnostic `ToolChoice` shape to `ChatRequestOptions`
+     - map the shared choice cleanly onto OpenAI and Anthropic request payloads
+     - add request-model, provider, and session-level regressions before expanding into any more provider-specific knobs
 
-4. **Revisit richer payload or capability surfaces only after the request seam is in place**: a future `ToolChoice`, reasoning, or cache-control slice should land on request-time options rather than on provider-specific public constructor types.
+2. **Revisit richer payload or capability surfaces only after the request seam is in place**: a future `ToolChoice`, reasoning, or cache-control slice should land on request-time options rather than on provider-specific public constructor types.
    - Code references: `Mcp.Net.LLM/Models/ChatClientRequest.cs`, `Mcp.Net.LLM/Models/ChatClientOptions.cs`, `Mcp.Net.LLM/Interfaces/IChatClient.cs`
 
 ## Completed background

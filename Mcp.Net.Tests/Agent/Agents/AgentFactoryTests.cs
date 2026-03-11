@@ -213,12 +213,7 @@ public class AgentFactoryTests
             f =>
                 f.Create(
                     It.Is<LlmProvider>(p => p == agent.Provider),
-                    It.Is<ChatClientOptions>(o =>
-                        o.Model == agent.ModelName
-                        && o.SystemPrompt == agent.SystemPrompt
-                        && o.Temperature == 0.5f
-                        && o.MaxOutputTokens == 4096
-                    )
+                    It.Is<ChatClientOptions>(o => o.Model == agent.ModelName)
                 ),
             Times.Once
         );
@@ -463,7 +458,7 @@ public class AgentFactoryTests
     }
 
     [Fact]
-    public async Task CreateClientFromAgentDefinitionAsync_ShouldHandleFileSystemRoundTrippedJsonElementParameters()
+    public async Task CreateClientFromAgentDefinitionAsync_ShouldIgnoreLegacyExecutionDefaultsWhenConstructingClient()
     {
         var tempDirectory = Path.Combine(Path.GetTempPath(), $"agent-factory-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDirectory);
@@ -509,8 +504,8 @@ public class AgentFactoryTests
 
             // Assert
             Assert.NotNull(capturedOptions);
-            Assert.Equal(0.9f, capturedOptions!.Temperature, precision: 3);
-            Assert.Equal(4096, capturedOptions.MaxOutputTokens);
+            Assert.Equal("gpt-5", capturedOptions!.Model);
+            Assert.Equal("test-api-key", capturedOptions.ApiKey);
         }
         finally
         {

@@ -19,12 +19,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendMessageAsync_ShouldPopulateUsageAndStopReasonOnAssistantTurn()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
 #pragma warning disable OPENAI001
         var completionInvoker = new ReturningChatCompletionInvoker(
@@ -56,7 +52,7 @@ public class OpenAiChatClientTests
 
         var result = await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 CreateUserTranscript("hello")
             )
         ).GetResultAsync();
@@ -75,12 +71,7 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendAsync_ShouldUseOnlyRequestToolsInOutboundRequest()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "test prompt",
-        };
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -114,12 +105,7 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendAsync_TwoCallsWithDifferentToolSets_ShouldNotRetainPriorToolState()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "test prompt",
-        };
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -163,15 +149,11 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithConfiguredSystemPrompt_ShouldIncludePromptInFirstOutboundRequest()
+    public async Task SendMessageAsync_WithRequestSystemPrompt_ShouldIncludePromptInFirstOutboundRequest()
     {
         // Arrange
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -182,13 +164,13 @@ public class OpenAiChatClientTests
 
         // Act
         await client.SendAsync(
-            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+            CreateRequest(systemPrompt, CreateUserTranscript("hello"))
         ).GetResultAsync();
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages.Should().HaveCount(2);
-        ExtractSystemPrompt(completionInvoker.CapturedMessages!).Should().Be(options.SystemPrompt);
+        ExtractSystemPrompt(completionInvoker.CapturedMessages!).Should().Be(systemPrompt);
     }
 
     [Fact]
@@ -219,15 +201,10 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithConfiguredMaxOutputTokens_ShouldSetCompletionOption()
+    public async Task SendMessageAsync_WithoutRequestSharedOptions_ShouldOmitCompletionOptions()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-            MaxOutputTokens = 321,
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-4o" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -237,22 +214,19 @@ public class OpenAiChatClientTests
         );
 
         await client.SendAsync(
-            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+            CreateRequest(systemPrompt, CreateUserTranscript("hello"))
         ).GetResultAsync();
 
         completionInvoker.CapturedOptions.Should().NotBeNull();
-        completionInvoker.CapturedOptions!.MaxOutputTokenCount.Should().Be(321);
+        completionInvoker.CapturedOptions!.Temperature.Should().BeNull();
+        completionInvoker.CapturedOptions.MaxOutputTokenCount.Should().BeNull();
     }
 
     [Fact]
     public async Task SendMessageAsync_WithRequestTemperatureAndMaxOutputTokens_ShouldSetCompletionOptions()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-4o",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-4o" };
         var requestOptions = new ChatRequestOptions { Temperature = 0.25f, MaxOutputTokens = 654 };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
@@ -264,7 +238,7 @@ public class OpenAiChatClientTests
 
         await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 CreateUserTranscript("hello"),
                 options: requestOptions
             )
@@ -276,16 +250,10 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithRequestOptions_ShouldPreferRequestValuesOverConfiguredDefaults()
+    public async Task SendMessageAsync_WithRequestOptions_ShouldSetOnlyRequestValues()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-4o",
-            SystemPrompt = "OpenAI configured prompt",
-            Temperature = 0.9f,
-            MaxOutputTokens = 321,
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-4o" };
         var requestOptions = new ChatRequestOptions { Temperature = 0.15f, MaxOutputTokens = 777 };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
@@ -297,7 +265,7 @@ public class OpenAiChatClientTests
 
         await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 CreateUserTranscript("hello"),
                 options: requestOptions
             )
@@ -311,12 +279,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendMessageAsync_WithRequestTemperature_ForUnsupportedModel_ShouldOmitTemperature()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
         var requestOptions = new ChatRequestOptions { Temperature = 0.6f };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
@@ -328,7 +292,7 @@ public class OpenAiChatClientTests
 
         await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 CreateUserTranscript("hello"),
                 options: requestOptions
             )
@@ -370,12 +334,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendAsync_ShouldIncludePriorHistoryInOutboundRequest()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -386,7 +346,7 @@ public class OpenAiChatClientTests
 
         await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "Earlier user", "turn-1"),
@@ -415,12 +375,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendAsync_WithAssistantTextAndToolCallHistory_ShouldKeepSingleAssistantHistoryMessage()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var completionInvoker = new CapturingChatCompletionInvoker();
         var client = new OpenAiChatClient(
@@ -431,7 +387,7 @@ public class OpenAiChatClientTests
 
         await client.SendAsync(
             CreateRequest(
-                options.SystemPrompt,
+                systemPrompt,
                 new ChatTranscriptEntry[]
                 {
                     new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-3), "Use the tool", "turn-1"),
@@ -495,12 +451,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldReportPartialTextSnapshots()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var updateTimestamp = DateTimeOffset.UtcNow;
         var completionInvoker = new StreamingChatCompletionInvoker(
@@ -528,7 +480,7 @@ public class OpenAiChatClientTests
         );
 
         var (streamedTurns, result) = await ExecuteStreamAsync(
-            client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")))
+            client.SendAsync(CreateRequest(systemPrompt, CreateUserTranscript("hello")))
         );
 
         completionInvoker.StreamingCalled.Should().BeTrue();
@@ -563,12 +515,8 @@ public class OpenAiChatClientTests
     [Fact]
     public async Task SendMessageAsync_WithAssistantTurnUpdates_ShouldAccumulateToolCallArguments()
     {
-        var options = new ChatClientOptions
-        {
-            ApiKey = "test",
-            Model = "gpt-5",
-            SystemPrompt = "OpenAI configured prompt",
-        };
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
 
         var updateTimestamp = DateTimeOffset.UtcNow;
         var completionInvoker = new StreamingChatCompletionInvoker(
@@ -596,7 +544,7 @@ public class OpenAiChatClientTests
         );
 
         var (streamedTurns, result) = await ExecuteStreamAsync(
-            client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("find weather")))
+            client.SendAsync(CreateRequest(systemPrompt, CreateUserTranscript("find weather")))
         );
 
         streamedTurns.Should().NotBeEmpty();

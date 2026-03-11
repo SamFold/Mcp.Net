@@ -53,7 +53,7 @@ public class ChatFactoryTests
     }
 
     [Fact]
-    public void CreateClientFromAgent_ShouldPropagateTemperatureAndMaxOutputTokens()
+    public void CreateClientFromAgent_ShouldOnlyUseConstructionOptions()
     {
         var factory = CreateChatFactory();
         var agent = new AgentDefinition
@@ -74,9 +74,6 @@ public class ChatFactoryTests
         var options = GetClientOptions(client);
 
         options.Model.Should().Be("gpt-5");
-        options.Temperature.Should().Be(0.25f);
-        options.MaxOutputTokens.Should().Be(1536);
-        options.SystemPrompt.Should().Be(agent.SystemPrompt);
     }
 
     private static ChatFactory CreateChatFactory()

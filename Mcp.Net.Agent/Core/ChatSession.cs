@@ -23,6 +23,7 @@ public class ChatSession : IChatSessionEvents
     private readonly ILogger<ChatSession> _logger;
     private readonly List<ChatTranscriptEntry> _transcript = new();
     private readonly List<Tool> _registeredTools = new();
+    private AgentExecutionDefaults _executionDefaults = new();
     private string? _sessionId;
     private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
@@ -154,6 +155,15 @@ public class ChatSession : IChatSessionEvents
     public string GetSystemPrompt() => _systemPrompt;
 
     /// <summary>
+    /// Updates the shared execution defaults used for provider requests in this session.
+    /// </summary>
+    public void SetExecutionDefaults(AgentExecutionDefaults executionDefaults)
+    {
+        ArgumentNullException.ThrowIfNull(executionDefaults);
+        _executionDefaults = executionDefaults;
+    }
+
+    /// <summary>
     /// Replaces the provider-facing tool set for the session.
     /// </summary>
     public void RegisterTools(IEnumerable<Tool> tools)
@@ -184,7 +194,6 @@ public class ChatSession : IChatSessionEvents
     {
         _lastActivityAt = DateTime.UtcNow;
         var turnId = Guid.NewGuid().ToString("n");
-        var assistantTurnUpdates = CreateAssistantTurnProgress(turnId);
 
         AppendTranscript(
             new UserChatEntry(
@@ -196,7 +205,7 @@ public class ChatSession : IChatSessionEvents
         );
 
         var nextTurn = await RequestProviderAsync(
-            () => _llmClient.SendAsync(BuildRequest(), assistantTurnUpdates),
+            () => _llmClient.SendAsync(BuildRequest()),
             turnId
         );
 
@@ -212,7 +221,7 @@ public class ChatSession : IChatSessionEvents
 
             await ExecuteToolCallsAsync(toolCalls, turnId);
             nextTurn = await RequestProviderAsync(
-                () => _llmClient.SendAsync(BuildRequest(), assistantTurnUpdates),
+                () => _llmClient.SendAsync(BuildRequest()),
                 turnId
             );
         }
@@ -226,7 +235,7 @@ public class ChatSession : IChatSessionEvents
     }
 
     private async Task<ChatClientTurnResult> RequestProviderAsync(
-        Func<Task<ChatClientTurnResult>> operation,
+        Func<IChatCompletionStream> operation,
         string turnId
     )
     {
@@ -234,7 +243,14 @@ public class ChatSession : IChatSessionEvents
 
         try
         {
-            return await operation();
+            var stream = operation();
+
+            await foreach (var assistantTurn in stream)
+            {
+                UpsertAssistantEntry(assistantTurn, turnId);
+            }
+
+            return await stream.GetResultAsync();
         }
         catch (Exception ex)
         {
@@ -425,6 +441,7 @@ public class ChatSession : IChatSessionEvents
     private void ApplyAgentConfiguration(AgentDefinition agent)
     {
         SetSystemPrompt(agent.SystemPrompt);
+        SetExecutionDefaults(agent.ExecutionDefaults);
         var enabledTools = _toolRegistry.EnabledTools ?? Array.Empty<Tool>();
         var allTools = _toolRegistry.AllTools ?? Array.Empty<Tool>();
 
@@ -442,8 +459,23 @@ public class ChatSession : IChatSessionEvents
         new(
             _systemPrompt,
             _transcript,
-            _registeredTools.Select(tool => new ChatClientTool(tool.Name, tool.Description, tool.InputSchema)).ToArray()
+            _registeredTools.Select(tool => new ChatClientTool(tool.Name, tool.Description, tool.InputSchema)).ToArray(),
+            BuildRequestOptions()
         );
+
+    private ChatRequestOptions? BuildRequestOptions()
+    {
+        if (_executionDefaults.Temperature is null && _executionDefaults.MaxOutputTokens is null)
+        {
+            return null;
+        }
+
+        return new ChatRequestOptions
+        {
+            Temperature = _executionDefaults.Temperature,
+            MaxOutputTokens = _executionDefaults.MaxOutputTokens,
+        };
+    }
 
     private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
     {
@@ -471,9 +503,6 @@ public class ChatSession : IChatSessionEvents
             new ChatTranscriptChangedEventArgs(updatedEntry, ChatTranscriptChangeKind.Updated)
         );
     }
-
-    private IProgress<ChatClientAssistantTurn> CreateAssistantTurnProgress(string turnId) =>
-        new AssistantTurnProgress(turn => UpsertAssistantEntry(turn, turnId));
 
     private void SetActivity(ChatSessionActivity activity, string turnId)
     {
@@ -536,20 +565,5 @@ public class ChatSession : IChatSessionEvents
             resourceLinks: Array.Empty<ToolResultResourceLink>(),
             metadata: null
         );
-    }
-
-    private sealed class AssistantTurnProgress : IProgress<ChatClientAssistantTurn>
-    {
-        private readonly Action<ChatClientAssistantTurn> _handler;
-
-        public AssistantTurnProgress(Action<ChatClientAssistantTurn> handler)
-        {
-            _handler = handler;
-        }
-
-        public void Report(ChatClientAssistantTurn value)
-        {
-            _handler(value);
-        }
     }
 }

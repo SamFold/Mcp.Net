@@ -26,8 +26,6 @@ public sealed class AnthropicChatClient : IChatClient
     private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly string _model;
     private readonly ILogger<AnthropicChatClient> _logger;
-    private readonly float _temperature;
-    private readonly int? _maxOutputTokens;
 
     public AnthropicChatClient(ChatClientOptions options, ILogger<AnthropicChatClient> logger)
         : this(options, logger, new AnthropicMessageClient(options.ApiKey), null)
@@ -44,8 +42,6 @@ public sealed class AnthropicChatClient : IChatClient
         _logger = logger;
         _messagesClient = messagesClient ?? throw new ArgumentNullException(nameof(messagesClient));
         _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
-        _temperature = options.Temperature;
-        _maxOutputTokens = options.MaxOutputTokens;
 
         // Determine the model to use
         if (string.IsNullOrEmpty(options.Model) || !options.Model.StartsWith("claude"))
@@ -102,12 +98,12 @@ public sealed class AnthropicChatClient : IChatClient
         }
     }
 
-    private MessageParameters CreateMessageParameters(ChatClientRequest request, bool stream = false) =>
-        new()
+    private MessageParameters CreateMessageParameters(ChatClientRequest request, bool stream = false)
+    {
+        var parameters = new MessageParameters
         {
             Model = _model,
-            MaxTokens = request.Options?.MaxOutputTokens ?? _maxOutputTokens ?? 1024,
-            Temperature = Convert.ToDecimal(request.Options?.Temperature ?? _temperature),
+            MaxTokens = request.Options?.MaxOutputTokens ?? 1024,
             Messages = BuildMessages(request),
             Tools = request.Tools.Select(ConvertToAnthropicTool).ToList(),
             System = string.IsNullOrWhiteSpace(request.SystemPrompt)
@@ -115,6 +111,14 @@ public sealed class AnthropicChatClient : IChatClient
                 : [new SystemMessage(request.SystemPrompt)],
             Stream = stream,
         };
+
+        if (request.Options?.Temperature is float temperature)
+        {
+            parameters.Temperature = Convert.ToDecimal(temperature);
+        }
+
+        return parameters;
+    }
 
     private static ChatUsage? ToChatUsage(Usage? usage)
     {

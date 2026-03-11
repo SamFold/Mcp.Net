@@ -4,9 +4,8 @@ namespace Mcp.Net.LLM.Interfaces;
 
 public interface IChatClient
 {
-    Task<ChatClientTurnResult> SendAsync(
+    IChatCompletionStream SendAsync(
         ChatClientRequest request,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     );
 }

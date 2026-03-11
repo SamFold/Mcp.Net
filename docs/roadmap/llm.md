@@ -6,16 +6,15 @@
 - The stateless-executor boundary shift is now live: `ChatSession` owns prompt/tools/transcript state and `Mcp.Net.LLM` executes explicit request snapshots.
 - `Mcp.Net.LLM` is now a standalone provider library: MCP-facing prompt/resource catalog, completion, elicitation, and tool-result conversion all live outside the project.
 - The async-stream transport slice is now complete: provider calls stream `ChatClientAssistantTurn` snapshots through a wrapper that also exposes the final `ChatClientTurnResult`.
-- The request boundary now includes a typed `ChatRequestOptions` seam: the immediate priority is moving existing shared generation controls onto request execution before adding new provider knobs.
-- OpenAI and Anthropic now honor request-time `Temperature` and `MaxOutputTokens`, while constructor-level defaults remain only as a temporary compatibility fallback.
-- Cancellation remains deferred until after the request-options and payload-shape work because the current MCP client/tool-execution path still does not support it cleanly.
+- The request boundary cleanup is now complete for shared generation controls: agent/session defaults flow into `ChatRequestOptions`, and `ChatClientOptions` is back to long-lived client construction only.
+- The immediate priority is adding the first new shared request-time control on the clean seam rather than widening provider constructor types.
+- Cancellation remains deferred until after any later payload-shape work because the current MCP client/tool-execution path still does not support it cleanly.
 
 ## Near-term sequence
 
-1. Follow with typed agent/session defaults instead of raw parameter dictionaries, while keeping a brief compatibility bridge for existing agent metadata.
-2. Remove the temporary constructor fallback so `ChatClientOptions` shrinks back to long-lived client configuration only.
-3. Revisit whether a richer streaming event model is worth introducing, or whether `ChatClientAssistantTurn` snapshots remain sufficient on the new async-stream transport.
-4. Revisit session cancellation only after the request-options and payload-shape decisions, and only if the MCP client/tool-execution path then needs a clean contract.
+1. Add `ToolChoice` as the first new shared request-time execution control across providers.
+2. Revisit whether a richer streaming event model is worth introducing, or whether `ChatClientAssistantTurn` snapshots remain sufficient on the new async-stream transport.
+3. Revisit session cancellation only after any later payload-shape decision, and only if the MCP client/tool-execution path then needs a clean contract.
 
 ## Completed boundary work
 
@@ -28,17 +27,12 @@
 
 ## Next milestone
 
-1. **Move execution defaults fully onto the request/session boundary.**
-   - Keep `ApiKey` and model selection as client-construction concerns.
-   - Replace raw agent parameter dictionary lookups with typed defaults that flow through `ChatSession.BuildRequest()`.
-   - Keep a brief compatibility bridge while migrating existing agent metadata.
+1. **Add `ToolChoice` on the cleaned request seam.**
+   - Keep shared execution controls on `ChatRequestOptions` rather than on provider constructor types.
+   - Map the new choice cleanly across OpenAI and Anthropic before considering narrower provider-specific knobs.
+   - Preserve agent/session ownership of defaults and request building while introducing the new option.
 
-2. **Remove the constructor fallback after request-owned defaults are live.**
-   - Shrink `ChatClientOptions` back to long-lived client configuration only.
-   - Keep shared generation controls on request state so future tool-choice, reasoning, or cache controls land on the right seam.
-   - Avoid exposing provider-specific public option types unless shared capability-oriented options prove insufficient.
-
-3. **Then decide whether the async-stream payload should stay snapshot-based.**
+2. **Then decide whether the async-stream payload should stay snapshot-based.**
    - Keep the new wrapper stable unless a concrete consumer need justifies a richer event model.
    - Preserve stable assistant/block identifiers, transcript `Added` / `Updated` semantics, and final-result access while evaluating any payload changes.
    - Do not reopen another transport rewrite while this decision remains open.
@@ -53,7 +47,7 @@
 
 ## Dependencies and risks
 
-- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the request-options and payload-shape work and only comes back when the seam is both needed and worth widening.
+- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the request-defaults cleanup and any later payload-shape work and only comes back when the seam is both needed and worth widening.
 - The next LLM slices should stay focused on request/API shape and avoid reopening another transcript or message-model rewrite now that the project boundary work is complete.
 
 ## Open questions
