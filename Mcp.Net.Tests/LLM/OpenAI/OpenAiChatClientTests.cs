@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -58,7 +59,7 @@ public class OpenAiChatClientTests
                 options.SystemPrompt,
                 CreateUserTranscript("hello")
             )
-        );
+        ).GetResultAsync();
 
         var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
         assistantTurn.StopReason.Should().Be("stop");
@@ -96,7 +97,9 @@ public class OpenAiChatClientTests
 
         try
         {
-            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("hello"), tools));
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("hello"), tools)
+            ).GetResultAsync();
         }
         catch (InvalidOperationException) { }
 
@@ -137,13 +140,17 @@ public class OpenAiChatClientTests
 
         try
         {
-            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("first"), firstSet));
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("first"), firstSet)
+            ).GetResultAsync();
         }
         catch (InvalidOperationException) { }
 
         try
         {
-            await client.SendAsync(CreateRequest("test prompt", CreateUserTranscript("hello"), secondSet));
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("hello"), secondSet)
+            ).GetResultAsync();
         }
         catch (InvalidOperationException) { }
 
@@ -174,7 +181,9 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
+        await client.SendAsync(
+            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+        ).GetResultAsync();
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
@@ -200,7 +209,8 @@ public class OpenAiChatClientTests
         );
 
         // Act
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")))
+            .GetResultAsync();
 
         // Assert
         completionInvoker.CapturedMessages.Should().NotBeNull();
@@ -226,10 +236,106 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
+        await client.SendAsync(
+            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+        ).GetResultAsync();
 
         completionInvoker.CapturedOptions.Should().NotBeNull();
         completionInvoker.CapturedOptions!.MaxOutputTokenCount.Should().Be(321);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestTemperatureAndMaxOutputTokens_ShouldSetCompletionOptions()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-4o",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+        var requestOptions = new ChatRequestOptions { Temperature = 0.25f, MaxOutputTokens = 654 };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
+                CreateUserTranscript("hello"),
+                options: requestOptions
+            )
+        ).GetResultAsync();
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Temperature.Should().Be(0.25f);
+        completionInvoker.CapturedOptions.MaxOutputTokenCount.Should().Be(654);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestOptions_ShouldPreferRequestValuesOverConfiguredDefaults()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-4o",
+            SystemPrompt = "OpenAI configured prompt",
+            Temperature = 0.9f,
+            MaxOutputTokens = 321,
+        };
+        var requestOptions = new ChatRequestOptions { Temperature = 0.15f, MaxOutputTokens = 777 };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
+                CreateUserTranscript("hello"),
+                options: requestOptions
+            )
+        ).GetResultAsync();
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Temperature.Should().Be(0.15f);
+        completionInvoker.CapturedOptions.MaxOutputTokenCount.Should().Be(777);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestTemperature_ForUnsupportedModel_ShouldOmitTemperature()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "gpt-5",
+            SystemPrompt = "OpenAI configured prompt",
+        };
+        var requestOptions = new ChatRequestOptions { Temperature = 0.6f };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                options.SystemPrompt,
+                CreateUserTranscript("hello"),
+                options: requestOptions
+            )
+        ).GetResultAsync();
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Temperature.Should().BeNull();
     }
 
     [Fact]
@@ -295,7 +401,7 @@ public class OpenAiChatClientTests
                     new UserChatEntry("user-2", DateTimeOffset.UtcNow, "New question", "turn-2"),
                 }
             )
-        );
+        ).GetResultAsync();
 
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages!.Should().HaveCount(4);
@@ -370,7 +476,7 @@ public class OpenAiChatClientTests
                     new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
-        );
+        ).GetResultAsync();
 
         completionInvoker.CapturedMessages.Should().NotBeNull();
         completionInvoker.CapturedMessages!.Should().HaveCount(5);
@@ -421,10 +527,8 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendAsync(
-            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")),
-            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        var (streamedTurns, result) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")))
         );
 
         completionInvoker.StreamingCalled.Should().BeTrue();
@@ -491,10 +595,8 @@ public class OpenAiChatClientTests
             completionInvoker
         );
 
-        var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendAsync(
-            CreateRequest(options.SystemPrompt, CreateUserTranscript("find weather")),
-            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        var (streamedTurns, result) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("find weather")))
         );
 
         streamedTurns.Should().NotBeEmpty();
@@ -533,12 +635,14 @@ public class OpenAiChatClientTests
     private static ChatClientRequest CreateRequest(
         string? systemPrompt = null,
         IEnumerable<ChatTranscriptEntry>? transcript = null,
-        IEnumerable<ChatClientTool>? tools = null
+        IEnumerable<ChatClientTool>? tools = null,
+        ChatRequestOptions? options = null
     ) =>
         new(
             systemPrompt ?? string.Empty,
             transcript?.ToArray() ?? Array.Empty<ChatTranscriptEntry>(),
-            tools?.ToArray() ?? Array.Empty<ChatClientTool>()
+            tools?.ToArray() ?? Array.Empty<ChatClientTool>(),
+            options
         );
 
     private static ChatTranscriptEntry[] CreateUserTranscript(string userMessage) =>
@@ -563,6 +667,20 @@ public class OpenAiChatClientTests
 
         return (IReadOnlyDictionary<string, object?>)
             parseMethod!.Invoke(null, new object[] { argumentsJson })!;
+    }
+
+    private static async Task<(List<ChatClientAssistantTurn> Updates, ChatClientTurnResult Result)>
+        ExecuteStreamAsync(IChatCompletionStream stream, CancellationToken cancellationToken = default)
+    {
+        var updates = new List<ChatClientAssistantTurn>();
+
+        await foreach (var update in stream.WithCancellation(cancellationToken))
+        {
+            updates.Add(update);
+        }
+
+        var result = await stream.GetResultAsync(cancellationToken);
+        return (updates, result);
     }
 
     private sealed class CapturingChatCompletionInvoker : IOpenAiChatCompletionInvoker
@@ -659,21 +777,6 @@ public class OpenAiChatClientTests
                 yield return update;
                 await Task.Yield();
             }
-        }
-    }
-
-    private sealed class CapturingProgress<T> : IProgress<T>
-    {
-        private readonly ICollection<T> _items;
-
-        public CapturingProgress(ICollection<T> items)
-        {
-            _items = items;
-        }
-
-        public void Report(T value)
-        {
-            _items.Add(value);
         }
     }
 

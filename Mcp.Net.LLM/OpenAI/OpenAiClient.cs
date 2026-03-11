@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Text;
+using System.Text.Json;
+using System.Threading.Channels;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
@@ -91,16 +92,18 @@ public sealed class OpenAiChatClient : IChatClient
     private static string ResolveModelName(ChatClientOptions options) =>
         string.IsNullOrWhiteSpace(options.Model) ? "gpt-5" : options.Model;
 
-    private ChatCompletionOptions CreateCompletionOptions(IReadOnlyList<ChatClientTool> tools)
+    private ChatCompletionOptions CreateCompletionOptions(ChatClientRequest request)
     {
         var completionOptions = new ChatCompletionOptions();
+        var temperature = request.Options?.Temperature ?? _temperature;
+        var maxOutputTokens = request.Options?.MaxOutputTokens ?? _maxOutputTokens;
 
         if (IsTemperatureSupported(_modelName))
         {
-            completionOptions.Temperature = _temperature;
+            completionOptions.Temperature = temperature;
             _logger.LogDebug(
                 "Using temperature {Temperature} for model {Model}",
-                _temperature,
+                temperature,
                 _modelName
             );
         }
@@ -112,9 +115,9 @@ public sealed class OpenAiChatClient : IChatClient
             );
         }
 
-        if (_maxOutputTokens is > 0)
+        if (maxOutputTokens is > 0)
         {
-            completionOptions.MaxOutputTokenCount = _maxOutputTokens.Value;
+            completionOptions.MaxOutputTokenCount = maxOutputTokens.Value;
             _logger.LogDebug(
                 "Using max output tokens {MaxOutputTokens} for model {Model}",
                 completionOptions.MaxOutputTokenCount,
@@ -122,7 +125,7 @@ public sealed class OpenAiChatClient : IChatClient
             );
         }
 
-        foreach (var tool in tools)
+        foreach (var tool in request.Tools)
         {
             completionOptions.Tools.Add(ConvertToChatTool(tool));
         }
@@ -269,22 +272,11 @@ public sealed class OpenAiChatClient : IChatClient
     private async Task<ChatClientTurnResult> GetTurnResultAsync(
         IReadOnlyList<ChatMessage> messages,
         ChatCompletionOptions completionOptions,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
         try
         {
-            if (assistantTurnUpdates != null)
-            {
-                return await GetStreamingTurnResultAsync(
-                    messages,
-                    completionOptions,
-                    assistantTurnUpdates,
-                    cancellationToken
-                );
-            }
-
             var completion = _completionInvoker.CompleteChat(_chatClient, messages, completionOptions);
 
             ChatClientTurnResult response = completion.FinishReason switch
@@ -314,9 +306,8 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 
-    public Task<ChatClientTurnResult> SendAsync(
+    public IChatCompletionStream SendAsync(
         ChatClientRequest request,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -324,9 +315,20 @@ public sealed class OpenAiChatClient : IChatClient
         cancellationToken.ThrowIfCancellationRequested();
 
         var messages = BuildMessages(request);
-        var completionOptions = CreateCompletionOptions(request.Tools);
+        var completionOptions = CreateCompletionOptions(request);
 
-        return GetTurnResultAsync(messages, completionOptions, assistantTurnUpdates, cancellationToken);
+        return ChatCompletionStream.Create(
+            resultCancellationToken =>
+                GetTurnResultAsync(messages, completionOptions, resultCancellationToken),
+            (writer, streamCancellationToken) =>
+                GetStreamingTurnResultAsync(
+                    messages,
+                    completionOptions,
+                    writer,
+                    streamCancellationToken
+                ),
+            cancellationToken
+        );
     }
 
     private IReadOnlyList<ChatMessage> BuildMessages(ChatClientRequest request)
@@ -452,7 +454,7 @@ public sealed class OpenAiChatClient : IChatClient
     private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
         IReadOnlyList<ChatMessage> messages,
         ChatCompletionOptions completionOptions,
-        IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
+        ChannelWriter<ChatClientAssistantTurn> assistantTurnUpdates,
         CancellationToken cancellationToken
     )
     {
@@ -476,7 +478,7 @@ public sealed class OpenAiChatClient : IChatClient
                 continue;
             }
 
-            assistantTurnUpdates.Report(partialTurn);
+            await assistantTurnUpdates.WriteAsync(partialTurn, cancellationToken);
             lastReportedTurn = partialTurn;
         }
 

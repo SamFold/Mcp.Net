@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Anthropic.SDK.Messaging;
 using FluentAssertions;
 using Mcp.Net.LLM.Anthropic;
+using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -42,7 +43,7 @@ public class AnthropicChatClientTests
 
         var response = await client.SendAsync(
             CreateRequest(string.Empty, CreateUserTranscript("Count r characters"))
-        );
+        ).GetResultAsync();
 
         response.Should().BeOfType<ChatClientAssistantTurn>();
         var assistantTurn = (ChatClientAssistantTurn)response;
@@ -85,7 +86,9 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        var response = await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hi")));
+        var response = await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("hi"))
+        ).GetResultAsync();
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -120,7 +123,8 @@ public class AnthropicChatClientTests
             CreateTool("calculate", "Calculator"),
         };
 
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), tools));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), tools))
+            .GetResultAsync();
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Tools.Should().HaveCount(2);
@@ -154,8 +158,10 @@ public class AnthropicChatClientTests
             CreateTool("weather", "Weather tool"),
         };
 
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("first"), firstSet));
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), secondSet));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("first"), firstSet))
+            .GetResultAsync();
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello"), secondSet))
+            .GetResultAsync();
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Tools.Should().HaveCount(2);
@@ -188,7 +194,7 @@ public class AnthropicChatClientTests
         // Act
         var response = await client.SendAsync(
             CreateRequest(string.Empty, CreateUserTranscript("find weather"))
-        );
+        ).GetResultAsync();
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -234,7 +240,7 @@ public class AnthropicChatClientTests
         // Act
         var response = await client.SendAsync(
             CreateRequest(string.Empty, CreateUserTranscript("find nested arguments"))
-        );
+        ).GetResultAsync();
 
         // Assert
         response.Should().BeOfType<ChatClientAssistantTurn>();
@@ -264,7 +270,7 @@ public class AnthropicChatClientTests
         // Act
         var response = await client.SendAsync(
             CreateRequest(string.Empty, CreateUserTranscript("hello"))
-        );
+        ).GetResultAsync();
 
         // Assert
         response.Should().BeOfType<ChatClientFailure>();
@@ -290,7 +296,9 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendAsync(CreateRequest(options.SystemPrompt, CreateUserTranscript("hello")));
+        await client.SendAsync(
+            CreateRequest(options.SystemPrompt, CreateUserTranscript("hello"))
+        ).GetResultAsync();
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
@@ -313,7 +321,8 @@ public class AnthropicChatClientTests
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
         // Act
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")))
+            .GetResultAsync();
 
         // Assert
         messageClient.LastParameters.Should().NotBeNull();
@@ -336,11 +345,70 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")));
+        await client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("hello")))
+            .GetResultAsync();
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Temperature.Should().Be(0.3m);
         messageClient.LastParameters.MaxTokens.Should().Be(777);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestTemperatureAndMaxOutputTokens_ShouldIncludeRequestOptionsInOutboundRequest()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+        var requestOptions = new ChatRequestOptions { Temperature = 0.2f, MaxOutputTokens = 888 };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("hello"),
+                options: requestOptions
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Temperature.Should().Be(0.2m);
+        messageClient.LastParameters.MaxTokens.Should().Be(888);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WithRequestOptions_ShouldPreferRequestValuesOverConfiguredDefaults()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+            Temperature = 0.3f,
+            MaxOutputTokens = 777,
+        };
+        var requestOptions = new ChatRequestOptions { Temperature = 0.1f, MaxOutputTokens = 999 };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("hello"),
+                options: requestOptions
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Temperature.Should().Be(0.1m);
+        messageClient.LastParameters.MaxTokens.Should().Be(999);
     }
 
     [Fact]
@@ -400,7 +468,7 @@ public class AnthropicChatClientTests
                     new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
-        );
+        ).GetResultAsync();
 
         messageClient.LastParameters.Should().NotBeNull();
         messageClient.LastParameters!.Messages.Should().HaveCount(4);
@@ -467,7 +535,7 @@ public class AnthropicChatClientTests
                     new UserChatEntry("user-2", DateTimeOffset.UtcNow, "continue", "turn-2"),
                 }
             )
-        );
+        ).GetResultAsync();
 
         var assistantContent = messageClient.LastParameters!.Messages[1].Content;
         assistantContent.Should().HaveCount(2);
@@ -508,10 +576,8 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        var streamedTurns = new List<ChatClientAssistantTurn>();
-        var result = await client.SendAsync(
-            CreateRequest(string.Empty, CreateUserTranscript("Count r characters")),
-            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        var (streamedTurns, result) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("Count r characters")))
         );
 
         streamedTurns.Should().HaveCount(4);
@@ -590,10 +656,8 @@ public class AnthropicChatClientTests
         );
         var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
 
-        var streamedTurns = new List<ChatClientAssistantTurn>();
-        var streamResult = await client.SendAsync(
-            CreateRequest(string.Empty, CreateUserTranscript("find weather")),
-            new CapturingProgress<ChatClientAssistantTurn>(streamedTurns)
+        var (streamedTurns, streamResult) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("find weather")))
         );
 
         streamedTurns.Should().NotBeEmpty();
@@ -631,6 +695,117 @@ public class AnthropicChatClientTests
         assistantTurn.StopReason.Should().Be("tool_use");
         assistantTurn.Usage.Should().BeEquivalentTo(finalStreamedTurn.Usage);
         assistantTurn.Blocks[1].Id.Should().Be(finalStreamedTurn.Blocks[1].Id);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithAssistantTurnUpdates_ShouldPreserveReasoningTextAndToolOrderingInOneTurn()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-6",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            responses: Array.Empty<IReadOnlyList<ContentBase>>(),
+            streamingResponses:
+            [
+                new MessageResponse[]
+                {
+                    CreateMessageStart(CreateUsage(inputTokens: 12)),
+                    CreateContentBlockStart("thinking"),
+                    CreateThinkingDelta("Let me inspect"),
+                    CreateSignatureDelta("sig_mixed"),
+                    CreateContentBlockStop(),
+                    CreateContentBlockStart("text"),
+                    CreateTextDelta("Checking weather"),
+                    CreateContentBlockStop(),
+                    CreateContentBlockStart("tool_use", "toolu_mixed", "search"),
+                    CreateToolDelta("""{"query":"weath"""),
+                    CreateToolDelta("""er"}"""),
+                    CreateMessageDelta("tool_use", CreateUsage(outputTokens: 7)),
+                },
+            ]
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var (streamedTurns, result) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(string.Empty, CreateUserTranscript("check weather")))
+        );
+
+        streamedTurns.Count.Should().BeGreaterThanOrEqualTo(6);
+        streamedTurns.Select(turn => turn.Id).Distinct().Should().ContainSingle();
+
+        var reasoningSnapshots = streamedTurns
+            .Where(turn => turn.Blocks.OfType<ReasoningAssistantBlock>().Any())
+            .ToList();
+        reasoningSnapshots.Should().NotBeEmpty();
+        reasoningSnapshots
+            .Select(turn => turn.Blocks.OfType<ReasoningAssistantBlock>().Single().Id)
+            .Distinct()
+            .Should()
+            .ContainSingle();
+
+        var textSnapshots = streamedTurns
+            .Where(turn => turn.Blocks.OfType<TextAssistantBlock>().Any())
+            .ToList();
+        textSnapshots.Should().NotBeEmpty();
+        textSnapshots
+            .Select(turn => turn.Blocks.OfType<TextAssistantBlock>().Single().Id)
+            .Distinct()
+            .Should()
+            .ContainSingle();
+
+        var toolSnapshots = streamedTurns
+            .Where(turn => turn.Blocks.OfType<ToolCallAssistantBlock>().Any())
+            .ToList();
+        toolSnapshots.Should().NotBeEmpty();
+        toolSnapshots
+            .Select(turn => turn.Blocks.OfType<ToolCallAssistantBlock>().Single().Id)
+            .Distinct()
+            .Should()
+            .ContainSingle();
+
+        var finalStreamedTurn = streamedTurns[^1];
+        finalStreamedTurn.StopReason.Should().Be("tool_use");
+        finalStreamedTurn.Usage.Should().NotBeNull();
+        finalStreamedTurn.Usage!.InputTokens.Should().Be(12);
+        finalStreamedTurn.Usage.OutputTokens.Should().Be(7);
+        finalStreamedTurn.Usage.TotalTokens.Should().Be(19);
+        finalStreamedTurn.Blocks.Should().HaveCount(3);
+
+        finalStreamedTurn.Blocks[0]
+            .Should()
+            .BeOfType<ReasoningAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Let me inspect");
+        finalStreamedTurn.Blocks[1]
+            .Should()
+            .BeOfType<TextAssistantBlock>()
+            .Which.Text.Should()
+            .Be("Checking weather");
+        finalStreamedTurn.Blocks[2]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.Arguments["query"].Should()
+            .Be("weather");
+
+        var finalReasoningId = ((ReasoningAssistantBlock)finalStreamedTurn.Blocks[0]).Id;
+        var finalTextId = ((TextAssistantBlock)finalStreamedTurn.Blocks[1]).Id;
+        var finalToolId = ((ToolCallAssistantBlock)finalStreamedTurn.Blocks[2]).Id;
+
+        finalReasoningId.Should().Be(((ReasoningAssistantBlock)reasoningSnapshots[0].Blocks[0]).Id);
+        finalTextId.Should().Be(textSnapshots[^1].Blocks.OfType<TextAssistantBlock>().Single().Id);
+        finalToolId.Should().Be(toolSnapshots[^1].Blocks.OfType<ToolCallAssistantBlock>().Single().Id);
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Id.Should().Be(finalStreamedTurn.Id);
+        assistantTurn.StopReason.Should().Be(finalStreamedTurn.StopReason);
+        assistantTurn.Usage.Should().BeEquivalentTo(finalStreamedTurn.Usage);
+        assistantTurn.Blocks.Should().HaveCount(3);
+        assistantTurn.Blocks[0].Id.Should().Be(finalReasoningId);
+        assistantTurn.Blocks[1].Id.Should().Be(finalTextId);
+        assistantTurn.Blocks[2].Id.Should().Be(finalToolId);
     }
 
     private sealed record AnthropicReasoningFixture(string Thinking, string Signature, string Text)
@@ -674,12 +849,14 @@ public class AnthropicChatClientTests
     private static ChatClientRequest CreateRequest(
         string? systemPrompt = null,
         IEnumerable<ChatTranscriptEntry>? transcript = null,
-        IEnumerable<ChatClientTool>? tools = null
+        IEnumerable<ChatClientTool>? tools = null,
+        ChatRequestOptions? options = null
     ) =>
         new(
             systemPrompt ?? string.Empty,
             transcript?.ToArray() ?? Array.Empty<ChatTranscriptEntry>(),
-            tools?.ToArray() ?? Array.Empty<ChatClientTool>()
+            tools?.ToArray() ?? Array.Empty<ChatClientTool>(),
+            options
         );
 
     private static ChatTranscriptEntry[] CreateUserTranscript(string userMessage) =>
@@ -785,6 +962,20 @@ public class AnthropicChatClientTests
             CacheCreationInputTokens = cacheCreationInputTokens,
             CacheReadInputTokens = cacheReadInputTokens,
         };
+
+    private static async Task<(List<ChatClientAssistantTurn> Updates, ChatClientTurnResult Result)>
+        ExecuteStreamAsync(IChatCompletionStream stream, CancellationToken cancellationToken = default)
+    {
+        var updates = new List<ChatClientAssistantTurn>();
+
+        await foreach (var update in stream.WithCancellation(cancellationToken))
+        {
+            updates.Add(update);
+        }
+
+        var result = await stream.GetResultAsync(cancellationToken);
+        return (updates, result);
+    }
 
     private sealed class StubAnthropicMessageClient : IAnthropicMessageClient
     {
@@ -895,18 +1086,4 @@ public class AnthropicChatClientTests
         }
     }
 
-    private sealed class CapturingProgress<T> : IProgress<T>
-    {
-        private readonly ICollection<T> _items;
-
-        public CapturingProgress(ICollection<T> items)
-        {
-            _items = items;
-        }
-
-        public void Report(T value)
-        {
-            _items.Add(value);
-        }
-    }
 }

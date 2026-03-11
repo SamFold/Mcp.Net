@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 using Anthropic.SDK;
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
@@ -77,22 +78,12 @@ public sealed class AnthropicChatClient : IChatClient
     /// </summary>
     private async Task<ChatClientTurnResult> GetTurnResultAsync(
         MessageParameters parameters,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            if (assistantTurnUpdates != null)
-            {
-                return await GetStreamingTurnResultAsync(
-                    parameters,
-                    assistantTurnUpdates,
-                    cancellationToken
-                );
-            }
 
             var response = await _messagesClient.GetResponseAsync(parameters, cancellationToken);
 
@@ -115,8 +106,8 @@ public sealed class AnthropicChatClient : IChatClient
         new()
         {
             Model = _model,
-            MaxTokens = _maxOutputTokens ?? 1024,
-            Temperature = Convert.ToDecimal(_temperature),
+            MaxTokens = request.Options?.MaxOutputTokens ?? _maxOutputTokens ?? 1024,
+            Temperature = Convert.ToDecimal(request.Options?.Temperature ?? _temperature),
             Messages = BuildMessages(request),
             Tools = request.Tools.Select(ConvertToAnthropicTool).ToList(),
             System = string.IsNullOrWhiteSpace(request.SystemPrompt)
@@ -313,25 +304,30 @@ public sealed class AnthropicChatClient : IChatClient
         return document.RootElement.Clone();
     }
 
-    public Task<ChatClientTurnResult> SendAsync(
+    public IChatCompletionStream SendAsync(
         ChatClientRequest request,
-        IProgress<ChatClientAssistantTurn>? assistantTurnUpdates = null,
         CancellationToken cancellationToken = default
     )
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        return GetTurnResultAsync(
-            CreateMessageParameters(request, stream: assistantTurnUpdates != null),
-            assistantTurnUpdates,
+        return ChatCompletionStream.Create(
+            resultCancellationToken =>
+                GetTurnResultAsync(CreateMessageParameters(request), resultCancellationToken),
+            (writer, streamCancellationToken) =>
+                GetStreamingTurnResultAsync(
+                    CreateMessageParameters(request, stream: true),
+                    writer,
+                    streamCancellationToken
+                ),
             cancellationToken
         );
     }
 
     private async Task<ChatClientTurnResult> GetStreamingTurnResultAsync(
         MessageParameters parameters,
-        IProgress<ChatClientAssistantTurn> assistantTurnUpdates,
+        ChannelWriter<ChatClientAssistantTurn> assistantTurnUpdates,
         CancellationToken cancellationToken
     )
     {
@@ -350,7 +346,7 @@ public sealed class AnthropicChatClient : IChatClient
                 continue;
             }
 
-            assistantTurnUpdates.Report(partialTurn);
+            await assistantTurnUpdates.WriteAsync(partialTurn, cancellationToken);
             lastReportedTurn = partialTurn;
         }
 

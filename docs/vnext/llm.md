@@ -11,6 +11,8 @@
 - `IChatClient` is now a request-based provider boundary with a single `SendAsync(ChatClientRequest, ...)` call.
 - Provider streaming now uses an async-stream wrapper: `IChatClient.SendAsync(...)` returns a stream that supports `await foreach` for `ChatClientAssistantTurn` snapshots plus `GetResultAsync()` for the final `ChatClientTurnResult`.
 - `ChatCompletionStream` now has direct regression coverage for result-only execution, stream-then-result consumption, single-enumerator enforcement, cancellation propagation, early-exit cancellation, and streaming failure surfacing.
+- `ChatClientRequest` now has an optional typed `ChatRequestOptions` seam so request-time execution controls can move off `ChatClientOptions` without another request-shape rewrite.
+- OpenAI and Anthropic now read shared generation controls from `ChatClientRequest.Options`, with constructor-level `ChatClientOptions` values kept only as a compatibility fallback while agent/session defaults move over.
 - `ChatSession` now owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap, then builds provider requests from that state for each turn.
 - `Mcp.Net.LLM` no longer depends on the MCP tool model or `ToolConverter`; provider tool payloads now cross the boundary through the LLM-local request/tool contract.
 - MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`.
@@ -40,16 +42,19 @@
 
 ## Current slice
 
-Use the now-covered async-stream transport contract to decide what, if anything, should change above it:
+Separate client construction config from per-request execution config so future provider controls have the right seam:
 
-1. **Re-evaluate whether `ChatClientAssistantTurn` snapshots are sufficient as the streamed payload**: the async-stream wrapper and its direct contract coverage are now in place, so only revisit a richer event model if a concrete consumer need appears.
-   - Code references: `Mcp.Net.LLM/Interfaces/IChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatClientTurnResult.cs`, `Mcp.Net.Tests/LLM/Models/ChatCompletionStreamTests.cs`
+1. **Follow with typed agent/session defaults instead of raw parameter dictionaries**: keep compatibility with legacy `AgentDefinition.Parameters` keys briefly, but make `ChatSession.BuildRequest()` the durable path for execution defaults.
+   - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.Agent/Agents/AgentFactory.cs`, `Mcp.Net.Agent/Models/AgentDefinition.cs`, `Mcp.Net.WebUi/Chat/Factories/ChatFactory.cs`
 
-2. **Keep transcript-upsert semantics stable on the new transport**: stable assistant/block identifiers, durable transcript `Updated` events, and current replay assumptions must continue to hold while the payload-shape decision stays open.
-   - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.WebUi/Adapters/SignalR/SignalRChatAdapter.cs`, `Mcp.Net.LLM/OpenAI/*`, `Mcp.Net.LLM/Anthropic/*`
+2. **Remove the temporary constructor fallback once session-owned defaults are in place**: after request options are supplied consistently by the caller side, `ChatClientOptions` should shrink to client-construction concerns such as API key and model selection.
+   - Code references: `Mcp.Net.LLM/Models/ChatClientOptions.cs`, `Mcp.Net.LLM/OpenAI/OpenAiClient.cs`, `Mcp.Net.LLM/Anthropic/AnthropicChatClient.cs`
 
-3. **Keep the provider boundary stable while revisiting that API**: do not reintroduce MCP/session helpers or provider-owned conversation state into `Mcp.Net.LLM` while considering any payload-shape change.
-   - Code references: `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.LLM/Interfaces/IChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatCompletionStream.cs`
+3. **Add the first new shared execution control only after the seam and defaults are in place**: `ToolChoice` is the best first candidate because it is useful for determinism and maps across providers more cleanly than reasoning budgets.
+   - Code references: `Mcp.Net.LLM/Models/ChatRequestOptions.cs`, `Mcp.Net.LLM/OpenAI/*`, `Mcp.Net.LLM/Anthropic/*`
+
+4. **Revisit richer payload or capability surfaces only after the request seam is in place**: a future `ToolChoice`, reasoning, or cache-control slice should land on request-time options rather than on provider-specific public constructor types.
+   - Code references: `Mcp.Net.LLM/Models/ChatClientRequest.cs`, `Mcp.Net.LLM/Models/ChatClientOptions.cs`, `Mcp.Net.LLM/Interfaces/IChatClient.cs`
 
 ## Completed background
 

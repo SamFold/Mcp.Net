@@ -5,13 +5,17 @@
 - Keep the block-based transcript, replay, and streaming-update baseline stable while narrowing `Mcp.Net.LLM` to provider execution concerns.
 - The stateless-executor boundary shift is now live: `ChatSession` owns prompt/tools/transcript state and `Mcp.Net.LLM` executes explicit request snapshots.
 - `Mcp.Net.LLM` is now a standalone provider library: MCP-facing prompt/resource catalog, completion, elicitation, and tool-result conversion all live outside the project.
-- Cancellation remains deferred until after the next API-shape decision because the current MCP client/tool-execution path still does not support it cleanly.
+- The async-stream transport slice is now complete: provider calls stream `ChatClientAssistantTurn` snapshots through a wrapper that also exposes the final `ChatClientTurnResult`.
+- The request boundary now includes a typed `ChatRequestOptions` seam: the immediate priority is moving existing shared generation controls onto request execution before adding new provider knobs.
+- OpenAI and Anthropic now honor request-time `Temperature` and `MaxOutputTokens`, while constructor-level defaults remain only as a temporary compatibility fallback.
+- Cancellation remains deferred until after the request-options and payload-shape work because the current MCP client/tool-execution path still does not support it cleanly.
 
 ## Near-term sequence
 
-1. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
-2. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean contract.
-3. Revisit whether shared `ChatClientOptions` should stay flat or start splitting into provider-specific option shapes as more provider-specific knobs appear.
+1. Follow with typed agent/session defaults instead of raw parameter dictionaries, while keeping a brief compatibility bridge for existing agent metadata.
+2. Remove the temporary constructor fallback so `ChatClientOptions` shrinks back to long-lived client configuration only.
+3. Revisit whether a richer streaming event model is worth introducing, or whether `ChatClientAssistantTurn` snapshots remain sufficient on the new async-stream transport.
+4. Revisit session cancellation only after the request-options and payload-shape decisions, and only if the MCP client/tool-execution path then needs a clean contract.
 
 ## Completed boundary work
 
@@ -24,38 +28,37 @@
 
 ## Next milestone
 
-1. **Converge `Mcp.Net.LLM` on a pure provider boundary.** Now that the `Mcp.Net.Agent` extraction, Web UI seam cleanup, and request-based `IChatClient` cutover are complete, finish the second half of the separation:
-   - `Mcp.Net.LLM` becomes a pure, reusable provider-execution library: provider request/response contracts, provider implementations, replay/history transforms, and API-key/provider-factory concerns.
-   - `Mcp.Net.Agent` owns conversation state and MCP-backed session helpers: `ChatSession`, prompt/tool/transcript state, prompt/resource catalog, completion lookups, elicitation coordination, and tool execution.
-   - `Mcp.Net.LLM` should no longer depend on MCP client abstractions or MCP tool models once the migration finishes.
-   - Keep the transcript and replay architecture stable while the boundary shifts.
+1. **Move execution defaults fully onto the request/session boundary.**
+   - Keep `ApiKey` and model selection as client-construction concerns.
+   - Replace raw agent parameter dictionary lookups with typed defaults that flow through `ChatSession.BuildRequest()`.
+   - Keep a brief compatibility bridge while migrating existing agent metadata.
+
+2. **Remove the constructor fallback after request-owned defaults are live.**
+   - Shrink `ChatClientOptions` back to long-lived client configuration only.
+   - Keep shared generation controls on request state so future tool-choice, reasoning, or cache controls land on the right seam.
+   - Avoid exposing provider-specific public option types unless shared capability-oriented options prove insufficient.
+
+3. **Then decide whether the async-stream payload should stay snapshot-based.**
+   - Keep the new wrapper stable unless a concrete consumer need justifies a richer event model.
+   - Preserve stable assistant/block identifiers, transcript `Added` / `Updated` semantics, and final-result access while evaluating any payload changes.
+   - Do not reopen another transport rewrite while this decision remains open.
 
 ## Recently completed
 
-- Provider request builders now honor shared prompt/options inputs, nested tool arguments preserve structured values through both provider adapters, and provider `System` and `Error` responses surface through `ChatSession`.
-- The transcript architecture has shifted to typed `ChatTranscriptEntry` records with block-based assistant content, provider-agnostic replay/history transforms, transcript persistence rehydration, and Web UI discriminated transcript DTOs.
-- Anthropic reasoning capture and replay are in place, including visibility-aware degradation for missing signatures and captured probe-based regression coverage for same-provider and cross-provider replay cases.
-- `IChatClient`, `ChatSession`, SignalR delivery, and transcript persistence now support durable in-flight assistant updates keyed by stable transcript `Id`.
-- OpenAI streaming is now wired into that update seam, including partial text and tool-call reconstruction with stable assistant and block identifiers.
-- Anthropic streaming is now wired into that update seam too, including progressive reasoning, text, and tool-use snapshots plus regression coverage proving post-stream tool follow-ups still replay the final assistant turn correctly.
-- `Usage` and `StopReason` now propagate through `ChatClientAssistantTurn`, assistant transcript entries, persistence, and Web UI assistant DTOs for both OpenAI and Anthropic, including streaming final-snapshot metadata updates.
-- `ChatClientOptions` now carries shared `MaxOutputTokens`, existing agent/Web UI `max_tokens` intent reaches provider request builders, Anthropic honors shared `Temperature`, and blank `SystemPrompt` no longer injects adapter-owned prompt copy.
-- Tool replacement scenarios are covered on both OpenAI and Anthropic, and the request-based boundary now keeps the active tool set explicit on each provider call.
-- `AgentManager.CloneAgentAsync` now surfaces persistence failures instead of returning a phantom clone, with a regression covering the failed `RegisterAgentAsync` path.
-- `AgentRegistry` now blocks public cache access on initialization, can recover from a failed first reload via manual `ReloadAgentsAsync`, and preserves immediate `userId` validation on register/update paths.
-- Persisted agent settings now round-trip through the real `FileSystemAgentStore` path into `AgentFactory` `ChatClientOptions`, with regression coverage for deserialized `JsonElement` temperature and `max_tokens` values.
+- Earlier boundary/parity work is complete: typed transcript entries and persistence rehydration, replay degradation rules, durable in-flight assistant updates, OpenAI/Anthropic streaming snapshot support, usage/stop-reason propagation, shared option handling, tool replacement coverage, and agent store/registry hardening.
+- Provider streaming now uses an async-stream wrapper rather than callback-based `IProgress<ChatClientAssistantTurn>`, with coverage for Anthropic mixed reasoning/text/tool-call streaming, `ChatSession` transcript upserts, and SignalR transcript update delivery.
 - The `Mcp.Net.Agent` extraction is complete, including the Web UI seam cleanup that removed raw `IChatClient` reach-through for prompt update, conversation reset, and tool refresh.
 - The provider-boundary decision is now implemented: `IChatClient` is request-based, `ChatSession` owns prompt/tool/transcript state, provider clients rebuild provider payloads from explicit request snapshots, and the old MCP tool-model coupling has been removed from `Mcp.Net.LLM`.
 - MCP-backed prompt/resource catalog, completion, elicitation, and tool-result conversion now all live outside `Mcp.Net.LLM`, and the project now builds as a standalone provider library with no project references.
 
 ## Dependencies and risks
 
-- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the provider-boundary shift and only comes back when the seam is both needed and worth widening.
-- The next LLM slices should stay focused on API shape and avoid reopening another transcript or message-model rewrite now that the project boundary work is complete.
+- Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the request-options and payload-shape work and only comes back when the seam is both needed and worth widening.
+- The next LLM slices should stay focused on request/API shape and avoid reopening another transcript or message-model rewrite now that the project boundary work is complete.
 
 ## Open questions
 
-- Should the long-term provider streaming API stay snapshot-based or move to a breaking delta-event `IAsyncEnumerable<T>` contract after parity lands?
-- How far should shared `ChatClientOptions` go before provider-specific option types or nested provider option bags are warranted?
+- Should provider streaming stay on `ChatClientAssistantTurn` snapshots, or is there enough concrete pressure to justify a richer event model on top of the new async-stream transport?
+- How far should shared request-time execution options go before provider-specific option types or nested provider option bags are warranted?
 - Should the LLM-local tool definition live directly in `Mcp.Net.LLM` or in a thinner shared contract package if other projects need provider access without taking an agent dependency?
 - Where should `ChatTranscriptEntry` live after the agent extraction — in `Mcp.Net.LLM` (current plan, since replay owns the types) or in a shared contracts package?
