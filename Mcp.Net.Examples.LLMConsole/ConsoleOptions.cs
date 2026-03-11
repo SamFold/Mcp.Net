@@ -64,21 +64,20 @@ internal sealed class ConsoleOptions
 
     public void ApplyDefaults()
     {
+        // If a URL was explicitly requested via environment variable, apply it
         if (!HasTransportConfigured)
         {
-            string defaultPort = Environment.GetEnvironmentVariable("MCP_PORT") ?? "5000";
-            ServerUrl = $"http://localhost:{defaultPort}/mcp";
+            var envUrl = Environment.GetEnvironmentVariable("MCP_URL");
+            if (!string.IsNullOrWhiteSpace(envUrl))
+            {
+                ServerUrl = envUrl;
+            }
         }
     }
 
     public void Validate()
     {
-        if (!HasTransportConfigured)
-        {
-            throw new InvalidOperationException(
-                "No transport configured. Specify --url for SSE or --command for stdio."
-            );
-        }
+        // No validation needed - running without MCP is valid (direct LLM mode)
     }
 
     public bool HasTransportConfigured =>

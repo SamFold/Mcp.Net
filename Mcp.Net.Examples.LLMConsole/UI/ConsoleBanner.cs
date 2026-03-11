@@ -5,17 +5,10 @@ namespace Mcp.Net.Examples.LLMConsole.UI;
 
 public static class ConsoleBanner
 {
-    // For colorful console output
-    private static readonly ConsoleColor DefaultColor = Console.ForegroundColor;
-    private static readonly ConsoleColor AccentColor1 = ConsoleColor.Cyan;
-    private static readonly ConsoleColor AccentColor2 = ConsoleColor.Magenta;
-    private static readonly ConsoleColor HighlightColor = ConsoleColor.Green;
-    private static readonly ConsoleColor ErrorColor = ConsoleColor.Red;
-
-    // Critical: These constants define the exact width of the banner - NEVER CHANGE THESE VALUES
-    // This is the key to having perfect right border alignment
-    private const int BANNER_WIDTH = 74; // Total width including borders and spacing
-    private const int CONTENT_WIDTH = 70; // Content area width (BANNER_WIDTH - 4 for borders)
+    private static readonly ConsoleColor Dim = ConsoleColor.DarkGray;
+    private static readonly ConsoleColor Accent = ConsoleColor.Cyan;
+    private static readonly ConsoleColor Ok = ConsoleColor.Green;
+    private static readonly ConsoleColor Err = ConsoleColor.Red;
 
     public static void DisplayStartupBanner(
         Mcp.Net.Core.Models.Tools.Tool[] availableTools,
@@ -24,319 +17,153 @@ public static class ConsoleBanner
         int resourceCount = 0
     )
     {
-        // Draw a fixed width banner
         Console.WriteLine();
 
-        // Top border with fixed width
-        Console.Write("  ");
-        ColorWrite("╔", AccentColor1);
-        ColorWrite(new string('═', CONTENT_WIDTH), AccentColor1);
-        ColorWriteLine("╗", AccentColor1);
+        // Title
+        WriteColored("  mcp.net", Accent);
+        WriteColoredLine(" llm console", ConsoleColor.White);
+        WriteColoredLine("  ─────────────────────────────", Dim);
 
-        // The MCP logo - centered in the banner
-        string[] logoLines = new string[]
-        {
-            "███╗   ███╗ ██████╗██████╗    ██╗     ██╗     ███╗   ███╗",
-            "████╗ ████║██╔════╝██╔══██╗   ██║     ██║     ████╗ ████║",
-            "██╔████╔██║██║     ██████╔╝   ██║     ██║     ██╔████╔██║",
-            "██║╚██╔╝██║██║     ██╔═══╝    ██║     ██║     ██║╚██╔╝██║",
-            "██║ ╚═╝ ██║╚██████╗██║        ███████╗███████╗██║ ╚═╝ ██║",
-            "╚═╝     ╚═╝ ╚═════╝╚═╝        ╚══════╝╚══════╝╚═╝     ╚═╝",
-        };
-
-        // Display each line of the logo with exact padding to maintain fixed width
-        foreach (var line in logoLines)
-        {
-            // Calculate centering for the logo
-            int logoWidth = line.Length;
-            int padding = (CONTENT_WIDTH - logoWidth) / 2;
-
-            Console.Write("  ");
-            ColorWrite("║", AccentColor1);
-            ColorWrite(new string(' ', padding), DefaultColor);
-            ColorWrite(line, HighlightColor);
-            ColorWrite(new string(' ', CONTENT_WIDTH - logoWidth - padding), DefaultColor);
-            ColorWriteLine("║", AccentColor1);
-        }
-
-        // Divider with fixed width
-        Console.Write("  ");
-        ColorWrite("╠", AccentColor1);
-        ColorWrite(new string('═', CONTENT_WIDTH), AccentColor1);
-        ColorWriteLine("╣", AccentColor1);
-
-        // Application title - centered in the banner
-        string appTitle = "MCP - Function Calling Demo";
-        DrawCenteredLine(appTitle, AccentColor2);
-
-        // System info line with fixed positioning
-        string date = DateTime.Now.ToString("yyyy.MM.dd HH:mm:ss");
-        string versionInfo = "Version: 2.1.0";
-
-        Console.Write("  ");
-        ColorWrite("║", AccentColor1);
-        ColorWrite(" System Date: ", DefaultColor);
-        ColorWrite(date, HighlightColor);
-
-        // Calculate padding to position version info at right edge
-        int remainingSpace = CONTENT_WIDTH - 14 - date.Length - versionInfo.Length - 1;
-        ColorWrite(new string(' ', remainingSpace), DefaultColor);
-        ColorWrite(versionInfo, DefaultColor);
-        ColorWrite(" ", DefaultColor);
-        ColorWriteLine("║", AccentColor1);
-
-        // Divider with fixed width
-        Console.Write("  ");
-        ColorWrite("╠", AccentColor1);
-        ColorWrite(new string('═', CONTENT_WIDTH), AccentColor1);
-        ColorWriteLine("╣", AccentColor1);
-
-        // Runtime configuration section
-        DrawCenteredLine("RUNTIME CONFIGURATION", AccentColor2);
-
-        // Get data for display
+        // Config
         var provider = Program.PeekProvider(Environment.GetCommandLineArgs());
         var model = Program.GetModelName(Environment.GetCommandLineArgs(), provider);
-        var logLevel = Program.DetermineLogLevel(Environment.GetCommandLineArgs());
 
-        // Fixed-width config lines
-        DrawConfigLine("Provider", provider.ToString(), HighlightColor);
+        WriteConfig("provider", provider.ToString());
+        WriteConfig("model", model.Length > 40 ? model[..37] + "..." : model);
 
-        // Model might be long, so truncate if needed
-        string modelDisplay = model;
-        if (modelDisplay.Length > 30)
+        // API key status
+        var hasKey = provider == LlmProvider.Anthropic
+            ? !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"))
+            : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("OPENAI_API_KEY"));
+        WriteColored("  api key   ", Dim);
+        if (hasKey)
         {
-            modelDisplay = modelDisplay.Substring(0, 27) + "...";
-        }
-        DrawConfigLine("Model", modelDisplay, HighlightColor);
-
-        // Log level
-        DrawConfigLine("Logging Level", logLevel.ToString(), HighlightColor);
-
-        DrawConfigLine("Prompts", promptCount.ToString(), HighlightColor);
-        DrawConfigLine("Resources", resourceCount.ToString(), HighlightColor);
-
-        // API Keys - check for presence and display
-        bool anthropicKeyPresent = !string.IsNullOrEmpty(
-            Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
-        );
-        bool openaiKeyPresent = !string.IsNullOrEmpty(
-            Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-        );
-
-        string keyStatus;
-        ConsoleColor keyColor;
-
-        if (provider == LlmProvider.Anthropic)
-        {
-            keyStatus = anthropicKeyPresent ? "✓ (Anthropic)" : "✗ (Anthropic)";
-            keyColor = anthropicKeyPresent ? HighlightColor : ErrorColor;
+            WriteColoredLine("configured", Ok);
         }
         else
         {
-            keyStatus = openaiKeyPresent ? "✓ (OpenAI)" : "✗ (OpenAI)";
-            keyColor = openaiKeyPresent ? HighlightColor : ErrorColor;
+            WriteColoredLine("missing", Err);
         }
 
-        DrawConfigLine("API Keys", keyStatus, keyColor);
+        // MCP resources
+        if (promptCount > 0 || resourceCount > 0)
+        {
+            WriteConfig("prompts", promptCount.ToString());
+            WriteConfig("resources", resourceCount.ToString());
+        }
 
-        // If we have tools available, list them in a fixed-width section
+        // Tools
         if (availableTools.Length > 0)
         {
-            // Tools divider with fixed width
-            Console.Write("  ");
-            ColorWrite("╠", AccentColor1);
-            ColorWrite(new string('═', CONTENT_WIDTH), AccentColor1);
-            ColorWriteLine("╣", AccentColor1);
+            Console.WriteLine();
+            HashSet<string>? enabled = enabledToolNames != null
+                ? new HashSet<string>(enabledToolNames, StringComparer.OrdinalIgnoreCase)
+                : null;
 
-            // Create a HashSet of enabled tool names for fast lookup
-            HashSet<string>? enabledTools = null;
-            if (enabledToolNames != null)
+            var enabledCount = enabled?.Count ?? availableTools.Length;
+            WriteColored("  tools ", Dim);
+            WriteColoredLine($"{enabledCount}/{availableTools.Length} enabled", ConsoleColor.White);
+
+            foreach (var tool in availableTools)
             {
-                enabledTools = new HashSet<string>(enabledToolNames);
-            }
+                var isEnabled = enabled == null || enabled.Contains(tool.Name);
+                var indicator = isEnabled ? "+" : "-";
+                var color = isEnabled ? ConsoleColor.White : Dim;
+                var indicatorColor = isEnabled ? Ok : Dim;
 
-            // Display header with count of enabled tools if applicable
-            string toolsHeader = "AVAILABLE TOOLS";
-            if (enabledTools != null)
-            {
-                toolsHeader = $"TOOLS ({enabledTools.Count} OF {availableTools.Length} ENABLED)";
-            }
-
-            DrawCenteredLine(toolsHeader, AccentColor2);
-
-            // Display tools with fixed width
-            for (int i = 0; i < availableTools.Length; i++)
-            {
-                bool isEnabled =
-                    enabledTools == null || enabledTools.Contains(availableTools[i].Name);
-                DrawToolLine(availableTools[i], isEnabled);
+                WriteColored($"    {indicator} ", indicatorColor);
+                WriteColored(tool.Name, color);
+                if (!string.IsNullOrWhiteSpace(tool.Description))
+                {
+                    var desc = tool.Description;
+                    if (desc.Length > 50) desc = desc[..47] + "...";
+                    WriteColored($"  {desc}", Dim);
+                }
+                Console.WriteLine();
             }
         }
 
-        // Bottom border with fixed width
-        Console.Write("  ");
-        ColorWrite("╚", AccentColor1);
-        ColorWrite(new string('═', CONTENT_WIDTH), AccentColor1);
-        ColorWriteLine("╝", AccentColor1);
         Console.WriteLine();
-    }
-
-    // Helper for drawing a centered line in the banner
-    private static void DrawCenteredLine(string text, ConsoleColor color)
-    {
-        int textLength = text.Length;
-        int padding = (CONTENT_WIDTH - textLength) / 2;
-
-        Console.Write("  ");
-        ColorWrite("║", AccentColor1);
-        ColorWrite(new string(' ', padding), DefaultColor);
-        ColorWrite(text, color);
-        ColorWrite(new string(' ', CONTENT_WIDTH - textLength - padding), DefaultColor);
-        ColorWriteLine("║", AccentColor1);
-    }
-
-    // Helper for drawing a config line with label and value
-    private static void DrawConfigLine(string label, string value, ConsoleColor valueColor)
-    {
-        string prefix = $" • {label}: ";
-
-        Console.Write("  ");
-        ColorWrite("║", AccentColor1);
-        ColorWrite(prefix, DefaultColor);
-        ColorWrite(value, valueColor);
-
-        // Calculate remaining space to right border for perfect alignment
-        int remaining = CONTENT_WIDTH - prefix.Length - value.Length;
-        ColorWrite(new string(' ', remaining), DefaultColor);
-        ColorWriteLine("║", AccentColor1);
-    }
-
-    // Helper for drawing a tool line with fixed width
-    private static void DrawToolLine(Core.Models.Tools.Tool tool, bool isEnabled = true)
-    {
-        // Get tool name and truncate if needed
-        string toolName = tool.Name;
-        const int MAX_NAME_WIDTH = 20;
-
-        if (toolName.Length > MAX_NAME_WIDTH)
-        {
-            toolName = toolName.Substring(0, MAX_NAME_WIDTH - 3) + "...";
-        }
-
-        // Get description and truncate if needed
-        string description = tool.Description ?? "No description available";
-
-        // Fixed column widths to ensure consistent layout
-        const int NAME_COL_WIDTH = 23; // Name + padding
-        int maxDescLength = CONTENT_WIDTH - NAME_COL_WIDTH - 1; // -1 for initial space
-
-        if (description.Length > maxDescLength)
-        {
-            description = description.Substring(0, maxDescLength - 3) + "...";
-        }
-
-        // Write with exact, fixed spacing
-        Console.Write("  ");
-        ColorWrite("║", AccentColor1);
-
-        // Show enabled/disabled status
-        string statusIndicator = isEnabled ? " • " : " ○ ";
-        ColorWrite(statusIndicator, isEnabled ? DefaultColor : ConsoleColor.DarkGray);
-
-        // Name color depends on enabled status
-        var nameColor = isEnabled ? HighlightColor : ConsoleColor.DarkGray;
-        ColorWrite(toolName, nameColor);
-
-        // Fixed padding between name and description
-        int namePadding = NAME_COL_WIDTH - 3 - toolName.Length; // -3 for "• "
-        ColorWrite(new string(' ', namePadding), DefaultColor);
-
-        // Description with padding to right border
-        var descriptionColor = isEnabled ? DefaultColor : ConsoleColor.DarkGray;
-        ColorWrite(description, descriptionColor);
-        int rightPadding = CONTENT_WIDTH - NAME_COL_WIDTH - description.Length;
-
-        if (rightPadding > 0)
-        {
-            ColorWrite(new string(' ', rightPadding), DefaultColor);
-        }
-
-        ColorWriteLine("║", AccentColor1);
     }
 
     public static void DisplayHelp()
     {
-        ColorWriteLine("MCP LLM Function Calling Demo", HighlightColor);
-        Console.WriteLine("============================");
-        Console.WriteLine("\nUsage: dotnet run --project Mcp.Net.Examples.LLMConsole [options]\n");
-        Console.WriteLine("Options:");
-        Console.WriteLine("  -h, --help                Display this help message");
-        Console.WriteLine("  --url <url>               Connect to an MCP server via SSE (default http://localhost:5000/mcp)");
-        Console.WriteLine("  --command <cmd>           Launch a stdio server process and connect over stdio transport");
-        Console.WriteLine("  --auth-mode <mode>        Authentication mode for SSE: client (default), pkce, none");
-        Console.WriteLine("  --no-auth                 Shortcut for --auth-mode=none");
-        Console.WriteLine("  --pkce                    Shortcut for --auth-mode=pkce");
-        Console.WriteLine(
-            "  --provider <n>            Specify the LLM provider to use (anthropic or openai)"
-        );
-        Console.WriteLine("                            Alternative: --provider=<n>");
-        Console.WriteLine("  -m, --model <n>           Specify the model name to use");
-        Console.WriteLine("                            Alternative: --model=<n>");
-        Console.WriteLine(
-            "  -l, --log-level <level>   Set logging level (verbose|debug|info|warning|error|fatal)"
-        );
-        Console.WriteLine("                            Alternative: --log-level=<level>");
-        Console.WriteLine(
-            "                            Default: warning (only warnings and errors are displayed)"
-        );
-        Console.WriteLine("  -d, --debug               Shortcut for --log-level=debug");
-        Console.WriteLine("  -v, --verbose             Shortcut for --log-level=verbose");
-        Console.WriteLine(
-            "  --all-tools               Use all available tools (skip tool selection)"
-        );
-        Console.WriteLine("  --skip-tool-selection     Same as --all-tools");
-        Console.WriteLine("\nEnvironment Variables:");
-        Console.WriteLine(
-            "  MCP_PORT                  Default port used when --url is omitted (defaults to 5000)"
-        );
-        Console.WriteLine(
-            "  ANTHROPIC_API_KEY         API key for Anthropic (required when using Anthropic)"
-        );
-        Console.WriteLine(
-            "  OPENAI_API_KEY            API key for OpenAI (required when using OpenAI)"
-        );
-        Console.WriteLine(
-            "  LLM_PROVIDER              Default LLM provider to use (anthropic or openai)"
-        );
-        Console.WriteLine("  LLM_MODEL                 Default model name to use");
-        Console.WriteLine(
-            "  LLM_LOG_LEVEL             Default logging level (verbose|debug|info|warning|error|fatal)"
-        );
-        Console.WriteLine("                            If not set, defaults to warning");
-        Console.WriteLine("\nExamples:");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp --pkce");
-        Console.WriteLine(
-            "  dotnet run --project Mcp.Net.Examples.LLMConsole --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\""
-        );
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider anthropic");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --provider openai --model gpt-5");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --log-level=debug");
-        Console.WriteLine("  dotnet run --project Mcp.Net.Examples.LLMConsole --all-tools");
+        WriteColored("mcp.net", Accent);
+        WriteColoredLine(" llm console", ConsoleColor.White);
+        Console.WriteLine();
+        Console.WriteLine("Usage: dotnet run --project Mcp.Net.Examples.LLMConsole [options]");
+        Console.WriteLine();
+
+        WriteColoredLine("Connection:", ConsoleColor.White);
+        WriteHelpLine("--url <url>", "Connect to MCP server via SSE");
+        WriteHelpLine("--command <cmd>", "Launch stdio server process");
+        WriteHelpLine("(none)", "Direct LLM mode, no MCP server");
+        Console.WriteLine();
+
+        WriteColoredLine("Provider:", ConsoleColor.White);
+        WriteHelpLine("--provider <name>", "anthropic or openai");
+        WriteHelpLine("-m, --model <name>", "Model name override");
+        Console.WriteLine();
+
+        WriteColoredLine("Auth:", ConsoleColor.White);
+        WriteHelpLine("--no-auth", "Disable authentication");
+        WriteHelpLine("--pkce", "Use authorization code with PKCE");
+        Console.WriteLine();
+
+        WriteColoredLine("Tools:", ConsoleColor.White);
+        WriteHelpLine("--all-tools", "Enable all tools, skip selection");
+        WriteHelpLine("--skip-tool-selection", "Same as --all-tools");
+        Console.WriteLine();
+
+        WriteColoredLine("Logging:", ConsoleColor.White);
+        WriteHelpLine("-d, --debug", "Debug log level");
+        WriteHelpLine("-v, --verbose", "Verbose log level");
+        WriteHelpLine("-l, --log-level <lvl>", "verbose|debug|info|warning|error|fatal");
+        Console.WriteLine();
+
+        WriteColoredLine("Environment:", ConsoleColor.White);
+        WriteHelpLine("MCP_URL", "Default MCP server URL");
+        WriteHelpLine("ANTHROPIC_API_KEY", "Anthropic API key");
+        WriteHelpLine("OPENAI_API_KEY", "OpenAI API key");
+        WriteHelpLine("LLM_PROVIDER", "Default provider (anthropic|openai)");
+        WriteHelpLine("LLM_MODEL", "Default model name");
+        WriteHelpLine("LLM_LOG_LEVEL", "Default log level");
+        Console.WriteLine();
+
+        WriteColoredLine("Examples:", ConsoleColor.White);
+        WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole");
+        WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --provider anthropic");
+        WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp");
+        WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\"");
     }
 
-    private static void ColorWrite(string text, ConsoleColor color)
+    private static void WriteConfig(string label, string value)
     {
-        var original = Console.ForegroundColor;
+        WriteColored($"  {label,-10}", Dim);
+        WriteColoredLine(value, ConsoleColor.White);
+    }
+
+    private static void WriteHelpLine(string flag, string description)
+    {
+        WriteColored($"  {flag,-24}", ConsoleColor.White);
+        WriteColoredLine(description, Dim);
+    }
+
+    private static void WriteColored(string text, ConsoleColor color)
+    {
+        var prev = Console.ForegroundColor;
         Console.ForegroundColor = color;
         Console.Write(text);
-        Console.ForegroundColor = original;
+        Console.ForegroundColor = prev;
     }
 
-    private static void ColorWriteLine(string text, ConsoleColor color)
+    private static void WriteColoredLine(string text, ConsoleColor color)
     {
-        ColorWrite(text, color);
+        WriteColored(text, color);
         Console.WriteLine();
     }
 }

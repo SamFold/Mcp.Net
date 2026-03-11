@@ -6,27 +6,15 @@ using Mcp.Net.Agent.Tools;
 
 namespace Mcp.Net.Examples.LLMConsole.UI;
 
-/// <summary>
-/// Provides UI for selecting tools from a list using keyboard navigation.
-/// </summary>
 public class ToolSelectorUI
 {
-    private readonly ConsoleColor _defaultColor;
-    private readonly ConsoleColor _highlightColor = ConsoleColor.Cyan;
-    private readonly ConsoleColor _headerColor = ConsoleColor.Yellow;
-    private readonly ConsoleColor _instructionsColor = ConsoleColor.DarkGray;
-
-    public ToolSelectorUI()
-    {
-        _defaultColor = Console.ForegroundColor;
-    }
+    private static readonly ConsoleColor Dim = ConsoleColor.DarkGray;
+    private static readonly ConsoleColor Accent = ConsoleColor.Cyan;
+    private static readonly ConsoleColor Ok = ConsoleColor.Green;
 
     private int _menuHeight;
     private int _menuStartPosition;
 
-    /// <summary>
-    /// Display a list of tools and let the user select which ones to use.
-    /// </summary>
     public string[] SelectTools(
         Tool[] availableTools,
         IReadOnlyList<ToolCategoryDescriptor> categories,
@@ -63,7 +51,7 @@ public class ToolSelectorUI
         int currentIndex = 0;
         bool selectionComplete = false;
 
-        _menuHeight = 3 + 3 + flattenedGroups.Count + 4;
+        _menuHeight = 3 + flattenedGroups.Count + 4;
 
         bool cursorVisible = true;
         if (OperatingSystem.IsWindows())
@@ -175,30 +163,19 @@ public class ToolSelectorUI
 
         Console.SetCursorPosition(0, _menuStartPosition);
 
-        DrawHeader();
+        Console.ForegroundColor = Accent;
+        Console.Write("  Select tools");
+        Console.ForegroundColor = Dim;
+        Console.WriteLine($"  {selectedTools.Count} selected");
+        Console.ResetColor();
+        Console.WriteLine();
+
         DrawToolList(toolGroups, currentIndex, selectedTools);
-        DrawInstructions();
-    }
 
-    private void DrawHeader()
-    {
-        Console.ForegroundColor = _headerColor;
-        Console.WriteLine("╭──────────────────────────────────────────────╮");
-        Console.WriteLine("│            SELECT TOOLS TO ENABLE            │");
-        Console.WriteLine("╰──────────────────────────────────────────────╯");
         Console.WriteLine();
-        Console.ForegroundColor = _defaultColor;
-    }
-
-    private void DrawInstructions()
-    {
-        Console.WriteLine();
-        Console.ForegroundColor = _instructionsColor;
-        Console.WriteLine("╭───────────────────────────────────────────────╮");
-        Console.WriteLine("│ Navigate: ↑/↓  Select: SPACE  All: A  None: N │");
-        Console.WriteLine("│ Confirm: ENTER  Cancel: ESC                   │");
-        Console.WriteLine("╰───────────────────────────────────────────────╯");
-        Console.ForegroundColor = _defaultColor;
+        Console.ForegroundColor = Dim;
+        Console.WriteLine("  arrows navigate  space toggle  a all  n none  enter confirm  esc cancel");
+        Console.ResetColor();
     }
 
     private void DrawToolList(
@@ -225,65 +202,52 @@ public class ToolSelectorUI
         }
     }
 
-    private void DrawGroupHeader(
+    private static void DrawGroupHeader(
         ToolGroupItem groupItem,
         bool isHighlighted,
         bool allSelected
     )
     {
-        Console.ForegroundColor = isHighlighted ? _highlightColor : _headerColor;
+        var formattedName = groupItem.GroupName.TrimEnd('_');
+        var indicator = allSelected ? "+" : "-";
+        var color = isHighlighted ? Accent : ConsoleColor.White;
+        var indicatorColor = allSelected ? Ok : Dim;
 
-        var formattedName = groupItem.GroupName;
-        if (formattedName.EndsWith("_", StringComparison.Ordinal))
-        {
-            formattedName = formattedName.TrimEnd('_');
-        }
-
-        string selectionIndicator = allSelected ? "[*]" : "[ ]";
-        Console.WriteLine($"{selectionIndicator} {formattedName.ToUpperInvariant()} TOOLS");
-
-        Console.ForegroundColor = _defaultColor;
+        Console.ForegroundColor = indicatorColor;
+        Console.Write($"  {indicator} ");
+        Console.ForegroundColor = color;
+        Console.WriteLine(formattedName.ToUpperInvariant());
+        Console.ResetColor();
     }
 
-    private void DrawToolItem(Tool tool, bool isHighlighted, bool isSelected)
+    private static void DrawToolItem(Tool tool, bool isHighlighted, bool isSelected)
     {
-        Console.ForegroundColor = isHighlighted ? _highlightColor : _defaultColor;
+        var indicator = isSelected ? "+" : "-";
+        var color = isHighlighted ? Accent : (isSelected ? ConsoleColor.White : Dim);
+        var indicatorColor = isSelected ? Ok : Dim;
 
-        string selectionIndicator = isSelected ? "[*]" : "[ ]";
-        string formattedName = tool.Name;
-
-        int underscorePos = tool.Name.IndexOf('_');
-        if (underscorePos > 0)
-        {
-            formattedName = tool.Name.Substring(underscorePos + 1);
-        }
-
-        Console.Write($"  {selectionIndicator} {formattedName}");
+        Console.ForegroundColor = indicatorColor;
+        Console.Write($"    {indicator} ");
+        Console.ForegroundColor = color;
+        Console.Write(tool.Name);
 
         if (isHighlighted && !string.IsNullOrEmpty(tool.Description))
         {
-            Console.ForegroundColor = _instructionsColor;
-            Console.Write($" - {tool.Description}");
+            Console.ForegroundColor = Dim;
+            Console.Write($"  {tool.Description}");
         }
 
         Console.WriteLine();
-        Console.ForegroundColor = _defaultColor;
+        Console.ResetColor();
     }
 
-    private bool AreAllToolsInGroupSelected(
+    private static bool AreAllToolsInGroupSelected(
         ToolGroupItem groupItem,
         HashSet<string> selectedTools
-    )
-    {
-        if (groupItem.ToolNames.Count == 0)
-        {
-            return false;
-        }
+    ) =>
+        groupItem.ToolNames.Count > 0 && groupItem.ToolNames.All(selectedTools.Contains);
 
-        return groupItem.ToolNames.All(selectedTools.Contains);
-    }
-
-    private void ToggleToolGroup(
+    private static void ToggleToolGroup(
         ToolGroupItem groupItem,
         HashSet<string> selectedTools,
         bool selectAll
@@ -292,17 +256,13 @@ public class ToolSelectorUI
         foreach (var toolName in groupItem.ToolNames)
         {
             if (selectAll)
-            {
                 selectedTools.Add(toolName);
-            }
             else
-            {
                 selectedTools.Remove(toolName);
-            }
         }
     }
 
-    private List<ToolGroupItem> BuildGroupItems(
+    private static List<ToolGroupItem> BuildGroupItems(
         Tool[] availableTools,
         IReadOnlyList<ToolCategoryDescriptor> categories,
         IReadOnlyDictionary<string, Tool> toolLookup
@@ -311,14 +271,7 @@ public class ToolSelectorUI
         var result = new List<ToolGroupItem>();
 
         var allNames = availableTools.Select(t => t.Name).ToList();
-        result.Add(
-            new ToolGroupItem
-            {
-                IsGroup = true,
-                GroupName = "All",
-                ToolNames = allNames,
-            }
-        );
+        result.Add(new ToolGroupItem { IsGroup = true, GroupName = "All", ToolNames = allNames });
 
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -329,44 +282,22 @@ public class ToolSelectorUI
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (names.Count == 0)
-            {
-                continue;
-            }
+            if (names.Count == 0) continue;
 
-            result.Add(
-                new ToolGroupItem
-                {
-                    IsGroup = true,
-                    GroupName = descriptor.DisplayName,
-                    ToolNames = names,
-                }
-            );
+            result.Add(new ToolGroupItem { IsGroup = true, GroupName = descriptor.DisplayName, ToolNames = names });
 
             foreach (var name in names)
             {
-                var tool = toolLookup[name];
-                result.Add(new ToolGroupItem { Tool = tool });
+                result.Add(new ToolGroupItem { Tool = toolLookup[name] });
                 assigned.Add(name);
             }
         }
 
-        var unassigned = availableTools
-            .Where(t => !assigned.Contains(t.Name))
-            .Select(t => t.Name)
-            .ToList();
+        var unassigned = availableTools.Where(t => !assigned.Contains(t.Name)).Select(t => t.Name).ToList();
 
         if (unassigned.Count > 0)
         {
-            result.Add(
-                new ToolGroupItem
-                {
-                    IsGroup = true,
-                    GroupName = "Uncategorised",
-                    ToolNames = unassigned,
-                }
-            );
-
+            result.Add(new ToolGroupItem { IsGroup = true, GroupName = "Other", ToolNames = unassigned });
             foreach (var name in unassigned)
             {
                 result.Add(new ToolGroupItem { Tool = toolLookup[name] });

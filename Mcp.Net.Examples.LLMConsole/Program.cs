@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
@@ -52,18 +53,155 @@ public class Program
 
         var options = ConsoleOptions.Parse(args);
         options.ApplyDefaults();
-        try
+        options.Validate();
+
+        if (options.HasTransportConfigured)
         {
-            options.Validate();
+            await RunWithMcpAsync(args, options, loggerFactory, chatUI);
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogError(ex, "Invalid console options.");
-            Console.WriteLine($"Configuration error: {ex.Message}");
-            ConsoleBanner.DisplayHelp();
+            await RunDirectLlmAsync(args, loggerFactory, chatUI);
+        }
+    }
+
+    /// <summary>
+    /// Runs a direct LLM chat session without an MCP server.
+    /// Exercises the Mcp.Net.LLM layer directly for smoke testing.
+    /// </summary>
+    private static async Task RunDirectLlmAsync(
+        string[] args,
+        ILoggerFactory loggerFactory,
+        ChatUI chatUI
+    )
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(loggerFactory);
+        services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
+        services.AddSingleton(chatUI);
+        services.AddSingleton<ProviderSelectionService>();
+        var serviceProvider = services.BuildServiceProvider();
+
+        var providerSelectionService = serviceProvider.GetRequiredService<ProviderSelectionService>();
+        var provider = ResolveProvider(args, providerSelectionService);
+
+        string? apiKey = GetApiKey(provider);
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            PrintApiKeyError(provider);
             return;
         }
 
+        string modelName = GetModelName(args, provider);
+        _logger.LogInformation("Using model: {Model}", modelName);
+
+        var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
+        var chatClient = CreateChatClient(provider, chatClientOptions, loggerFactory);
+
+        chatUI.DrawChatInterface();
+
+        var transcript = new List<ChatTranscriptEntry>();
+
+        while (true)
+        {
+            var userInput = chatUI.GetUserInput();
+            if (string.IsNullOrWhiteSpace(userInput))
+            {
+                continue;
+            }
+
+            if (userInput.Equals(":quit", StringComparison.OrdinalIgnoreCase)
+                || userInput.Equals(":exit", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            transcript.Add(new UserChatEntry(
+                Guid.NewGuid().ToString("n"),
+                DateTimeOffset.UtcNow,
+                userInput
+            ));
+
+            var request = new ChatClientRequest(
+                systemPrompt: null,
+                transcript: transcript
+            );
+
+            var stream = chatClient.SendAsync(request);
+
+            // Stream text incrementally as snapshots arrive
+            var printedLength = 0;
+
+            await foreach (var snapshot in stream)
+            {
+                var currentText = ExtractText(snapshot.Blocks);
+                if (currentText.Length <= printedLength)
+                {
+                    continue;
+                }
+
+                // Print only the new text delta
+                Console.Write(currentText.Substring(printedLength));
+                printedLength = currentText.Length;
+            }
+
+            var result = await stream.GetResultAsync();
+
+            switch (result)
+            {
+                case ChatClientAssistantTurn turn:
+                    // Print any remaining text not yet streamed
+                    var finalText = ExtractText(turn.Blocks);
+                    if (finalText.Length > printedLength)
+                    {
+                        Console.Write(finalText.Substring(printedLength));
+                    }
+
+                    if (printedLength > 0 || finalText.Length > 0)
+                    {
+                        Console.WriteLine();
+                    }
+
+                    transcript.Add(new AssistantChatEntry(
+                        turn.Id,
+                        DateTimeOffset.UtcNow,
+                        turn.Blocks,
+                        Provider: turn.Provider,
+                        Model: turn.Model,
+                        StopReason: turn.StopReason,
+                        Usage: turn.Usage
+                    ));
+
+                    if (turn.Usage is { } usage)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"  {turn.Provider}/{turn.Model}");
+                        Console.Write($"  in:{usage.InputTokens}");
+                        Console.Write($" out:{usage.OutputTokens}");
+                        Console.WriteLine($" total:{usage.TotalTokens}");
+                        Console.ResetColor();
+                    }
+
+                    Console.WriteLine();
+                    break;
+
+                case ChatClientFailure failure:
+                    chatUI.DisplayToolError("LLM", failure.Message);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Runs a full chat session with MCP server connectivity and tool support.
+    /// </summary>
+    private static async Task RunWithMcpAsync(
+        string[] args,
+        ConsoleOptions options,
+        ILoggerFactory loggerFactory,
+        ChatUI chatUI
+    )
+    {
         var elicitationCoordinator = new ElicitationCoordinator(
             loggerFactory.CreateLogger<ElicitationCoordinator>()
         );
@@ -176,38 +314,13 @@ public class Program
 
         var providerSelectionService = tempServiceProvider.GetRequiredService<ProviderSelectionService>();
         var provider = ResolveProvider(args, providerSelectionService);
-        Console.WriteLine($"Selected LLM provider: {GetProviderDisplayName(provider)}");
-
-        Console.WriteLine("Press any key to start chat session...");
-        Console.ReadKey(true);
 
         _logger.LogInformation("Using LLM provider: {Provider}", provider);
 
         string? apiKey = GetApiKey(provider);
         if (string.IsNullOrEmpty(apiKey))
         {
-            _logger.LogError("Missing API key for {Provider}", provider);
-            Console.WriteLine($"Error: Missing API key for {provider}");
-            Console.WriteLine(
-                $"Please set the {GetApiKeyEnvVarName(provider)} environment variable"
-            );
-
-            Console.WriteLine("To set the environment variable:");
-            Console.WriteLine(
-                $"  - Bash/Zsh: export {GetApiKeyEnvVarName(provider)}=\"your-api-key\""
-            );
-            Console.WriteLine(
-                $"  - PowerShell: $env:{GetApiKeyEnvVarName(provider)} = \"your-api-key\""
-            );
-            Console.WriteLine(
-                $"  - Command Prompt: set {GetApiKeyEnvVarName(provider)}=your-api-key"
-            );
-
-            if (provider == LlmProvider.Anthropic)
-                Console.WriteLine("Get an API key from: https://console.anthropic.com/");
-            else
-                Console.WriteLine("Get an API key from: https://platform.openai.com/api-keys");
-
+            PrintApiKeyError(provider);
             return;
         }
 
@@ -216,16 +329,10 @@ public class Program
         _logger.LogInformation("Using model: {Model}", modelName);
 
         var chatSessionLogger = loggerFactory.CreateLogger<ChatSession>();
-        var openAiLogger = loggerFactory.CreateLogger<LLM.OpenAI.OpenAiChatClient>();
-        var anthropicLogger = loggerFactory.CreateLogger<LLM.Anthropic.AnthropicChatClient>();
         var chatUIHandlerLogger = loggerFactory.CreateLogger<ChatUIHandler>();
 
         var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
-        var chatClient =
-            provider == LlmProvider.Anthropic
-                ? new LLM.Anthropic.AnthropicChatClient(chatClientOptions, anthropicLogger)
-                : new LLM.OpenAI.OpenAiChatClient(chatClientOptions, openAiLogger)
-                    as LLM.Interfaces.IChatClient;
+        var chatClient = CreateChatClient(provider, chatClientOptions, loggerFactory);
 
         var chatSession = new ChatSession(chatClient, mcpClient, toolRegistry, chatSessionLogger);
         chatSession.RegisterTools(toolRegistry.EnabledTools);
@@ -243,6 +350,62 @@ public class Program
         );
 
         await consoleAdapter.RunAsync();
+    }
+
+    private static IChatClient CreateChatClient(
+        LlmProvider provider,
+        ChatClientOptions options,
+        ILoggerFactory loggerFactory
+    )
+    {
+        return provider switch
+        {
+            LlmProvider.Anthropic => new LLM.Anthropic.AnthropicChatClient(
+                options,
+                loggerFactory.CreateLogger<LLM.Anthropic.AnthropicChatClient>()
+            ),
+            _ => new LLM.OpenAI.OpenAiChatClient(
+                options,
+                loggerFactory.CreateLogger<LLM.OpenAI.OpenAiChatClient>()
+            ),
+        };
+    }
+
+    private static string ExtractText(IReadOnlyList<AssistantContentBlock> blocks)
+    {
+        var sb = new StringBuilder();
+        foreach (var block in blocks)
+        {
+            if (block is TextAssistantBlock text)
+            {
+                sb.Append(text.Text);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static void PrintApiKeyError(LlmProvider provider)
+    {
+        _logger.LogError("Missing API key for {Provider}", provider);
+        Console.WriteLine($"Error: Missing API key for {provider}");
+        Console.WriteLine(
+            $"Please set the {GetApiKeyEnvVarName(provider)} environment variable"
+        );
+        Console.WriteLine("To set the environment variable:");
+        Console.WriteLine(
+            $"  - Bash/Zsh: export {GetApiKeyEnvVarName(provider)}=\"your-api-key\""
+        );
+        Console.WriteLine(
+            $"  - PowerShell: $env:{GetApiKeyEnvVarName(provider)} = \"your-api-key\""
+        );
+        Console.WriteLine(
+            $"  - Command Prompt: set {GetApiKeyEnvVarName(provider)}=your-api-key"
+        );
+
+        if (provider == LlmProvider.Anthropic)
+            Console.WriteLine("Get an API key from: https://console.anthropic.com/");
+        else
+            Console.WriteLine("Get an API key from: https://platform.openai.com/api-keys");
     }
 
     private static LlmProvider ResolveProvider(
@@ -346,13 +509,6 @@ public class Program
         TryResolveProviderFromArgsOrEnvironment(args, out var provider, out _)
             ? provider
             : LlmProvider.Anthropic;
-
-    private static string GetProviderDisplayName(LlmProvider provider) => provider switch
-    {
-        LlmProvider.OpenAI => "OpenAI (GPT-5)",
-        LlmProvider.Anthropic => "Anthropic (Claude Sonnet 4.5)",
-        _ => provider.ToString(),
-    };
 
     private static string? GetApiKey(LlmProvider provider)
     {
