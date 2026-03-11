@@ -338,7 +338,7 @@ public class ChatSession : IChatSessionEvents
         try
         {
             var mcpResult = await _mcpClient.CallTool(tool.Name, toolCall.Arguments);
-            var invocationResult = ToolInvocationResult.FromMcpResult(
+            var invocationResult = ToolResultConverter.FromMcpResult(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
                 mcpResult

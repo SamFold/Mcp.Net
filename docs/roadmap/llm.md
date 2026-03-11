@@ -4,14 +4,14 @@
 
 - Keep the block-based transcript, replay, and streaming-update baseline stable while narrowing `Mcp.Net.LLM` to provider execution concerns.
 - The stateless-executor boundary shift is now live: `ChatSession` owns prompt/tools/transcript state and `Mcp.Net.LLM` executes explicit request snapshots.
-- The MCP-facing prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`; the remaining impurity is MCP/Core tool-result conversion inside `ToolInvocationResult`.
-- Cancellation remains deferred until after the remaining boundary cleanup because the current MCP client/tool-execution path still does not support it cleanly.
+- `Mcp.Net.LLM` is now a standalone provider library: MCP-facing prompt/resource catalog, completion, elicitation, and tool-result conversion all live outside the project.
+- Cancellation remains deferred until after the next API-shape decision because the current MCP client/tool-execution path still does not support it cleanly.
 
 ## Near-term sequence
 
-1. Move the remaining MCP/Core tool-result conversion out of `Mcp.Net.LLM`, then drop the final non-provider project reference from the project.
-2. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
-3. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean contract.
+1. Revisit whether snapshot-based `IProgress<ChatClientAssistantTurn>` updates should remain or move to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
+2. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean contract.
+3. Revisit whether shared `ChatClientOptions` should stay flat or start splitting into provider-specific option shapes as more provider-specific knobs appear.
 
 ## Completed boundary work
 
@@ -20,6 +20,7 @@
 3. Replace the temporary Web UI raw-client pass-through with explicit `ChatSession` / adapter operations for prompt update, conversation reset, and tool refresh.
 4. Cut `IChatClient` over to a request-based `SendAsync(...)` boundary, make `ChatSession` the single owner of prompt/tool/transcript state, and remove the old MCP tool-model coupling from `Mcp.Net.LLM`.
 5. Move MCP-backed prompt/resource catalog, completion, and elicitation services into `Mcp.Net.Agent`, repoint Web UI / console consumers, and remove the `Mcp.Net.Client` project reference from `Mcp.Net.LLM`.
+6. Move MCP tool-result conversion into `Mcp.Net.Agent.Tools.ToolResultConverter`, trim `ToolInvocationResult` down to a pure LLM-local result type, and remove the final `Mcp.Net.Core` project reference from `Mcp.Net.LLM`.
 
 ## Next milestone
 
@@ -45,12 +46,12 @@
 - Persisted agent settings now round-trip through the real `FileSystemAgentStore` path into `AgentFactory` `ChatClientOptions`, with regression coverage for deserialized `JsonElement` temperature and `max_tokens` values.
 - The `Mcp.Net.Agent` extraction is complete, including the Web UI seam cleanup that removed raw `IChatClient` reach-through for prompt update, conversation reset, and tool refresh.
 - The provider-boundary decision is now implemented: `IChatClient` is request-based, `ChatSession` owns prompt/tool/transcript state, provider clients rebuild provider payloads from explicit request snapshots, and the old MCP tool-model coupling has been removed from `Mcp.Net.LLM`.
-- MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`; the remaining provider-boundary impurity is `ToolInvocationResult` still translating `ToolCallResult` / MCP content types.
+- MCP-backed prompt/resource catalog, completion, elicitation, and tool-result conversion now all live outside `Mcp.Net.LLM`, and the project now builds as a standalone provider library with no project references.
 
 ## Dependencies and risks
 
 - Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the provider-boundary shift and only comes back when the seam is both needed and worth widening.
-- The next boundary slices touch `ToolInvocationResult`, tool execution in `ChatSession`, and provider bootstrap. They should stay focused on removing the final MCP/Core conversion from `Mcp.Net.LLM` and avoid reopening another transcript or message-model rewrite.
+- The next LLM slices should stay focused on API shape and avoid reopening another transcript or message-model rewrite now that the project boundary work is complete.
 
 ## Open questions
 

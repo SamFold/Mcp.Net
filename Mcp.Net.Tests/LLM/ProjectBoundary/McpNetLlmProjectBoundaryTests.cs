@@ -23,7 +23,7 @@ public class McpNetLlmProjectBoundaryTests
     }
 
     [Fact]
-    public void McpNetLlmProject_ShouldReferenceMcpNetCore()
+    public void McpNetLlmProject_ShouldHaveNoProjectReferences()
     {
         var document = XDocument.Load(FindRepoRootFile("Mcp.Net.LLM/Mcp.Net.LLM.csproj"));
 
@@ -33,8 +33,8 @@ public class McpNetLlmProjectBoundaryTests
             .Where(include => include != null)
             .ToArray();
 
-        projectReferences.Should().Contain(reference =>
-            reference!.Contains("Mcp.Net.Core", StringComparison.OrdinalIgnoreCase)
+        projectReferences.Should().BeEmpty(
+            "Mcp.Net.LLM should be a standalone provider library with no project references"
         );
     }
 

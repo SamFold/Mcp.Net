@@ -12,7 +12,7 @@
 - `ChatSession` now owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap, then builds provider requests from that state for each turn.
 - `Mcp.Net.LLM` no longer depends on the MCP tool model or `ToolConverter`; provider tool payloads now cross the boundary through the LLM-local request/tool contract.
 - MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`.
-- The remaining boundary impurity is `ToolInvocationResult`: `Mcp.Net.LLM` still references `Mcp.Net.Core` because `ToolInvocationResult.FromMcpResult(...)` knows how to translate MCP `ToolCallResult` / content models into the LLM-local result shape.
+- MCP tool-result translation now lives in `Mcp.Net.Agent.Tools.ToolResultConverter`, `ToolInvocationResult` is a pure LLM-local data/serialization type, and `Mcp.Net.LLM` has no project references at all.
 
 ## Goal
 
@@ -28,7 +28,7 @@
   - keep provider implementations, request/response models, replay types, and provider factory in `Mcp.Net.LLM`
   - move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM`
   - remove `Mcp.Net.Core.Models.Tools.Tool` coupling from the `Mcp.Net.LLM` provider boundary
-  - remove the remaining `Mcp.Net.Core.Models.Tools.ToolCallResult` / `ContentBase` conversion from `Mcp.Net.LLM`
+  - revisit whether the provider streaming surface should stay snapshot-based or move to a breaking async stream contract
   - keep the replay/history transformer and block-based transcript architecture stable while the boundary shift lands
 - Out of scope:
   - session-level cancellation until after the provider-boundary shift
@@ -38,16 +38,16 @@
 
 ## Current slice
 
-Remove the last MCP/Core conversion logic from `Mcp.Net.LLM` now that the helper re-home is complete:
+Decide the next long-term provider streaming surface now that the standalone provider boundary is complete:
 
-1. **Move MCP tool-result translation out of `Mcp.Net.LLM`**: `ToolInvocationResult.FromMcpResult(...)`, text/resource-link extraction, and any MCP content-model knowledge should live with agent/tool-execution orchestration rather than in the provider library.
-   - Code references: `Mcp.Net.LLM/Models/ToolInvocationResult.cs`, `Mcp.Net.Agent/Core/ChatSession.cs`
+1. **Revisit the provider streaming API shape**: decide whether `IProgress<ChatClientAssistantTurn>` snapshot updates remain the long-term surface or whether `IChatClient` should move to a breaking `IAsyncEnumerable<T>` stream contract.
+   - Code references: `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.LLM/Models/ChatClientAssistantTurn.cs`, `Mcp.Net.Agent/Core/ChatSession.cs`
 
-2. **Keep `ToolInvocationResult` and `ToolResultResourceLink` as LLM-local result contracts**: provider adapters should still consume the LLM-local tool result shape, but the conversion from MCP server payloads into that shape should happen before the provider boundary.
-   - Code references: `Mcp.Net.LLM/Models/ToolInvocationResult.cs`, `Mcp.Net.LLM/Models/ToolResultResourceLink.cs`
+2. **Preserve transcript-upsert semantics if the streaming surface changes**: stable assistant/block identifiers, durable transcript `Updated` events, and current replay assumptions must keep working if the transport contract changes.
+   - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.WebUi/Adapters/SignalR/SignalRChatAdapter.cs`, `Mcp.Net.LLM/OpenAI/*`, `Mcp.Net.LLM/Anthropic/*`
 
-3. **Drop the last non-provider project reference from `Mcp.Net.LLM`**: once the tool-result conversion is out, `Mcp.Net.LLM` should no longer require `Mcp.Net.Core` project references.
-   - Code references: `Mcp.Net.LLM/Mcp.Net.LLM.csproj`, `Mcp.Net.LLM/Models/ToolInvocationResult.cs`
+3. **Keep the now-clean provider boundary stable while revisiting that API**: do not reintroduce MCP/session helpers or provider-owned conversation state into `Mcp.Net.LLM`.
+   - Code references: `Mcp.Net.LLM/Mcp.Net.LLM.csproj`, `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.Agent/Tools/ToolResultConverter.cs`
 
 ## Completed background
 
@@ -147,6 +147,13 @@ Remove the last MCP/Core conversion logic from `Mcp.Net.LLM` now that the helper
    - Repoint `Mcp.Net.WebUi`, `Mcp.Net.Examples.LLMConsole`, and the corresponding tests to the new namespaces.
    - Replace the `Mcp.Net.LLM` project reference on `Mcp.Net.Client` with a narrower direct reference to `Mcp.Net.Core`.
 
+8. **Completed: move the final MCP/Core tool-result conversion out of `Mcp.Net.LLM`**
+   - Remove MCP model knowledge from `Mcp.Net.LLM/Models/ToolInvocationResult.cs`.
+   - Add `Mcp.Net.Agent/Tools/ToolResultConverter.cs` for MCP `ToolCallResult` / content conversion.
+   - Repoint `Mcp.Net.Agent/Core/ChatSession.cs` to use the new converter.
+   - Drop the remaining `Mcp.Net.Core` project reference from `Mcp.Net.LLM/Mcp.Net.LLM.csproj`.
+   - Add a project-boundary regression proving `Mcp.Net.LLM` has no project references.
+
 ## Stay in LLM
 
 - Keep these in `Mcp.Net.LLM` for the boundary shift:
@@ -176,9 +183,9 @@ Remove the last MCP/Core conversion logic from `Mcp.Net.LLM` now that the helper
 
 ## Next slices
 
-1. Move the remaining MCP/Core tool-result conversion out of `Mcp.Net.LLM` and drop the final non-provider project reference from the project.
-2. Revisit whether the long-term streaming API should move from snapshot-based progress updates to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
-3. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean seam.
+1. Revisit whether the long-term streaming API should move from snapshot-based progress updates to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
+2. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean seam.
+3. Revisit whether shared `ChatClientOptions` should stay flat or start splitting into provider-specific option shapes once more provider-specific features accumulate.
 
 ## Open decisions
 
@@ -192,11 +199,8 @@ Remove the last MCP/Core conversion logic from `Mcp.Net.LLM` now that the helper
 
 - Add failing regression tests before implementation when feasible.
 - Verify replay/history transforms continue to run from session-owned transcript state and still preserve same-model/provider degradation rules.
-- Verify provider bootstrap no longer depends on MCP-backed catalog/completion/elicitation helpers remaining in `Mcp.Net.LLM`.
-- Verify the `Mcp.Net.LLM` provider boundary stays free of MCP tool-model coupling.
-- Verify `ToolInvocationResult` construction no longer depends on `ToolCallResult` / `ContentBase` types from `Mcp.Net.Core`.
-- Verify `Mcp.Net.LLM.csproj` no longer needs any project references once the remaining conversion is removed.
-- Verify Web UI and session bootstrap still work after the helper move with no raw provider-state mutation paths reintroduced.
+- Verify the `Mcp.Net.LLM` provider boundary stays free of provider-owned conversation state and MCP/session helper drift.
+- Verify Web UI and session bootstrap still work after the boundary cleanup with no raw provider-state mutation paths reintroduced.
 - Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
 - Add regressions for stable transcript and block identifiers across partial and final assistant updates.
 - Add regressions for tool execution appending `ToolResult` entries instead of mutating transcript state.
