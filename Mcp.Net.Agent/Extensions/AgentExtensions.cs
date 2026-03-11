@@ -2,7 +2,6 @@ using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Agent.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -31,7 +30,7 @@ public static class AgentExtensions
     {
         // Get required services
         var agentManager = serviceProvider.GetRequiredService<IAgentManager>();
-        var mcpClient = serviceProvider.GetRequiredService<IMcpClient>();
+        var toolExecutor = serviceProvider.GetRequiredService<IToolExecutor>();
         var toolRegistry = serviceProvider.GetRequiredService<IToolRegistry>();
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ChatSession>();
@@ -46,7 +45,7 @@ public static class AgentExtensions
 
         return new ChatSession(
             chatClient,
-            mcpClient,
+            toolExecutor,
             toolRegistry,
             logger,
             agent.ToChatSessionConfiguration(toolRegistry)
@@ -69,7 +68,7 @@ public static class AgentExtensions
     {
         // Get required services
         var agentFactory = serviceProvider.GetRequiredService<IAgentFactory>();
-        var mcpClient = serviceProvider.GetRequiredService<IMcpClient>();
+        var toolExecutor = serviceProvider.GetRequiredService<IToolExecutor>();
         var toolRegistry = serviceProvider.GetRequiredService<IToolRegistry>();
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ChatSession>();
@@ -79,7 +78,7 @@ public static class AgentExtensions
 
         return new ChatSession(
             chatClient,
-            mcpClient,
+            toolExecutor,
             toolRegistry,
             logger,
             agent.ToChatSessionConfiguration(toolRegistry)

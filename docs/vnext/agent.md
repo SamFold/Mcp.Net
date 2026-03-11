@@ -7,36 +7,61 @@
 - `ChatSession` now compacts oversized outbound provider transcripts through an agent-owned compaction seam before building requests, while keeping the in-memory transcript intact.
 - Independent tool calls now execute concurrently inside the agent loop, while `ToolResult` transcript entries are still appended in original tool-call order.
 - `ChatSession` is now runtime-first: it accepts runtime configuration directly, stores `ChatRequestOptions`, and no longer exposes `AgentDefinition` or agent-based static factory helpers.
+- Tool dispatch is still hardcoded inside `ChatSession`: registry lookup happens in the session loop, and execution still goes directly through `IMcpClient.CallTool(...)`.
 - Transcript bootstrap exists via `LoadTranscriptAsync(...)`, but persistence remains primarily a Web UI concern rather than an agent-owned seam.
 
 ## Goal
 
-- Add session-level abort plumbing so callers can stop an in-flight agent turn even before full MCP tool-call cancellation support exists.
+- Extract tool execution behind an agent-owned executor seam so the core loop is no longer MCP-specific.
+
+## What
+
+- Introduce an `IToolExecutor` runtime seam that executes a runtime `ToolInvocation` and returns `ToolInvocationResult`.
+- Move MCP-specific tool dispatch and result conversion into an `McpToolExecutor`.
+- Keep tool discovery and selection in `IToolRegistry` / `ChatSession`; only execution moves behind the new interface.
+
+## Why
+
+- `ChatSession` is now runtime-first except for tool dispatch; `IMcpClient.CallTool(...)` is the last MCP transport dependency inside the core loop.
+- A dedicated executor seam is the prerequisite for cleaner abort plumbing, because cancellation can flow through the executor contract even before the MCP client itself supports tokens.
+- The same seam unlocks future in-process or built-in tools without changing the loop contract again.
+- Tests get simpler because `ChatSession` can mock tool execution directly instead of coordinating `IMcpClient` and MCP result conversion.
+
+## How
+
+- Add a small runtime `ToolInvocation` model in `Mcp.Net.Agent` carrying `ToolCallId`, `ToolName`, and `Arguments` as `IReadOnlyDictionary<string, object?>`.
+- Add `IToolExecutor.ExecuteAsync(ToolInvocation invocation, CancellationToken ct)`.
+- Implement `McpToolExecutor` as the MCP-backed adapter over `IMcpClient.CallTool(...)` plus `ToolResultConverter`.
+- Build `McpToolExecutor` from the session's dedicated `IMcpClient` rather than a root singleton so Web UI sessions keep their per-session MCP connection.
+- Change `ChatSession` to keep registry-based "tool exists / enabled" policy, but delegate actual execution to `IToolExecutor`.
+- Update DI, Web UI/session creation, and focused tests to use the new seam.
 
 ## Scope
 
 - In scope:
-  - add a session-owned abort/cancel seam to `ChatSession`
-  - let callers interrupt provider waiting and prevent further turn progression
-  - preserve current transcript semantics for completed work while defining how aborted turns surface
-  - add focused regressions for interrupted provider waits and partially completed turn state
+  - add an agent-owned `ToolInvocation` and `IToolExecutor`
+  - implement MCP-backed tool execution outside `ChatSession`
+  - remove `IMcpClient` from the `ChatSession` constructor and runtime loop
+  - update DI, Web UI chat creation, and focused regressions for the new seam
 - Out of scope:
+  - session abort plumbing in the same slice
   - moving transcript persistence out of the Web UI
   - hook/extension or branching systems
-  - full MCP tool-call cancellation until `IMcpClient.CallTool` exposes a `CancellationToken`
+  - built-in/local tool libraries or composite executors
   - deeper changes to the provider request/stream boundary
 
 ## Current slice
 
-1. Add failing regressions proving an in-flight turn can be aborted while waiting on the provider and that the session does not continue into later loop stages after abort.
-2. Introduce session-owned abort plumbing in `ChatSession` without claiming full MCP tool-call cancellation yet.
-3. Verify focused `ChatSession` coverage and broader Agent/Web UI chat coverage after the abort path is in place.
+1. Add failing regressions proving `ChatSession` can execute tool calls through a mocked `IToolExecutor` while preserving the current ordering, `ToolCallActivityChanged` transitions, and error semantics.
+2. Introduce `ToolInvocation`, `IToolExecutor`, and `McpToolExecutor`, then move MCP tool execution and result conversion out of `ChatSession`.
+3. Update DI and Web UI/session creation to build the executor from the session-specific `IMcpClient`, then verify focused `ChatSession` coverage and broader Agent/Web UI chat coverage.
 
 ## Next slices
 
-1. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-2. Consider hook/extension or branching surfaces only after the core loop is more robust.
-3. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Add session-level abort plumbing once tool execution is behind the new runtime seam.
+2. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+3. Consider hook/extension or branching surfaces only after the core loop is more robust.
+4. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
 
@@ -48,6 +73,7 @@
 
 ## Open decisions
 
+- Should local/built-in tools arrive as a separate `LocalToolExecutor` first, or only after the MCP executor seam is in place and stable?
 - When session abort plumbing lands, how should partially completed parallel tool calls surface in transcript and activity events?
 - Should context compaction stay request-only for a while, or should a later slice persist compacted summaries into session history?
 - What should the first abort surface look like for consumers: explicit `AbortCurrentTurn()`, per-call cancellation tokens, or both?
@@ -57,4 +83,4 @@
 - Add failing regression tests before implementation when feasible.
 - Run focused `Mcp.Net.Tests.Agent` coverage for `ChatSession`.
 - Run broader `Mcp.Net.Tests.Agent` and `Mcp.Net.Tests.WebUi.Chat` coverage after the focused pass is green.
-- Verify aborted turns stop progressing cleanly and that completed transcript entries remain internally consistent.
+- Verify `ChatSession` no longer depends on `IMcpClient` directly and that tool execution semantics remain unchanged.

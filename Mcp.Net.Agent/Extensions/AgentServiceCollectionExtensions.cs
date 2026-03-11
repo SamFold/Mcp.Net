@@ -43,6 +43,7 @@ public static class AgentServiceCollectionExtensions
         services.AddSingleton<ToolRegistry>(sp =>
             (ToolRegistry)sp.GetRequiredService<IToolRegistry>()
         );
+        services.AddTransient<IToolExecutor, McpToolExecutor>();
 
         return services;
     }

@@ -97,11 +97,12 @@ public class ChatFactory : IChatFactory
         AttachToolListNotification(sessionId, sessionMcpClient);
 
         var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
+        var toolExecutor = CreateToolExecutor(sessionMcpClient);
 
         // Create core chat session (no longer needs inputProvider)
         var chatSession = new ChatSession(
             sessionClient,
-            sessionMcpClient,
+            toolExecutor,
             _toolRegistry,
             chatSessionLogger,
             new ChatSessionConfiguration
@@ -151,11 +152,12 @@ public class ChatFactory : IChatFactory
         AttachToolListNotification(sessionId, sessionMcpClient);
 
         var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
+        var toolExecutor = CreateToolExecutor(sessionMcpClient);
 
         // Create core chat session
         var chatSession = new ChatSession(
             sessionClient,
-            sessionMcpClient,
+            toolExecutor,
             _toolRegistry,
             chatSessionLogger,
             new ChatSessionConfiguration
@@ -373,6 +375,12 @@ public class ChatFactory : IChatFactory
 
         return (catalog, completionService);
     }
+
+    private IToolExecutor CreateToolExecutor(IMcpClient mcpClient) =>
+        new McpToolExecutor(
+            mcpClient,
+            _loggerFactory.CreateLogger<McpToolExecutor>()
+        );
 
     private void AttachToolListNotification(string sessionId, IMcpClient client)
     {

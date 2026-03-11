@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Completion;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Events;
@@ -27,7 +26,6 @@ public class SignalRChatAdapterTests
     public async Task SendUserMessageAsync_StreamingAssistantUpdate_ShouldBroadcastUpdateMessage()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var hubContext = CreateHubContext(out var clientProxy);
         var toolRegistry = new ToolRegistry();
         var catalog = new Mock<IPromptResourceCatalog>();
@@ -75,7 +73,7 @@ public class SignalRChatAdapterTests
 
         var session = new ChatSession(
             llmClient.Object,
-            mcpClient.Object,
+            Mock.Of<IToolExecutor>(),
             toolRegistry,
             NullLogger<ChatSession>.Instance
         );

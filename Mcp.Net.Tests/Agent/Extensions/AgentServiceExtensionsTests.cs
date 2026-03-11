@@ -3,7 +3,6 @@ using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Extensions;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Agent.Tools;
@@ -26,7 +25,7 @@ public class AgentServiceExtensionsTests
     private readonly ServiceCollection _services;
     private readonly Mock<IAgentManager> _mockAgentManager;
     private readonly Mock<IAgentFactory> _mockAgentFactory;
-    private readonly Mock<IMcpClient> _mockMcpClient;
+    private readonly Mock<IToolExecutor> _mockToolExecutor;
     private readonly Mock<IToolRegistry> _mockToolRegistry;
     private readonly Mock<ILoggerFactory> _mockLoggerFactory;
     private readonly Mock<ILogger<ChatSession>> _mockLogger;
@@ -38,7 +37,7 @@ public class AgentServiceExtensionsTests
         // Setup mocks
         _mockAgentManager = new Mock<IAgentManager>();
         _mockAgentFactory = new Mock<IAgentFactory>();
-        _mockMcpClient = new Mock<IMcpClient>();
+        _mockToolExecutor = new Mock<IToolExecutor>();
         _mockToolRegistry = new Mock<IToolRegistry>();
         _mockLoggerFactory = new Mock<ILoggerFactory>();
         _mockLogger = new Mock<ILogger<ChatSession>>();
@@ -51,7 +50,7 @@ public class AgentServiceExtensionsTests
         // Register mocks in DI
         _services.AddSingleton(_mockAgentManager.Object);
         _services.AddSingleton(_mockAgentFactory.Object);
-        _services.AddSingleton(_mockMcpClient.Object);
+        _services.AddSingleton(_mockToolExecutor.Object);
         _services.AddSingleton(_mockToolRegistry.Object);
         _services.AddSingleton(_mockLoggerFactory.Object);
     }
@@ -73,6 +72,7 @@ public class AgentServiceExtensionsTests
         // Register a mock configuration for the API key provider
         var mockConfiguration = new Mock<IConfiguration>();
         serviceCollection.AddSingleton<IConfiguration>(mockConfiguration.Object);
+        serviceCollection.AddSingleton(new Mock<Mcp.Net.Client.Interfaces.IMcpClient>().Object);
 
         // Act
         serviceCollection.AddAgentServices();
@@ -85,6 +85,7 @@ public class AgentServiceExtensionsTests
         Assert.NotNull(provider.GetService<IAgentFactory>());
         Assert.NotNull(provider.GetService<IAgentStore>());
         Assert.NotNull(provider.GetService<IApiKeyProvider>());
+        Assert.NotNull(provider.GetService<IToolExecutor>());
     }
 
     [Fact]
@@ -182,7 +183,7 @@ public class AgentServiceExtensionsTests
         // Arrange
         var limitedServices = new ServiceCollection();
         // Only register some services, not all required ones
-        limitedServices.AddSingleton(_mockMcpClient.Object);
+        limitedServices.AddSingleton(_mockToolExecutor.Object);
         limitedServices.AddSingleton(_mockLoggerFactory.Object);
         var provider = limitedServices.BuildServiceProvider();
 

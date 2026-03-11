@@ -2,12 +2,12 @@ using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.Agent.Compaction;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Agent.Tools;
 using Microsoft.Extensions.Logging;
+using RuntimeToolInvocation = Mcp.Net.Agent.Tools.ToolInvocation;
 
 namespace Mcp.Net.Agent.Core;
 
@@ -19,7 +19,7 @@ namespace Mcp.Net.Agent.Core;
 public class ChatSession : IChatSessionEvents
 {
     private readonly IChatClient _llmClient;
-    private readonly IMcpClient _mcpClient;
+    private readonly IToolExecutor _toolExecutor;
     private readonly IToolRegistry _toolRegistry;
     private readonly IChatTranscriptCompactor _transcriptCompactor;
     private readonly ILogger<ChatSession> _logger;
@@ -62,14 +62,14 @@ public class ChatSession : IChatSessionEvents
 
     public ChatSession(
         IChatClient llmClient,
-        IMcpClient mcpClient,
+        IToolExecutor toolExecutor,
         IToolRegistry toolRegistry,
         ILogger<ChatSession> logger,
         IChatTranscriptCompactor? transcriptCompactor = null
     )
     {
         _llmClient = llmClient;
-        _mcpClient = mcpClient;
+        _toolExecutor = toolExecutor;
         _toolRegistry = toolRegistry;
         _transcriptCompactor = transcriptCompactor ?? EntryCountChatTranscriptCompactor.Default;
         _logger = logger;
@@ -79,13 +79,13 @@ public class ChatSession : IChatSessionEvents
 
     public ChatSession(
         IChatClient llmClient,
-        IMcpClient mcpClient,
+        IToolExecutor toolExecutor,
         IToolRegistry toolRegistry,
         ILogger<ChatSession> logger,
         ChatSessionConfiguration configuration,
         IChatTranscriptCompactor? transcriptCompactor = null
     )
-        : this(llmClient, mcpClient, toolRegistry, logger, transcriptCompactor)
+        : this(llmClient, toolExecutor, toolRegistry, logger, transcriptCompactor)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ApplyConfiguration(configuration);
@@ -292,7 +292,11 @@ public class ChatSession : IChatSessionEvents
         {
             _logger.LogError("Tool {ToolName} not found", toolCall.ToolName);
 
-            var missingResult = CreateErrorResult(toolCall.ToolCallId, toolCall.ToolName, "Tool not found in registry");
+            var missingResult = ToolInvocationResultFactory.CreateError(
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                "Tool not found in registry"
+            );
 
             ToolCallActivityChanged?.Invoke(
                 this,
@@ -321,11 +325,13 @@ public class ChatSession : IChatSessionEvents
 
         try
         {
-            var mcpResult = await _mcpClient.CallTool(tool.Name, toolCall.Arguments);
-            var invocationResult = ToolResultConverter.FromMcpResult(
-                toolCall.ToolCallId,
-                toolCall.ToolName,
-                mcpResult
+            var invocationResult = await _toolExecutor.ExecuteAsync(
+                new RuntimeToolInvocation(
+                    toolCall.ToolCallId,
+                    tool.Name,
+                    toolCall.Arguments
+                ),
+                CancellationToken.None
             );
 
             ToolCallActivityChanged?.Invoke(
@@ -355,7 +361,11 @@ public class ChatSession : IChatSessionEvents
                 ex.Message
             );
 
-            var errorResult = CreateErrorResult(toolCall.ToolCallId, toolCall.ToolName, ex.Message);
+            var errorResult = ToolInvocationResultFactory.CreateError(
+                toolCall.ToolCallId,
+                toolCall.ToolName,
+                ex.Message
+            );
 
             ToolCallActivityChanged?.Invoke(
                 this,
@@ -494,22 +504,4 @@ public class ChatSession : IChatSessionEvents
             failure.Model
         );
 
-    private static ToolInvocationResult CreateErrorResult(
-        string toolCallId,
-        string toolName,
-        string message
-    )
-    {
-        var text = string.IsNullOrWhiteSpace(message) ? Array.Empty<string>() : new[] { message };
-
-        return new ToolInvocationResult(
-            toolCallId,
-            toolName,
-            true,
-            text,
-            structured: null,
-            resourceLinks: Array.Empty<ToolResultResourceLink>(),
-            metadata: null
-        );
-    }
 }

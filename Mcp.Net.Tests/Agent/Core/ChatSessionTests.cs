@@ -2,8 +2,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
-using Mcp.Net.Client.Interfaces;
-using Mcp.Net.Core.Models.Content;
 using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.Agent.Compaction;
 using Mcp.Net.Agent.Core;
@@ -16,6 +14,7 @@ using Mcp.Net.LLM.Replay;
 using Mcp.Net.Agent.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using RuntimeToolInvocation = Mcp.Net.Agent.Tools.ToolInvocation;
 using Xunit;
 
 namespace Mcp.Net.Tests.Agent.Core;
@@ -26,7 +25,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldAppendUserTranscriptEntry()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
@@ -48,12 +46,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
@@ -68,7 +61,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ProviderAssistantTurn_ShouldAppendSingleAssistantEntryWithOrderedBlocks()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
@@ -103,12 +95,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
@@ -131,7 +118,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_StreamingAssistantUpdate_ShouldUpdateSingleAssistantEntryInPlace()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
@@ -176,12 +162,7 @@ public class ChatSessionTests
                 }
             );
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptChanges = new List<ChatTranscriptChangedEventArgs>();
         session.TranscriptChanged += (_, args) => transcriptChanges.Add(args);
@@ -214,7 +195,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ProviderFailure_ShouldAppendErrorEntry()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
@@ -235,12 +215,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
@@ -258,7 +233,7 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ToolExecution_ShouldEmitActivityAndAppendToolResultEntry()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         var toolInvocationBlock = new ToolCallAssistantBlock(
@@ -302,22 +277,20 @@ public class ChatSessionTests
 
         toolRegistry.Setup(r => r.GetToolByName("calculator_add")).Returns(tool);
 
-        var toolCallResult = new ToolCallResult
-        {
-            IsError = false,
-            Content = new ContentBase[] { new TextContent { Text = "5" } },
-        };
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-1"
+                    && invocation.ToolName == "calculator_add"
+                    && invocation.Arguments.Count == 2
+                    && Equals(invocation.Arguments["a"], 2.0)
+                    && Equals(invocation.Arguments["b"], 3.0)
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .ReturnsAsync(CreateToolResult("call-1", "calculator_add", "5"));
 
-        mcpClient
-            .Setup(c => c.CallTool("calculator_add", It.IsAny<object?>()))
-            .ReturnsAsync(toolCallResult);
-
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         var toolActivities = new List<ToolCallActivityChangedEventArgs>();
@@ -343,7 +316,7 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_MultipleToolCalls_ShouldAppendTranscriptEntriesInToolCallOrder()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
         var toolRegistry = new Mock<IToolRegistry>();
         var runningToolCalls = new ConcurrentDictionary<string, byte>();
         var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -369,18 +342,28 @@ public class ChatSessionTests
         toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
         toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
 
-        var searchCompletion = new TaskCompletionSource<ToolCallResult>(
+        var searchCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
-        var calculatorCompletion = new TaskCompletionSource<ToolCallResult>(
+        var calculatorCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
 
-        mcpClient
-            .Setup(c => c.CallTool("search", It.IsAny<object?>()))
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-1" && invocation.ToolName == "search"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
             .Returns(() => searchCompletion.Task);
-        mcpClient
-            .Setup(c => c.CallTool("calculate", It.IsAny<object?>()))
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-2" && invocation.ToolName == "calculate"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
             .Returns(() => calculatorCompletion.Task);
 
         var providerCallCount = 0;
@@ -432,12 +415,7 @@ public class ChatSessionTests
                 }
             );
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
 
         session.ToolCallActivityChanged += (_, args) =>
         {
@@ -464,20 +442,8 @@ public class ChatSessionTests
                 state == ToolCallExecutionState.Queued || state == ToolCallExecutionState.Running
             );
 
-        calculatorCompletion.SetResult(
-            new ToolCallResult
-            {
-                IsError = false,
-                Content = new ContentBase[] { new TextContent { Text = "4" } },
-            }
-        );
-        searchCompletion.SetResult(
-            new ToolCallResult
-            {
-                IsError = false,
-                Content = new ContentBase[] { new TextContent { Text = "sunny" } },
-            }
-        );
+        calculatorCompletion.SetResult(CreateToolResult("call-2", "calculate", "4"));
+        searchCompletion.SetResult(CreateToolResult("call-1", "search", "sunny"));
 
         await sendTask;
 
@@ -497,10 +463,11 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_MultipleToolCalls_ShouldAppendAllResultsInOrderWhenOneToolFails()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
         var toolRegistry = new Mock<IToolRegistry>();
         var runningToolCalls = new ConcurrentDictionary<string, byte>();
         var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var toolActivities = new ConcurrentQueue<ToolCallActivityChangedEventArgs>();
 
         using var searchSchema = System.Text.Json.JsonDocument.Parse("{}");
         var searchTool = new Tool
@@ -521,18 +488,28 @@ public class ChatSessionTests
         toolRegistry.Setup(r => r.GetToolByName("search")).Returns(searchTool);
         toolRegistry.Setup(r => r.GetToolByName("calculate")).Returns(calculatorTool);
 
-        var searchCompletion = new TaskCompletionSource<ToolCallResult>(
+        var searchCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
-        var calculatorCompletion = new TaskCompletionSource<ToolCallResult>(
+        var calculatorCompletion = new TaskCompletionSource<ToolInvocationResult>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
 
-        mcpClient
-            .Setup(c => c.CallTool("search", It.IsAny<object?>()))
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-1" && invocation.ToolName == "search"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
             .Returns(() => searchCompletion.Task);
-        mcpClient
-            .Setup(c => c.CallTool("calculate", It.IsAny<object?>()))
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-2" && invocation.ToolName == "calculate"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
             .Returns(() => calculatorCompletion.Task);
 
         llmClient
@@ -575,15 +552,12 @@ public class ChatSessionTests
                 )
             );
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
 
         session.ToolCallActivityChanged += (_, args) =>
         {
+            toolActivities.Enqueue(args);
+
             if (args.ExecutionState == ToolCallExecutionState.Running)
             {
                 runningToolCalls.TryAdd(args.ToolCallId, 0);
@@ -598,14 +572,8 @@ public class ChatSessionTests
 
         await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        calculatorCompletion.SetException(new InvalidOperationException("calculation failed"));
-        searchCompletion.SetResult(
-            new ToolCallResult
-            {
-                IsError = false,
-                Content = new ContentBase[] { new TextContent { Text = "sunny" } },
-            }
-        );
+        calculatorCompletion.SetResult(CreateErrorToolResult("call-2", "calculate", "calculation failed"));
+        searchCompletion.SetResult(CreateToolResult("call-1", "search", "sunny"));
 
         await sendTask;
 
@@ -616,13 +584,27 @@ public class ChatSessionTests
         toolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
         toolResults[1].IsError.Should().BeTrue();
         toolResults[1].Result.Text.Single().Should().Contain("calculation failed");
+
+        toolActivities.Where(activity => activity.ToolCallId == "call-1").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Completed
+            );
+        toolActivities.Where(activity => activity.ToolCallId == "call-2").Select(activity => activity.ExecutionState)
+            .Should()
+            .ContainInOrder(
+                ToolCallExecutionState.Queued,
+                ToolCallExecutionState.Running,
+                ToolCallExecutionState.Failed
+            );
     }
 
     [Fact]
     public async Task SendUserMessageAsync_ShouldTransitionActivityWaitingForProviderThenIdle()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         llmClient
@@ -642,12 +624,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var activities = new List<ChatSessionActivity>();
         session.ActivityChanged += (_, args) => activities.Add(args.Activity);
@@ -661,7 +638,6 @@ public class ChatSessionTests
     public async Task LoadTranscriptAsync_ShouldPopulateTranscriptWithoutCallingProvider()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         var transcript = new ChatTranscriptEntry[]
@@ -677,12 +653,7 @@ public class ChatSessionTests
             ),
         };
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         await session.LoadTranscriptAsync(transcript);
 
@@ -694,14 +665,8 @@ public class ChatSessionTests
     public void SetSystemPrompt_ShouldUpdateSessionState()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         session.SetSystemPrompt("Be concise.");
 
@@ -712,7 +677,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldIncludeConfiguredRequestDefaultsInProviderRequest()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         ChatClientRequest? capturedRequest = null;
@@ -734,12 +698,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         session.SetRequestDefaults(new ChatRequestOptions { Temperature = 0.25f, MaxOutputTokens = 1536 });
 
@@ -755,7 +714,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromRuntimeConfiguration()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
         using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
         var registeredTool = new Tool
@@ -784,12 +742,10 @@ public class ChatSessionTests
                     )
             ));
 
-        var session = new ChatSession(
+        var session = CreateSession(
             llmClient.Object,
-            mcpClient.Object,
             toolRegistry.Object,
-            NullLogger<ChatSession>.Instance,
-            new ChatSessionConfiguration
+            configuration: new ChatSessionConfiguration
             {
                 SystemPrompt = "Be concise.",
                 Tools = new[] { registeredTool },
@@ -816,7 +772,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldIncludeConfiguredToolChoiceInProviderRequest()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
         toolRegistry.SetupGet(r => r.EnabledTools).Returns(Array.Empty<Tool>());
         toolRegistry.SetupGet(r => r.AllTools).Returns(Array.Empty<Tool>());
@@ -836,12 +791,7 @@ public class ChatSessionTests
                 )
             );
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         session.SetRequestDefaults(new ChatRequestOptions { ToolChoice = ChatToolChoice.ForTool("search") });
 
@@ -856,7 +806,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromSessionState()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
         using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
         var registeredTool = new Tool
@@ -885,12 +834,7 @@ public class ChatSessionTests
                 )
             ));
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         session.SetSystemPrompt("Be concise.");
         session.RegisterTools(new[] { registeredTool });
@@ -907,7 +851,6 @@ public class ChatSessionTests
     public async Task SendUserMessageAsync_ShouldCompactTranscriptBeforeBuildingProviderRequest()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
         var compactor = new EntryCountChatTranscriptCompactor(
             new ChatTranscriptCompactionOptions
@@ -951,13 +894,7 @@ public class ChatSessionTests
                 )
             );
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance,
-            compactor
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, transcriptCompactor: compactor);
 
         await session.LoadTranscriptAsync(transcript);
         await session.SendUserMessageAsync("current question");
@@ -978,7 +915,6 @@ public class ChatSessionTests
     public async Task ResetConversation_ShouldClearTranscriptWithoutCallingProvider()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
 
         var transcript = new ChatTranscriptEntry[]
@@ -986,12 +922,7 @@ public class ChatSessionTests
             new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-1), "hello", "turn-1"),
         };
 
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         await session.LoadTranscriptAsync(transcript);
 
@@ -1005,15 +936,9 @@ public class ChatSessionTests
     public async Task RegisterTools_ShouldAffectNextProviderRequest()
     {
         var llmClient = new Mock<IChatClient>();
-        var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
         using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
-        var session = new ChatSession(
-            llmClient.Object,
-            mcpClient.Object,
-            toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
-        );
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
         var tools = new[]
         {
             new Tool
@@ -1058,4 +983,58 @@ public class ChatSessionTests
         IReadOnlyList<ChatClientAssistantTurn> updates,
         ChatClientTurnResult result
     ) => ChatCompletionStream.FromStreaming(updates, result);
+
+    private static ChatSession CreateSession(
+        IChatClient llmClient,
+        IToolRegistry toolRegistry,
+        IToolExecutor? toolExecutor = null,
+        ChatSessionConfiguration? configuration = null,
+        IChatTranscriptCompactor? transcriptCompactor = null
+    ) =>
+        configuration == null
+            ? new ChatSession(
+                llmClient,
+                toolExecutor ?? Mock.Of<IToolExecutor>(),
+                toolRegistry,
+                NullLogger<ChatSession>.Instance,
+                transcriptCompactor
+            )
+            : new ChatSession(
+                llmClient,
+                toolExecutor ?? Mock.Of<IToolExecutor>(),
+                toolRegistry,
+                NullLogger<ChatSession>.Instance,
+                configuration,
+                transcriptCompactor
+            );
+
+    private static ToolInvocationResult CreateToolResult(
+        string toolCallId,
+        string toolName,
+        params string[] text
+    ) =>
+        new(
+            toolCallId,
+            toolName,
+            false,
+            text,
+            structured: null,
+            resourceLinks: Array.Empty<ToolResultResourceLink>(),
+            metadata: null
+        );
+
+    private static ToolInvocationResult CreateErrorToolResult(
+        string toolCallId,
+        string toolName,
+        params string[] text
+    ) =>
+        new(
+            toolCallId,
+            toolName,
+            true,
+            text,
+            structured: null,
+            resourceLinks: Array.Empty<ToolResultResourceLink>(),
+            metadata: null
+        );
 }

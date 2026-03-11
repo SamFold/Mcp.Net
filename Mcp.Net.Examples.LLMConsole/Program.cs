@@ -330,11 +330,17 @@ public class Program
 
         var chatSessionLogger = loggerFactory.CreateLogger<ChatSession>();
         var chatUIHandlerLogger = loggerFactory.CreateLogger<ChatUIHandler>();
+        var toolExecutorLogger = loggerFactory.CreateLogger<McpToolExecutor>();
 
         var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
         var chatClient = CreateChatClient(provider, chatClientOptions, loggerFactory);
 
-        var chatSession = new ChatSession(chatClient, mcpClient, toolRegistry, chatSessionLogger);
+        var chatSession = new ChatSession(
+            chatClient,
+            new McpToolExecutor(mcpClient, toolExecutorLogger),
+            toolRegistry,
+            chatSessionLogger
+        );
         chatSession.RegisterTools(toolRegistry.EnabledTools);
         activeChatSession = chatSession;
 
