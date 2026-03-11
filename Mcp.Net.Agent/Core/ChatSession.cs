@@ -25,16 +25,11 @@ public class ChatSession : IChatSessionEvents
     private readonly ILogger<ChatSession> _logger;
     private readonly List<ChatTranscriptEntry> _transcript = new();
     private readonly List<Tool> _registeredTools = new();
-    private AgentExecutionDefaults _executionDefaults = new();
+    private ChatRequestOptions? _requestDefaults;
     private string? _sessionId;
     private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
     private DateTime _lastActivityAt;
-
-    /// <summary>
-    /// The agent definition associated with this chat session (if any)
-    /// </summary>
-    public AgentDefinition? AgentDefinition { get; private set; }
 
     /// <summary>
     /// Gets the creation time of this session
@@ -82,51 +77,18 @@ public class ChatSession : IChatSessionEvents
         _lastActivityAt = _createdAt;
     }
 
-    public static async Task<ChatSession> CreateFromAgentAsync(
-        AgentDefinition agent,
-        IAgentFactory factory,
+    public ChatSession(
+        IChatClient llmClient,
         IMcpClient mcpClient,
         IToolRegistry toolRegistry,
         ILogger<ChatSession> logger,
-        string? userId = null
+        ChatSessionConfiguration configuration,
+        IChatTranscriptCompactor? transcriptCompactor = null
     )
+        : this(llmClient, mcpClient, toolRegistry, logger, transcriptCompactor)
     {
-        var chatClient = string.IsNullOrEmpty(userId)
-            ? await factory.CreateClientFromAgentDefinitionAsync(agent)
-            : await factory.CreateClientFromAgentDefinitionAsync(agent, userId);
-
-        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger)
-        {
-            AgentDefinition = agent,
-        };
-        session.ApplyAgentConfiguration(agent);
-
-        return session;
-    }
-
-    public static async Task<ChatSession> CreateFromAgentIdAsync(
-        string agentId,
-        IAgentManager agentManager,
-        IMcpClient mcpClient,
-        IToolRegistry toolRegistry,
-        ILogger<ChatSession> logger,
-        string? userId = null
-    )
-    {
-        var agent = await agentManager.GetAgentByIdAsync(agentId);
-        if (agent == null)
-        {
-            throw new KeyNotFoundException($"Agent with ID {agentId} not found");
-        }
-
-        var chatClient = await agentManager.CreateChatClientAsync(agentId, userId);
-        var session = new ChatSession(chatClient, mcpClient, toolRegistry, logger)
-        {
-            AgentDefinition = agent,
-        };
-        session.ApplyAgentConfiguration(agent);
-
-        return session;
+        ArgumentNullException.ThrowIfNull(configuration);
+        ApplyConfiguration(configuration);
     }
 
     public void StartSession()
@@ -159,12 +121,23 @@ public class ChatSession : IChatSessionEvents
     public string GetSystemPrompt() => _systemPrompt;
 
     /// <summary>
-    /// Updates the shared execution defaults used for provider requests in this session.
+    /// Applies a runtime configuration snapshot to this session.
     /// </summary>
-    public void SetExecutionDefaults(AgentExecutionDefaults executionDefaults)
+    public void ApplyConfiguration(ChatSessionConfiguration configuration)
     {
-        ArgumentNullException.ThrowIfNull(executionDefaults);
-        _executionDefaults = executionDefaults;
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        SetSystemPrompt(configuration.SystemPrompt);
+        SetRequestDefaults(configuration.RequestDefaults);
+        RegisterTools(configuration.Tools);
+    }
+
+    /// <summary>
+    /// Updates the shared request defaults used for provider requests in this session.
+    /// </summary>
+    public void SetRequestDefaults(ChatRequestOptions? requestDefaults)
+    {
+        _requestDefaults = requestDefaults;
     }
 
     /// <summary>
@@ -428,23 +401,6 @@ public class ChatSession : IChatSessionEvents
         TranscriptChanged?.Invoke(this, new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
 
-    private void ApplyAgentConfiguration(AgentDefinition agent)
-    {
-        SetSystemPrompt(agent.SystemPrompt);
-        SetExecutionDefaults(agent.ExecutionDefaults);
-        var enabledTools = _toolRegistry.EnabledTools ?? Array.Empty<Tool>();
-        var allTools = _toolRegistry.AllTools ?? Array.Empty<Tool>();
-
-        if (agent.ToolIds.Count == 0)
-        {
-            RegisterTools(enabledTools);
-            return;
-        }
-
-        var selectedTools = allTools.Where(tool => agent.ToolIds.Contains(tool.Name)).ToArray();
-        RegisterTools(selectedTools);
-    }
-
     private ChatClientRequest BuildRequest()
     {
         var compactedTranscript = _transcriptCompactor.Compact(_transcript);
@@ -465,24 +421,7 @@ public class ChatSession : IChatSessionEvents
         );
     }
 
-    private ChatRequestOptions? BuildRequestOptions()
-    {
-        if (
-            _executionDefaults.Temperature is null
-            && _executionDefaults.MaxOutputTokens is null
-            && _executionDefaults.ToolChoice is null
-        )
-        {
-            return null;
-        }
-
-        return new ChatRequestOptions
-        {
-            Temperature = _executionDefaults.Temperature,
-            MaxOutputTokens = _executionDefaults.MaxOutputTokens,
-            ToolChoice = _executionDefaults.ToolChoice,
-        };
-    }
+    private ChatRequestOptions? BuildRequestOptions() => _requestDefaults;
 
     private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
     {

@@ -1,6 +1,7 @@
 using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
+using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Agent.Tools;
 using Moq;
@@ -246,5 +247,66 @@ public class AgentExtensionsTests
         // Assert
         Assert.Contains("Math", result.Name);
         Assert.Contains("2 specialized tools", result.Description);
+    }
+
+    [Fact]
+    public void ToChatSessionConfiguration_ShouldTranslateAgentExecutionDefaultsAndSelectedTools()
+    {
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var searchTool = new Tool
+        {
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+        var calculatorTool = new Tool
+        {
+            Name = "calculator",
+            Description = "Performs calculations",
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+
+        _testAgent.SystemPrompt = "Be concise.";
+        _testAgent.ToolIds = new List<string> { "search" };
+        _testAgent.ExecutionDefaults = new AgentExecutionDefaults
+        {
+            Temperature = 0.45f,
+            MaxOutputTokens = 1024,
+            ToolChoice = ChatToolChoice.ForTool("search"),
+        };
+
+        _mockToolRegistry.SetupGet(r => r.AllTools).Returns(new[] { searchTool, calculatorTool });
+        _mockToolRegistry.SetupGet(r => r.EnabledTools).Returns(new[] { searchTool, calculatorTool });
+
+        var configuration = _testAgent.ToChatSessionConfiguration(_mockToolRegistry.Object);
+
+        Assert.Equal("Be concise.", configuration.SystemPrompt);
+        Assert.Single(configuration.Tools);
+        Assert.Equal("search", configuration.Tools[0].Name);
+        Assert.NotNull(configuration.RequestDefaults);
+        Assert.Equal(0.45f, configuration.RequestDefaults!.Temperature);
+        Assert.Equal(1024, configuration.RequestDefaults.MaxOutputTokens);
+        Assert.Equal(ChatToolChoice.ForTool("search"), configuration.RequestDefaults.ToolChoice);
+    }
+
+    [Fact]
+    public void ToChatSessionConfiguration_ShouldUseEnabledToolsWhenAgentDoesNotSpecifyToolIds()
+    {
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var enabledTool = new Tool
+        {
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = schemaDocument.RootElement.Clone(),
+        };
+
+        _testAgent.ToolIds = new List<string>();
+        _mockToolRegistry.SetupGet(r => r.EnabledTools).Returns(new[] { enabledTool });
+        _mockToolRegistry.SetupGet(r => r.AllTools).Returns(new[] { enabledTool });
+
+        var configuration = _testAgent.ToChatSessionConfiguration(_mockToolRegistry.Object);
+
+        Assert.Single(configuration.Tools);
+        Assert.Equal("search", configuration.Tools[0].Name);
     }
 }

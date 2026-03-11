@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
+using Mcp.Net.Core.Models.Tools;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Agent.Tools;
 
@@ -222,5 +223,60 @@ public static class AgentExtensions
 
         agent.UpdatedAt = DateTime.UtcNow;
         return agent;
+    }
+
+    public static ChatSessionConfiguration ToChatSessionConfiguration(
+        this AgentDefinition agent,
+        IToolRegistry toolRegistry
+    )
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(toolRegistry);
+
+        return new ChatSessionConfiguration
+        {
+            SystemPrompt = agent.SystemPrompt,
+            Tools = ResolveToolsForSession(agent, toolRegistry),
+            RequestDefaults = ToChatRequestOptions(agent.ExecutionDefaults),
+        };
+    }
+
+    public static ChatRequestOptions? ToChatRequestOptions(
+        this AgentExecutionDefaults executionDefaults
+    )
+    {
+        ArgumentNullException.ThrowIfNull(executionDefaults);
+
+        if (
+            executionDefaults.Temperature is null
+            && executionDefaults.MaxOutputTokens is null
+            && executionDefaults.ToolChoice is null
+        )
+        {
+            return null;
+        }
+
+        return new ChatRequestOptions
+        {
+            Temperature = executionDefaults.Temperature,
+            MaxOutputTokens = executionDefaults.MaxOutputTokens,
+            ToolChoice = executionDefaults.ToolChoice,
+        };
+    }
+
+    private static IReadOnlyList<Tool> ResolveToolsForSession(
+        AgentDefinition agent,
+        IToolRegistry toolRegistry
+    )
+    {
+        var enabledTools = toolRegistry.EnabledTools ?? Array.Empty<Tool>();
+        var allTools = toolRegistry.AllTools ?? Array.Empty<Tool>();
+
+        if (agent.ToolIds.Count == 0)
+        {
+            return enabledTools.ToArray();
+        }
+
+        return allTools.Where(tool => agent.ToolIds.Contains(tool.Name)).ToArray();
     }
 }

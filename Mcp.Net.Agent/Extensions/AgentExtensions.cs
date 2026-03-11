@@ -1,4 +1,5 @@
 using Mcp.Net.Agent.Core;
+using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.Client.Interfaces;
@@ -34,15 +35,21 @@ public static class AgentExtensions
         var toolRegistry = serviceProvider.GetRequiredService<IToolRegistry>();
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ChatSession>();
+        var agent = await agentManager.GetAgentByIdAsync(agentId);
 
-        // Create the session from the agent
-        return await ChatSession.CreateFromAgentIdAsync(
-            agentId,
-            agentManager,
+        if (agent == null)
+        {
+            throw new KeyNotFoundException($"Agent with ID {agentId} not found");
+        }
+
+        var chatClient = await agentManager.CreateChatClientAsync(agentId, userId);
+
+        return new ChatSession(
+            chatClient,
             mcpClient,
             toolRegistry,
             logger,
-            userId
+            agent.ToChatSessionConfiguration(toolRegistry)
         );
     }
 
@@ -66,15 +73,16 @@ public static class AgentExtensions
         var toolRegistry = serviceProvider.GetRequiredService<IToolRegistry>();
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger<ChatSession>();
+        var chatClient = string.IsNullOrEmpty(userId)
+            ? await agentFactory.CreateClientFromAgentDefinitionAsync(agent)
+            : await agentFactory.CreateClientFromAgentDefinitionAsync(agent, userId);
 
-        // Create the session from the agent definition
-        return await ChatSession.CreateFromAgentAsync(
-            agent,
-            agentFactory,
+        return new ChatSession(
+            chatClient,
             mcpClient,
             toolRegistry,
             logger,
-            userId
+            agent.ToChatSessionConfiguration(toolRegistry)
         );
     }
 }

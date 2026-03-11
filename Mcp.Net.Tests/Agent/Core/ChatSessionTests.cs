@@ -709,7 +709,7 @@ public class ChatSessionTests
     }
 
     [Fact]
-    public async Task SendUserMessageAsync_ShouldIncludeConfiguredExecutionDefaultsInProviderRequest()
+    public async Task SendUserMessageAsync_ShouldIncludeConfiguredRequestDefaultsInProviderRequest()
     {
         var llmClient = new Mock<IChatClient>();
         var mcpClient = new Mock<IMcpClient>();
@@ -741,13 +741,7 @@ public class ChatSessionTests
             NullLogger<ChatSession>.Instance
         );
 
-        session.SetExecutionDefaults(
-            new AgentExecutionDefaults
-            {
-                Temperature = 0.25f,
-                MaxOutputTokens = 1536,
-            }
-        );
+        session.SetRequestDefaults(new ChatRequestOptions { Temperature = 0.25f, MaxOutputTokens = 1536 });
 
         await session.SendUserMessageAsync("hello");
 
@@ -758,25 +752,17 @@ public class ChatSessionTests
     }
 
     [Fact]
-    public async Task CreateFromAgentAsync_ShouldHydrateLegacyExecutionDefaultsIntoProviderRequest()
+    public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromRuntimeConfiguration()
     {
         var llmClient = new Mock<IChatClient>();
-        var factory = new Mock<IAgentFactory>();
         var mcpClient = new Mock<IMcpClient>();
         var toolRegistry = new Mock<IToolRegistry>();
-        toolRegistry.SetupGet(r => r.EnabledTools).Returns(Array.Empty<Tool>());
-        toolRegistry.SetupGet(r => r.AllTools).Returns(Array.Empty<Tool>());
-
-        var agent = new AgentDefinition
+        using var schemaDocument = System.Text.Json.JsonDocument.Parse("{}");
+        var registeredTool = new Tool
         {
-            Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-5",
-            SystemPrompt = "Be concise.",
-            Parameters = new Dictionary<string, object>
-            {
-                ["temperature"] = 0.4f,
-                ["max_tokens"] = 2048,
-            },
+            Name = "search",
+            Description = "Searches documents",
+            InputSchema = schemaDocument.RootElement.Clone(),
         };
 
         ChatClientRequest? capturedRequest = null;
@@ -790,29 +776,37 @@ public class ChatSessionTests
             )
             .Returns(
                 CreateResultStream(
-                new ChatClientAssistantTurn(
-                    "turn-1",
-                    "openai",
-                    "gpt-5",
-                    new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
-                )
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                    )
             ));
 
-        factory
-            .Setup(f => f.CreateClientFromAgentDefinitionAsync(agent))
-            .ReturnsAsync(llmClient.Object);
-
-        var session = await ChatSession.CreateFromAgentAsync(
-            agent,
-            factory.Object,
+        var session = new ChatSession(
+            llmClient.Object,
             mcpClient.Object,
             toolRegistry.Object,
-            NullLogger<ChatSession>.Instance
+            NullLogger<ChatSession>.Instance,
+            new ChatSessionConfiguration
+            {
+                SystemPrompt = "Be concise.",
+                Tools = new[] { registeredTool },
+                RequestDefaults = new ChatRequestOptions
+                {
+                    Temperature = 0.4f,
+                    MaxOutputTokens = 2048,
+                },
+            }
         );
 
         await session.SendUserMessageAsync("hello");
 
         capturedRequest.Should().NotBeNull();
+        capturedRequest!.SystemPrompt.Should().Be("Be concise.");
+        capturedRequest.Tools.Should().ContainSingle();
+        capturedRequest.Tools[0].Name.Should().Be("search");
         capturedRequest!.Options.Should().NotBeNull();
         capturedRequest.Options!.Temperature.Should().Be(0.4f);
         capturedRequest.Options.MaxOutputTokens.Should().Be(2048);
@@ -849,12 +843,7 @@ public class ChatSessionTests
             NullLogger<ChatSession>.Instance
         );
 
-        session.SetExecutionDefaults(
-            new AgentExecutionDefaults
-            {
-                ToolChoice = ChatToolChoice.ForTool("search"),
-            }
-        );
+        session.SetRequestDefaults(new ChatRequestOptions { ToolChoice = ChatToolChoice.ForTool("search") });
 
         await session.SendUserMessageAsync("hello");
 

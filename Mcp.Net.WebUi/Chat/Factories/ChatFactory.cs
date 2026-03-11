@@ -1,5 +1,6 @@
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
+using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.Agent.Catalog;
@@ -102,10 +103,13 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger
+            chatSessionLogger,
+            new ChatSessionConfiguration
+            {
+                SystemPrompt = effectiveSystemPrompt,
+                Tools = _toolRegistry.EnabledTools.ToArray(),
+            }
         );
-        chatSession.SetSystemPrompt(effectiveSystemPrompt);
-        chatSession.RegisterTools(_toolRegistry.EnabledTools);
 
         // Create adapter logger
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
@@ -153,11 +157,14 @@ public class ChatFactory : IChatFactory
             sessionClient,
             sessionMcpClient,
             _toolRegistry,
-            chatSessionLogger
+            chatSessionLogger,
+            new ChatSessionConfiguration
+            {
+                SystemPrompt = agent.SystemPrompt,
+                Tools = ResolveToolsForAgent(agent),
+                RequestDefaults = agent.ExecutionDefaults.ToChatRequestOptions(),
+            }
         );
-        chatSession.SetSystemPrompt(agent.SystemPrompt);
-        chatSession.SetExecutionDefaults(agent.ExecutionDefaults);
-        chatSession.RegisterTools(ResolveToolsForAgent(agent));
 
         // Create adapter logger
         var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();

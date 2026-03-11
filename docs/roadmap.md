@@ -11,7 +11,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Continue the `Mcp.Net.Agent` orchestration lane with session-level abort plumbing after landing compaction and parallel tool execution
+1. Continue the `Mcp.Net.Agent` orchestration lane with session-level abort plumbing after landing the runtime/configuration cleanup
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
@@ -33,7 +33,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 
 ## Current cross-project dependencies
 
-- `Mcp.Net.Agent` compaction and any later abort work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
+- `Mcp.Net.Agent` runtime-surface cleanup, compaction, and any later abort work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
 - `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is deferred until the client contract changes.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 

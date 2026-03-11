@@ -6,6 +6,7 @@
 - The provider boundary is clean: `ChatSession` builds `ChatClientRequest` snapshots and `Mcp.Net.LLM` executes them through `IChatClient.SendAsync(...)`.
 - `ChatSession` now compacts oversized outbound provider transcripts through an agent-owned compaction seam before building requests, while keeping the in-memory transcript intact.
 - Independent tool calls now execute concurrently inside the agent loop, while `ToolResult` transcript entries are still appended in original tool-call order.
+- `ChatSession` is now runtime-first: it accepts runtime configuration directly, stores `ChatRequestOptions`, and no longer exposes `AgentDefinition` or agent-based static factory helpers.
 - Transcript bootstrap exists via `LoadTranscriptAsync(...)`, but persistence remains primarily a Web UI concern rather than an agent-owned seam.
 
 ## Goal
@@ -43,6 +44,7 @@
 - The initial compactor uses a deterministic entry-count heuristic, preserves whole recent user turns, and collapses older context into a synthetic summary assistant entry.
 - Existing session state, replay behavior, and transcript persistence remain unchanged because compaction currently affects outbound provider requests only.
 - Parallelized independent tool execution inside `ChatSession` while preserving deterministic `ToolResult` transcript ordering and existing failure semantics.
+- Made `ChatSession` runtime-first through `ChatSessionConfiguration`, runtime-owned `ChatRequestOptions`, and agent-to-session translation outside the runtime type.
 
 ## Open decisions
 

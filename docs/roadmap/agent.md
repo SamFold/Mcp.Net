@@ -3,7 +3,7 @@
 ## Current focus
 
 - Keep the cleaned request/session split stable while `Mcp.Net.Agent` grows the next orchestration capabilities: cancellation plumbing, persistence, and eventually hook/extension surfaces.
-- The first context-window management and parallel tool-execution slices are now in place, so the next immediate value is giving callers a real way to interrupt an in-flight turn.
+- The runtime/configuration cleanup in `ChatSession` is now in place, so the next immediate value is giving callers a real way to interrupt an in-flight turn.
 
 ## Near-term sequence
 
@@ -21,6 +21,7 @@
 - The Web UI session seam now works through `ChatSession` / adapter operations rather than mutating raw provider client state.
 - `ChatSession` now compacts oversized outbound provider transcripts through an agent-owned compaction seam, preserving recent turns and collapsing older context into a deterministic summary entry.
 - `ChatSession` now executes independent tool calls concurrently while preserving deterministic transcript ordering for `ToolResult` entries.
+- `ChatSession` now uses runtime-owned `ChatSessionConfiguration` / `ChatRequestOptions`, and agent-based session creation is translation glue outside the runtime type.
 
 ## Dependencies and risks
 
