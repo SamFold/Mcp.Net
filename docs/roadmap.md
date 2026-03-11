@@ -11,14 +11,16 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Continue the `Mcp.Net.Agent` orchestration lane by adding a library-first session factory/ownership model on top of the explicit `ChatSession` lifecycle contract, then add the first concrete built-in/local tools
+1. Add the first concrete built-in/local tools on top of the narrowed `Mcp.Net.Agent` runtime and session factory seam
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: add a library-first session factory/ownership model, then add the first concrete built-in/local tools on top of the existing session-owned tool catalog and composite executor graph.
+  - Current focus: add the first concrete built-in/local tools on top of the narrowed runtime/session-composition surface.
+- `Mcp.Net.WebUi`: `docs/roadmap/webui.md`
+  - Current focus: evaluate using `IChatSessionFactory` directly so Web UI stops duplicating `ChatSession` construction logic.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`
   - Current focus: reconnect, retry, stale-state cleanup, and HTTP `404` session-expiry behavior for Streamable HTTP request and SSE flows.
 - `Mcp.Net.Server`: `docs/roadmap/server.md`
@@ -33,7 +35,8 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 
 ## Current cross-project dependencies
 
-- `Mcp.Net.Agent` session-owned tool-catalog work, local/composite execution, compaction, and any later abort work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
+- `Mcp.Net.Agent` runtime narrowing and later local-tool work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
+- `Mcp.Net.WebUi` deletion of agent-driven flows depends on the surviving `ChatSession`, tool-registry, prompt/resource, completion, and elicitation services staying intact in `Mcp.Net.Agent`.
 - `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is deferred until the client contract changes.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.
 

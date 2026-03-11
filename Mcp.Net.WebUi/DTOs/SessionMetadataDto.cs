@@ -45,13 +45,4 @@ public class SessionMetadataDto
     /// </summary>
     public string? LastMessagePreview { get; set; }
 
-    /// <summary>
-    /// ID of the agent used for this session, if any
-    /// </summary>
-    public string? AgentId { get; set; }
-
-    /// <summary>
-    /// Name of the agent used for this session, if any
-    /// </summary>
-    public string? AgentName { get; set; }
 }

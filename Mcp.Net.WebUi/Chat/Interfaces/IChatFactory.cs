@@ -25,17 +25,6 @@ public interface IChatFactory
     );
 
     /// <summary>
-    /// Create a new SignalR chat adapter from an agent definition
-    /// </summary>
-    /// <param name="sessionId">Unique identifier for the chat session</param>
-    /// <param name="agent">Agent definition to use for configuration</param>
-    /// <returns>A configured SignalR chat adapter</returns>
-    Task<ISignalRChatAdapter> CreateSignalRAdapterFromAgentAsync(
-        string sessionId,
-        AgentDefinition agent
-    );
-
-    /// <summary>
     /// Create session metadata for a new chat
     /// </summary>
     /// <param name="sessionId">Unique identifier for the chat session</param>
@@ -49,14 +38,6 @@ public interface IChatFactory
         string? provider = null,
         string? systemPrompt = null
     );
-
-    /// <summary>
-    /// Create session metadata from an agent definition
-    /// </summary>
-    /// <param name="sessionId">Unique identifier for the chat session</param>
-    /// <param name="agent">Agent definition to use for configuration</param>
-    /// <returns>Configured ChatSessionMetadata</returns>
-    ChatSessionMetadata CreateSessionMetadataFromAgent(string sessionId, AgentDefinition agent);
 
     /// <summary>
     /// Releases session-specific resources that were provisioned by the factory.

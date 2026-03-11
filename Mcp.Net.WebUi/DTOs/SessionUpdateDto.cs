@@ -30,8 +30,4 @@ public class SessionUpdateDto
     /// </summary>
     public string? SystemPrompt { get; set; }
 
-    /// <summary>
-    /// Agent ID to use for the session, if changing to a specific agent
-    /// </summary>
-    public string? AgentId { get; set; }
 }

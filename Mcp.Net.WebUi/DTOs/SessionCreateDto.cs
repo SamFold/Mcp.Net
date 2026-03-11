@@ -20,8 +20,4 @@ public class SessionCreateDto
     /// </summary>
     public string? SystemPrompt { get; set; }
 
-    /// <summary>
-    /// Agent ID to use for the session (if creating a session from an agent)
-    /// </summary>
-    public string? AgentId { get; set; }
 }

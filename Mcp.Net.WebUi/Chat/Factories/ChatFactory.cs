@@ -1,12 +1,11 @@
 using Mcp.Net.Client;
 using Mcp.Net.Client.Interfaces;
-using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Core;
-using Mcp.Net.Agent.Models;
 using Mcp.Net.Agent.Catalog;
 using Mcp.Net.Agent.Completions;
 using Mcp.Net.Agent.Elicitation;
 using Mcp.Net.Agent.Interfaces;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
@@ -133,65 +132,6 @@ public class ChatFactory : IChatFactory
     }
 
     /// <summary>
-    /// Create a new SignalR chat adapter from an agent definition
-    /// </summary>
-    public async Task<ISignalRChatAdapter> CreateSignalRAdapterFromAgentAsync(
-        string sessionId,
-        AgentDefinition agent
-    )
-    {
-        // Create chat session logger for this session
-        var chatSessionLogger = _loggerFactory.CreateLogger<ChatSession>();
-
-        // Create a new dedicated LLM client for this chat session based on the agent definition
-        IChatClient sessionClient = CreateClientFromAgent(sessionId, agent);
-
-        // Create dedicated MCP client for this session
-        var sessionMcpClient = await CreateMcpClientForSessionAsync(sessionId);
-        AttachToolListNotification(sessionId, sessionMcpClient);
-
-        var (catalog, completionService) = await CreateSessionServicesAsync(sessionId, sessionMcpClient);
-        var toolExecutor = CreateToolExecutor(sessionMcpClient);
-
-        // Create core chat session
-        var chatSession = new ChatSession(
-            sessionClient,
-            toolExecutor,
-            chatSessionLogger,
-            new ChatSessionConfiguration
-            {
-                SystemPrompt = agent.SystemPrompt,
-                Tools = ResolveToolsForAgent(agent),
-                RequestDefaults = agent.ExecutionDefaults.ToChatRequestOptions(),
-            }
-        );
-
-        // Create adapter logger
-        var adapterLogger = _loggerFactory.CreateLogger<SignalRChatAdapter>();
-
-        // Create SignalR adapter
-        _elicitationCoordinators.TryGetValue(sessionId, out var coordinator);
-        var adapter = new SignalRChatAdapter(
-            chatSession,
-            _hubContext,
-            adapterLogger,
-            sessionId,
-            _toolRegistry,
-            catalog,
-            completionService,
-            coordinator
-        );
-
-        _logger.LogInformation(
-            "Created SignalRChatAdapter for session {SessionId} using agent {AgentName}",
-            sessionId,
-            agent.Name
-        );
-
-        return adapter;
-    }
-
-    /// <summary>
     /// Creates a new LLM client instance dedicated to a specific chat session
     /// </summary>
     private IChatClient CreateClientForSession(string sessionId, string? model, string? provider)
@@ -234,59 +174,6 @@ public class ChatFactory : IChatFactory
         );
 
         return client;
-    }
-
-    /// <summary>
-    /// Creates a new LLM client instance from an agent definition
-    /// </summary>
-    private IChatClient CreateClientFromAgent(string sessionId, AgentDefinition agent)
-    {
-        _logger.LogDebug(
-            "Creating client for session {SessionId} using agent {AgentName} ({AgentId})",
-            sessionId,
-            agent.Name,
-            agent.Id
-        );
-
-        // Create client options with parameters from the agent definition
-        var options = new ChatClientOptions
-        {
-            Model = agent.ModelName,
-        };
-
-        // Create LLM client through factory
-        var client = _clientFactory.Create(agent.Provider, options);
-
-        _logger.LogInformation(
-            "Created new {Provider} client with model {Model} for session {SessionId} using agent {AgentName}",
-            agent.Provider,
-            agent.ModelName,
-            sessionId,
-            agent.Name
-        );
-
-        return client;
-    }
-
-    private IReadOnlyList<Mcp.Net.Core.Models.Tools.Tool> ResolveToolsForAgent(AgentDefinition agent)
-    {
-        if (agent.ToolIds == null || agent.ToolIds.Count == 0)
-        {
-            return _toolRegistry.EnabledTools.ToArray();
-        }
-
-        var tools = _toolRegistry.EnabledTools.Where(t => agent.ToolIds.Contains(t.Name)).ToArray();
-        if (tools.Length > 0)
-        {
-            return tools;
-        }
-
-        _logger.LogWarning(
-            "None of the {ToolCount} specified tools in agent {AgentId} were found, using all enabled tools",
-            agent.ToolIds.Count,
-            agent.Id
-        );
-        return _toolRegistry.EnabledTools.ToArray();
     }
 
     /// <summary>
@@ -453,37 +340,6 @@ public class ChatFactory : IChatFactory
             "Created chat session metadata for session {SessionId} with model {Model}",
             sessionId,
             modelName
-        );
-
-        return metadata;
-    }
-
-    /// <summary>
-    /// Create session metadata from an agent definition
-    /// </summary>
-    public ChatSessionMetadata CreateSessionMetadataFromAgent(
-        string sessionId,
-        AgentDefinition agent
-    )
-    {
-        // Create session metadata from agent
-        var metadata = new ChatSessionMetadata
-        {
-            Id = sessionId,
-            Title = $"Chat with {agent.Name}",
-            CreatedAt = DateTime.UtcNow,
-            LastUpdatedAt = DateTime.UtcNow,
-            Model = agent.ModelName,
-            Provider = agent.Provider,
-            SystemPrompt = agent.SystemPrompt,
-            AgentId = agent.Id,
-            AgentName = agent.Name,
-        };
-
-        _logger.LogInformation(
-            "Created chat session metadata for session {SessionId} with agent {AgentName}",
-            sessionId,
-            agent.Name
         );
 
         return metadata;

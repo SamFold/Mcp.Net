@@ -1,6 +1,5 @@
 using System.Net.Http;
 using Mcp.Net.Client.Interfaces;
-using Mcp.Net.Agent.Agents;
 using Mcp.Net.Agent.Extensions;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.LLM.Anthropic;
@@ -75,10 +74,9 @@ public class WebUiStartup
         ConfigureBasicServices(builder);
         ConfigureCors(builder);
         ConfigureMcpClient(builder, args);
-        ConfigureToolRegistry(builder);
+        ConfigureChatRuntime(builder);
         ConfigureLlmServices(builder);
         ConfigureApplicationServices(builder);
-        ConfigureAgentServices(builder);
 
         builder.Services.AddSingleton<IMcpClientBuilderConfigurator>(sp =>
             new McpAuthenticationService(
@@ -127,9 +125,9 @@ public class WebUiStartup
         // Keep this method for consistency but remove the registration
     }
 
-    private void ConfigureToolRegistry(WebApplicationBuilder builder)
+    private void ConfigureChatRuntime(WebApplicationBuilder builder)
     {
-        builder.Services.AddSingleton<ToolRegistry>();
+        builder.Services.AddChatRuntimeServices();
     }
 
     private void ConfigureLlmServices(WebApplicationBuilder builder)
@@ -165,19 +163,9 @@ public class WebUiStartup
         );
     }
 
-    private void ConfigureAgentServices(WebApplicationBuilder builder)
-    {
-        builder.Services.AddAgentServices();
-        builder.Services.AddFileSystemAgentStore(
-            Path.Combine(builder.Environment.ContentRootPath, "Data", "Agents")
-        );
-        builder.Services.AddSingleton<DefaultAgentManager>();
-    }
-
     private async Task InitializeServicesAsync(WebApplication app)
     {
         await InitializeToolRegistryAsync(app);
-        await InitializeDefaultAgentsAsync(app);
     }
 
     private async Task InitializeToolRegistryAsync(WebApplication app)
@@ -220,18 +208,6 @@ public class WebUiStartup
                 "Failed to load tools from MCP server - ToolRegistry will remain empty"
             );
             _logger!.LogWarning("Application will continue with no tools available");
-        }
-    }
-
-    private async Task InitializeDefaultAgentsAsync(WebApplication app)
-    {
-        try
-        {
-            await DefaultAgentInitializer.InitializeDefaultAgentsAsync(app.Services);
-        }
-        catch (Exception ex)
-        {
-            _logger!.LogWarning(ex, "Failed to initialize default agents, continuing without them");
         }
     }
 

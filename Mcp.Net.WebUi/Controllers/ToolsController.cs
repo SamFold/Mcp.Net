@@ -1,4 +1,3 @@
-using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Tools;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,17 +9,11 @@ public class ToolsController : ControllerBase
 {
     private readonly ILogger<ToolsController> _logger;
     private readonly ToolRegistry _toolRegistry;
-    private readonly IAgentManager? _agentManager;
 
-    public ToolsController(
-        ILogger<ToolsController> logger,
-        ToolRegistry toolRegistry,
-        IAgentManager? agentManager = null
-    )
+    public ToolsController(ILogger<ToolsController> logger, ToolRegistry toolRegistry)
     {
         _logger = logger;
         _toolRegistry = toolRegistry;
-        _agentManager = agentManager;
     }
 
     /// <summary>
@@ -70,13 +63,7 @@ public class ToolsController : ControllerBase
     {
         try
         {
-            if (_agentManager == null)
-            {
-                _logger.LogWarning("AgentManager not available for tool categories");
-                return StatusCode(501, new { error = "Tool categories not available" });
-            }
-
-            var categories = await _agentManager.GetToolCategoriesAsync();
+            var categories = await _toolRegistry.GetToolCategoriesAsync();
             return Ok(categories);
         }
         catch (Exception ex)
@@ -98,14 +85,7 @@ public class ToolsController : ControllerBase
     {
         try
         {
-            if (_agentManager == null)
-            {
-                _logger.LogWarning("AgentManager not available for tools by category");
-                return StatusCode(501, new { error = "Tool categories not available" });
-            }
-
-            var toolIds = await _agentManager.GetToolsByCategoryAsync(category);
-
+            var toolIds = await _toolRegistry.GetToolsByCategoryAsync(category);
             var tools = _toolRegistry.AllTools.Where(t => toolIds.Contains(t.Name)).ToList();
 
             return Ok(tools);

@@ -7,7 +7,6 @@ using Mcp.Net.Client;
 using Mcp.Net.Core.JsonRpc;
 using Mcp.Net.Agent.Elicitation;
 using Mcp.Net.Agent.Interfaces;
-using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.Replay;
 using Mcp.Net.WebUi.Adapters.SignalR;
@@ -53,24 +52,10 @@ public class ChatFactoryTests
     }
 
     [Fact]
-    public void CreateClientFromAgent_ShouldOnlyUseConstructionOptions()
+    public void CreateClientForSession_ShouldOnlyUseConstructionOptions()
     {
         var factory = CreateChatFactory();
-        var agent = new AgentDefinition
-        {
-            Id = "agent-1",
-            Name = "Test agent",
-            Provider = LlmProvider.OpenAI,
-            ModelName = "gpt-5",
-            SystemPrompt = "Be concise.",
-            Parameters = new Dictionary<string, object>
-            {
-                ["temperature"] = 0.25f,
-                ["max_tokens"] = 1536,
-            },
-        };
-
-        var client = InvokeCreateClientFromAgent(factory, "session-1", agent);
+        var client = InvokeCreateClientForSession(factory, "session-1", "gpt-5", "openai");
         var options = GetClientOptions(client);
 
         options.Model.Should().Be("gpt-5");
@@ -126,19 +111,20 @@ public class ChatFactoryTests
         return (ConcurrentDictionary<string, ElicitationCoordinator>)field!.GetValue(factory)!;
     }
 
-    private static StubChatClient InvokeCreateClientFromAgent(
+    private static StubChatClient InvokeCreateClientForSession(
         ChatFactory factory,
         string sessionId,
-        AgentDefinition agent
+        string? model,
+        string? provider
     )
     {
         var method = typeof(ChatFactory).GetMethod(
-            "CreateClientFromAgent",
+            "CreateClientForSession",
             BindingFlags.NonPublic | BindingFlags.Instance
         );
         method.Should().NotBeNull();
 
-        return method!.Invoke(factory, new object[] { sessionId, agent }).Should().BeOfType<StubChatClient>().Subject;
+        return method!.Invoke(factory, new object?[] { sessionId, model, provider }).Should().BeOfType<StubChatClient>().Subject;
     }
 
     private static ChatClientOptions GetClientOptions(StubChatClient client)

@@ -45,16 +45,6 @@ public class ChatSessionMetadata
     public string LastMessagePreview { get; set; } = string.Empty;
 
     /// <summary>
-    /// ID of the agent used for this session, if any
-    /// </summary>
-    public string? AgentId { get; set; }
-
-    /// <summary>
-    /// Name of the agent used for this session, if any
-    /// </summary>
-    public string? AgentName { get; set; }
-
-    /// <summary>
     /// User ID associated with this session
     /// </summary>
     public string? UserId { get; set; }

@@ -94,13 +94,11 @@ public class InMemoryChatHistoryManager : IChatHistoryManager
                         CreatedAt = session.CreatedAt,
                         LastUpdatedAt = session.LastUpdatedAt,
                         Model = session.Model,
-                    Provider = session.Provider,
-                    SystemPrompt = session.SystemPrompt,
-                    LastMessagePreview = session.LastMessagePreview,
-                    AgentId = session.AgentId,
-                    AgentName = session.AgentName,
-                    UserId = session.UserId,
-                };
+                        Provider = session.Provider,
+                        SystemPrompt = session.SystemPrompt,
+                        LastMessagePreview = session.LastMessagePreview,
+                        UserId = session.UserId,
+                    };
                 }
             }
 
