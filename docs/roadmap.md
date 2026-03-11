@@ -11,14 +11,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Continue the `Mcp.Net.Agent` orchestration lane by adding the first concrete built-in/local tools now that the session-owned tool catalog, composite executor graph, and cancellation-aware turn flow are in place
+1. Continue the `Mcp.Net.Agent` orchestration lane by adding a library-first session factory/ownership model on top of the explicit `ChatSession` lifecycle contract, then add the first concrete built-in/local tools
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: add the first concrete built-in/local tools on top of the session-owned tool catalog and composite executor graph, while keeping the new cancellation-token abort seam and MCP limitations explicit.
+  - Current focus: add a library-first session factory/ownership model, then add the first concrete built-in/local tools on top of the existing session-owned tool catalog and composite executor graph.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`
   - Current focus: reconnect, retry, stale-state cleanup, and HTTP `404` session-expiry behavior for Streamable HTTP request and SSE flows.
 - `Mcp.Net.Server`: `docs/roadmap/server.md`

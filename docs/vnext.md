@@ -14,7 +14,7 @@ Use it to see which component or system tracks are active and where each next sl
 ## Active Tracks
 
 - `Mcp.Net.Agent`: `docs/vnext/agent.md`
-  - Current slice: add the first concrete built-in/local tools on top of the session-owned tool catalog, composite executor graph, and cancellation-aware runtime seam.
+  - Current slice: add a library-first session factory and ownership model on top of the explicit `ChatSession` lifecycle contract.
 - `Mcp.Net.Server`: `docs/vnext/server.md`
   - Current slice: continue the logging/debuggability and hidden mutable state review.
 - `Mcp.Net.Client`: `docs/vnext/client.md`

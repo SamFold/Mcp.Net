@@ -9,97 +9,87 @@
 - Mixed local+MCP turns are now covered through the shared executor seam, and missing-session-tool failures are enforced from the session-owned catalog.
 - `SendUserMessageAsync(...)` now accepts a `CancellationToken` and flows it through provider requests plus tool execution.
 - Provider-wait cancellation and tool-execution cancellation are now deterministic, including partial tool-result persistence when some tool work finished before the turn was canceled.
+- `ChatSession` is now explicitly single-active-turn: overlapping sends are rejected, mutators are guarded while a turn is active, and the session exposes `IsProcessing`, `AbortCurrentTurn()`, and `WaitForIdleAsync(...)`.
 
 ## Goal
 
-- Add the first concrete built-in/local tools on top of the now-stable session-owned catalog, composite executor graph, and cancellation-aware runtime seam.
+- Add a library-first session factory and ownership model on top of the now-explicit `ChatSession` lifecycle contract.
 
 ## What
 
-- Add the first real `ILocalTool` implementations that the LLM can see and the runtime can execute in-process.
-- Keep composition outside `ChatSession`: build local descriptors and local executor registrations from the same tool objects, then merge them with MCP descriptors before session creation.
-- Prove end-to-end behavior with real local tools rather than only test doubles.
-- Keep the new cancellation-token flow intact so local tool execution can be interrupted cleanly.
+- Introduce a clean construction API for `ChatSession` that does not force consumers to hand-compose provider clients, executors, and configuration snapshots.
+- Support both consumer-owned dependencies and factory-provisioned dependencies where the factory also owns cleanup.
+- Keep `ChatSession` itself lean: the new factory should assemble runtime pieces, not absorb orchestration behavior into the session type.
+- Preserve the existing session-owned lifecycle contract while making resource ownership explicit.
 
 ## Why
 
-- The runtime seams are now in place and tested: session-owned tool catalogs, a backend-agnostic executor graph, and token-driven cancellation through the active turn.
-- Until concrete local tools exist, the new local/composite execution design is still only infrastructure.
-- The next slice should validate the abstractions against real in-process behavior before adding convenience APIs like `AbortCurrentTurn()`.
+- The runtime now has the lifecycle primitives it was missing, but consumers still need too much internal knowledge to construct a session cleanly.
+- Resource ownership is still implicit. In particular, factory-created MCP-backed sessions need an explicit cleanup model.
+- The first concrete local tools will land more cleanly once the library has a consumer-facing session-construction surface.
 
 ## How
 
-### 1. Pick the first concrete local tools deliberately
+### 1. Add a library-first factory surface
 
-- Start with tools that are useful enough to validate the runtime contracts but small enough to keep the slice tight.
-- Keep implementations cancellation-aware from the start by honoring the existing `CancellationToken` on `ILocalTool.ExecuteAsync(...)`.
-- Avoid broad unfinished tool shells; prove one coherent vertical slice with a minimal set of real capabilities.
+- Introduce session-construction options that describe provider choice, request defaults, tools, and ownership mode without leaking current app wiring.
+- Return a plain `ChatSession` when the consumer provides its own dependencies.
+- Return an owning handle when the factory provisions disposable runtime resources.
 
-### 2. Keep composition external
+### 2. Keep ownership explicit
 
-- Build local tool descriptors and local executor registrations from the same concrete tool objects.
-- Merge those descriptors with any MCP-discovered descriptors before the session is created.
-- Keep `ChatSession` unaware of which tools are local versus MCP-backed.
+- Make it obvious which path leaves cleanup to the consumer and which path makes the factory responsible for disposal.
+- Keep `ChatSession` unaware of transport/resource ownership details.
+- Avoid service-location-heavy APIs; prefer a factory service registered in DI.
 
-### 3. Prove the real path
+### 3. Prove the consumer path
 
-- Add focused tests for the first concrete local tools.
-- Add at least one runtime-level regression showing a real local tool exposed through session configuration and executed through the existing executor graph.
-- Keep cancellation behavior covered for local tools so the new slice does not regress the token-based abort work.
+- Add focused tests for the new factory surface and ownership behavior.
+- Keep the existing `ChatSession` lifecycle tests green so the new construction API layers on top of the runtime rather than reshaping it.
+- Use the completed lifecycle contract as the stable base for later local-tool exposure.
 
 ## Target shape
 
 ```csharp
-var localTools = new ILocalTool[]
+var options = new ChatSessionOptions
 {
-    new ExampleLocalTool()
+    Provider = LlmProvider.Anthropic,
+    Model = "claude-sonnet-4-5-20250929",
+    SystemPrompt = systemPrompt,
+    RequestDefaults = requestDefaults,
+    LocalTools = localTools,
+    McpServerUrl = mcpServerUrl
 };
 
-var sessionTools =
-    mcpTools
-        .Concat(localTools.Select(tool => tool.Descriptor))
-        .ToArray();
+var session = await chatSessionFactory.CreateAsync(options);
 
-var localExecutor = new LocalToolExecutor(localTools);
-var mcpExecutor = new McpToolExecutor(sessionMcpClient, logger);
-var toolExecutor = new CompositeToolExecutor(localExecutor, mcpExecutor);
-
-var session = new ChatSession(
-    chatClient,
-    toolExecutor,
-    logger,
-    new ChatSessionConfiguration
-    {
-        Tools = sessionTools,
-        SystemPrompt = systemPrompt,
-        RequestDefaults = requestDefaults
-    });
+await using var ownedSession = await chatSessionFactory.CreateOwnedAsync(options);
+var session = ownedSession.Session;
 ```
 
 ## Scope
 
 - In scope:
-  - add the first concrete built-in/local tools
-  - compose those tools into the existing local/composite executor path
-  - add focused tests for real local tool behavior plus runtime integration coverage
-  - preserve the existing cancellation-token flow through tool execution
+  - add a library-first session factory surface
+  - support both consumer-owned and factory-owned resource paths
+  - add focused tests for construction and ownership behavior
+  - preserve the completed `ChatSession` lifecycle contract
 - Out of scope:
-  - an explicit `AbortCurrentTurn()` convenience wrapper unless a consumer actually needs it
+  - concrete built-in/local tool implementations
   - full MCP tool-call cancellation while `IMcpClient.CallTool(...)` lacks `CancellationToken`
   - transcript persistence changes
-  - changes to the provider request/stream contract beyond the current cancellation flow
+  - changes to the provider request/stream contract beyond the current lifecycle surface
 
 ## Current slice
 
-1. Choose the first concrete local tools that are small enough for one vertical slice.
-2. Implement them as `ILocalTool` instances with provider-facing descriptors and cancellation-aware execution.
-3. Compose them into the existing local/composite executor path without reopening `ChatSession`.
-4. Add focused tool tests plus runtime coverage proving real local tool execution through the existing session loop.
-5. Keep the new tools aligned with the current cancellation-token abort semantics.
+1. Introduce a library-first session factory API on top of the explicit `ChatSession` lifecycle contract.
+2. Support both consumer-owned runtime dependencies and factory-owned disposable resources.
+3. Keep construction/configuration concerns outside `ChatSession`.
+4. Add focused tests for the new factory/ownership surface without reopening provider or tool execution seams.
 
 ## Next slices
 
-1. Add an explicit `AbortCurrentTurn()` wrapper only if a real consumer needs a session-owned convenience API on top of the current token-based flow.
+1. Add the first concrete built-in/local tools once the consumer-facing factory/ownership model is in place.
 2. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
 3. Consider hook/extension or branching surfaces only after the core loop is more robust.
 4. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
@@ -111,18 +101,18 @@ var session = new ChatSession(
 - Removed `IToolRegistry` from `ChatSession` and made the session-owned tool catalog the sole validation source inside the loop.
 - Added `ILocalTool`, `LocalToolExecutor`, and `CompositeToolExecutor` under `Mcp.Net.Agent.Tools`.
 - Added focused executor tests and `ChatSession` regressions covering missing-session-tool failures plus mixed local+MCP turns through one executor graph.
+- Added a single-active-turn lifecycle contract to `ChatSession`, including overlap rejection, busy-state lifecycle APIs, and mutation guards while a turn is active.
 
 ## Open decisions
 
 - Should concrete built-in tools live under `Mcp.Net.Agent` temporarily, or should the repo create a dedicated `Mcp.Net.Tools` project immediately?
 - When the first concrete built-in tools arrive, should they be session-scoped objects, app-scoped singletons, or a mix depending on tool capabilities?
-- Which concrete tools are the best first proof of the local-tool seam?
-- Should a later `AbortCurrentTurn()` API exist as a convenience wrapper once a real consumer asks for it?
+- Should the new session factory return `ChatSession` directly for consumer-owned dependencies, an owning handle for factory-owned dependencies, or both?
+- Should the session factory expose a small runtime interface in addition to the concrete `ChatSession` type?
 
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Run focused tests for the concrete local tools first.
-- Verify the local tools execute through the existing composite executor/runtime path without reopening `ChatSession`.
-- Keep cancellation behavior covered for local tool execution.
+- Keep the completed `ChatSession` lifecycle contract stable while adding the new factory/ownership layer.
+- Verify cleanup ownership explicitly for any factory-provisioned resources.
 - Run broader `Mcp.Net.Tests.Agent` coverage after the focused pass is green.

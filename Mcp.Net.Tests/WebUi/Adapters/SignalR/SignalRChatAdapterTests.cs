@@ -45,7 +45,7 @@ public class SignalRChatAdapterTests
                 ) =>
                 {
                     request.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("Hi there");
-                    cancellationToken.Should().Be(CancellationToken.None);
+                    cancellationToken.CanBeCanceled.Should().BeTrue();
                     return ChatCompletionStream.FromStreaming(
                         [
                             new ChatClientAssistantTurn(

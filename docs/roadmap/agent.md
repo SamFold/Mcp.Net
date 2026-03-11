@@ -2,47 +2,41 @@
 
 ## Current focus
 
-- Keep the cleaned request/session split stable while `Mcp.Net.Agent` starts using the local-tool runtime for real work.
-- The immediate value is now the first concrete built-in/local tools: `ChatSession` already owns tool validation, the runtime already executes mixed local and MCP-backed work through one executor seam, and cancellation already flows through the turn call path.
-- The current abort surface is intentionally token-based. A later `AbortCurrentTurn()` wrapper can remain optional unless a real consumer asks for it.
+- Build a library-first session factory/ownership model on top of the new explicit `ChatSession` lifecycle contract.
+- The immediate value is now a clean consumer construction story: provider choice, executor composition, and resource ownership should not require internal runtime knowledge.
+- After that construction/ownership layer is stable, add the first concrete built-in/local tools on top of the existing local/composite executor seam.
 
 ## What
 
-- Add the first concrete `ILocalTool` implementations.
-- Compose them into the existing `LocalToolExecutor` / `CompositeToolExecutor` path outside `ChatSession`.
-- Prove the concrete tool path through focused tests and runtime integration coverage.
-- Keep the cancellation-aware runtime seam intact while adding those tools.
+- Introduce a library-first session factory surface.
+- Support both consumer-owned dependencies and factory-owned disposable resources.
+- Keep `ChatSession` lean and runtime-focused while the new factory handles construction/ownership concerns.
+- Preserve the completed busy/abort/wait/mutation-guard lifecycle contract.
 
 ## Why
 
-- The runtime seams are now in place and tested: session-owned tool catalogs, a provider boundary, a backend-agnostic executor graph, and token-driven cancellation through the active turn.
-- Until concrete local tools exist, the new local/composite execution design is still only infrastructure.
-- The next step should prove that the abstractions hold up under real in-process tool behavior before the repo adds more convenience APIs around them.
+- The runtime now has explicit turn ownership, but consumers still need too much internal knowledge to construct and own a session correctly.
+- Factory-created runtime dependencies need an explicit ownership/cleanup model.
+- The first concrete local tools will be easier to expose once the library has a clean public construction story.
 
 ## How
 
-### Concrete local tools
+### Factory and ownership
 
-- Start with a minimal, useful set of concrete local tools rather than a broad unfinished toolbox.
-- Keep the implementations cancellation-aware from the start by honoring the existing `CancellationToken` on `ILocalTool.ExecuteAsync(...)`.
-- Keep provider-facing descriptors and execution logic on the same concrete tool objects.
-
-### Composition boundary
-
-- Build descriptors and local-executor registrations from the same concrete tool objects.
-- Merge those descriptors with MCP descriptors before constructing `ChatSession`.
-- Keep `ChatSession` ignorant of backend details.
+- Introduce a factory/options surface that does not depend on current app-specific wiring.
+- Support both consumer-owned and factory-owned resource paths explicitly.
+- Keep ownership and cleanup rules visible in the public API.
 
 ### Verification
 
-- Add focused tests for the concrete local tools themselves.
-- Add runtime-level coverage proving the concrete tools execute correctly through the existing agent loop.
-- Keep cancellation tests in scope so concrete local tools do not regress the token-based abort seam.
+- Add focused tests for construction, configuration, and ownership behavior.
+- Keep the new `ChatSession` lifecycle tests green so the factory layer remains a thin composition surface.
+- Run broader agent coverage after the focused factory tests pass.
 
 ## Near-term sequence
 
-1. Add the first concrete built-in/local tools once the contracts, routing, and abort semantics are stable.
-2. Add an explicit `AbortCurrentTurn()` wrapper only if a real consumer needs a session-owned convenience API on top of the current token-based flow.
+1. Add a library-first session factory/ownership model on top of the explicit lifecycle surface.
+2. Add the first concrete built-in/local tools once that public construction story is stable.
 3. Revisit agent-owned transcript persistence when non-Web UI consumers need durable session state.
 4. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
 5. Revisit context-window management with a stronger trigger or summarizer path once real conversation pressure justifies it.
@@ -54,18 +48,19 @@
 - `ChatSession` now validates tool execution against its own configured tool catalog and no longer depends on `IToolRegistry` at runtime.
 - `Mcp.Net.Agent.Tools` now includes `ILocalTool`, `LocalToolExecutor`, and `CompositeToolExecutor`.
 - Focused tests now cover mixed local+MCP turns plus missing-session-tool failure semantics through the shared executor seam.
+- `ChatSession` now rejects overlapping turns, exposes `IsProcessing` plus abort/wait lifecycle APIs, and blocks mutable state changes while a turn is active.
 
 ## Dependencies and risks
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- Concrete local tools need disciplined scope. If the first tool set balloons, the repo will mix contract validation with product-surface sprawl and lose the value of the slice.
+- Factory-created runtime dependencies need an explicit ownership model so cleanup responsibilities stay clear.
 - The current compaction trigger is intentionally simple; future pressure may require token-aware estimation or a stronger summarizer path.
 
 ## Open questions
 
 - Should concrete built-in tools live under `Mcp.Net.Agent` temporarily, or should the repo create a dedicated `Mcp.Net.Tools` project as soon as the contracts land?
 - Should local tools always be app-owned reusable registrations, or should the runtime explicitly support session-owned local tool instances from the start?
-- Which concrete local tools are the best first proof of the seam?
-- Should a later `AbortCurrentTurn()` wrapper exist once a real consumer asks for it?
+- Should the library expose both direct-session and owning-handle factory paths, or only one public construction pattern?
+- Which concrete local tools are the best first proof of the seam once the public factory surface is in place?
 - When context-window pressure grows further, should the next compaction improvement be token-aware estimation or provider-backed summarization?

@@ -136,7 +136,7 @@ public class ChatSessionTests
                 ) =>
                 {
                     request.Transcript.OfType<UserChatEntry>().Single().Content.Should().Be("Hi there");
-                    cancellationToken.Should().Be(CancellationToken.None);
+                    cancellationToken.CanBeCanceled.Should().BeTrue();
                     return CreateStreamingResultStream(
                         [
                             new ChatClientAssistantTurn(
@@ -249,7 +249,7 @@ public class ChatSessionTests
                         _ => throw new InvalidOperationException("Result-only execution should not start."),
                         async (_, streamCancellationToken) =>
                         {
-                            cancellationToken.Should().Be(cancellationTokenSource.Token);
+                            cancellationToken.CanBeCanceled.Should().BeTrue();
                             providerStarted.TrySetResult();
 
                             using var registration = streamCancellationToken.Register(() =>
@@ -284,6 +284,274 @@ public class ChatSessionTests
         session.Transcript.Should().ContainSingle(entry => entry is UserChatEntry);
         session.Transcript.Should().NotContain(entry => entry is ErrorChatEntry);
         activities.Should().ContainInOrder(ChatSessionActivity.WaitingForProvider, ChatSessionActivity.Idle);
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_WhenAnotherTurnIsActive_ShouldThrowInvalidOperationException()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            providerStarted.TrySetResult();
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        var firstTurn = session.SendUserMessageAsync("hello", cancellationTokenSource.Token);
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var act = () => session.SendUserMessageAsync("second");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*already in progress*");
+
+        cancellationTokenSource.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstTurn);
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_ShouldReportIsProcessingWhileTurnIsActive()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            providerStarted.TrySetResult();
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+
+        session.IsProcessing.Should().BeFalse();
+
+        var sendTask = session.SendUserMessageAsync("hello", cancellationTokenSource.Token);
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        session.IsProcessing.Should().BeTrue();
+
+        cancellationTokenSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        session.IsProcessing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AbortCurrentTurn_ShouldCancelTheActiveTurn()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            cancellationToken.CanBeCanceled.Should().BeTrue();
+                            streamCancellationToken.CanBeCanceled.Should().BeTrue();
+                            providerStarted.TrySetResult();
+
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        var sendTask = session.SendUserMessageAsync("hello");
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        session.AbortCurrentTurn();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        session.IsProcessing.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AbortCurrentTurn_WhenIdle_ShouldBeANoOp()
+    {
+        var session = CreateSession(Mock.Of<IChatClient>(), Mock.Of<IToolRegistry>());
+
+        var act = () => session.AbortCurrentTurn();
+
+        act.Should().NotThrow();
+        session.IsProcessing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WaitForIdleAsync_ShouldReturnImmediatelyWhenIdle()
+    {
+        var session = CreateSession(Mock.Of<IChatClient>(), Mock.Of<IToolRegistry>());
+
+        await session.WaitForIdleAsync();
+
+        session.IsProcessing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WaitForIdleAsync_ShouldCompleteWhenTheActiveTurnFinishesWithoutPropagatingTurnCancellation()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            providerStarted.TrySetResult();
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        var sendTask = session.SendUserMessageAsync("hello");
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var waitTask = session.WaitForIdleAsync();
+        session.AbortCurrentTurn();
+
+        await waitTask;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        session.IsProcessing.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Mutators_WhenTurnIsActive_ShouldThrowInvalidOperationException()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest _, CancellationToken cancellationToken) =>
+                    ChatCompletionStream.Create(
+                        _ => throw new InvalidOperationException("Result-only execution should not start."),
+                        async (_, streamCancellationToken) =>
+                        {
+                            providerStarted.TrySetResult();
+                            await Task.Delay(Timeout.InfiniteTimeSpan, streamCancellationToken);
+
+                            return new ChatClientAssistantTurn(
+                                "turn-unreachable",
+                                "openai",
+                                "gpt-5",
+                                Array.Empty<AssistantContentBlock>()
+                            );
+                        },
+                        cancellationToken
+                    )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        var sendTask = session.SendUserMessageAsync("hello", cancellationTokenSource.Token);
+
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Func<Task>[] mutators =
+        {
+            () =>
+            {
+                session.SetSystemPrompt("Be concise.");
+                return Task.CompletedTask;
+            },
+            () =>
+            {
+                session.SetRequestDefaults(new ChatRequestOptions { Temperature = 0.25f });
+                return Task.CompletedTask;
+            },
+            () =>
+            {
+                session.RegisterTools(Array.Empty<Tool>());
+                return Task.CompletedTask;
+            },
+            () =>
+            {
+                session.ApplyConfiguration(new ChatSessionConfiguration());
+                return Task.CompletedTask;
+            },
+            () =>
+            {
+                session.ResetConversation();
+                return Task.CompletedTask;
+            },
+            () => session.LoadTranscriptAsync(Array.Empty<ChatTranscriptEntry>()),
+        };
+
+        foreach (var mutator in mutators)
+        {
+            await mutator.Should().ThrowAsync<InvalidOperationException>().WithMessage("*turn is in progress*");
+        }
+
+        cancellationTokenSource.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
     }
 
     [Fact]
@@ -892,7 +1160,7 @@ public class ChatSessionTests
             );
 
         llmClient.Verify(
-            c => c.SendAsync(It.IsAny<ChatClientRequest>(), cancellationTokenSource.Token),
+            c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()),
             Times.Once
         );
     }

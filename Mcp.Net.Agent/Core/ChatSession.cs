@@ -18,6 +18,38 @@ namespace Mcp.Net.Agent.Core;
 /// </summary>
 public class ChatSession : IChatSessionEvents
 {
+    private sealed class ActiveTurnState : IDisposable
+    {
+        private readonly CancellationTokenRegistration _callerCancellationRegistration;
+
+        public ActiveTurnState(CancellationToken callerCancellationToken)
+        {
+            CancellationSource = new CancellationTokenSource();
+            if (callerCancellationToken.CanBeCanceled)
+            {
+                _callerCancellationRegistration = callerCancellationToken.Register(
+                    static state => ((CancellationTokenSource)state!).Cancel(),
+                    CancellationSource
+                );
+            }
+        }
+
+        public CancellationTokenSource CancellationSource { get; }
+
+        public TaskCompletionSource<object?> Completion { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public CancellationToken CancellationToken => CancellationSource.Token;
+
+        public void Dispose()
+        {
+            _callerCancellationRegistration.Dispose();
+            CancellationSource.Dispose();
+        }
+    }
+
+    private readonly object _stateGate = new();
     private readonly IChatClient _llmClient;
     private readonly IToolExecutor _toolExecutor;
     private readonly IChatTranscriptCompactor _transcriptCompactor;
@@ -32,6 +64,7 @@ public class ChatSession : IChatSessionEvents
     private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
     private DateTime _lastActivityAt;
+    private ActiveTurnState? _activeTurn;
 
     /// <summary>
     /// Gets the creation time of this session
@@ -42,6 +75,8 @@ public class ChatSession : IChatSessionEvents
     /// Gets the time of the last activity in this session
     /// </summary>
     public DateTime LastActivityAt => _lastActivityAt;
+
+    public bool IsProcessing => Volatile.Read(ref _activeTurn) != null;
 
     public IReadOnlyList<ChatTranscriptEntry> Transcript => _transcript;
 
@@ -101,9 +136,13 @@ public class ChatSession : IChatSessionEvents
     /// </summary>
     public void ResetConversation()
     {
-        _transcript.Clear();
-        _createdAt = DateTime.UtcNow;
-        _lastActivityAt = _createdAt;
+        lock (_stateGate)
+        {
+            ThrowIfProcessingUnsafe();
+            _transcript.Clear();
+            _createdAt = DateTime.UtcNow;
+            _lastActivityAt = _createdAt;
+        }
     }
 
     /// <summary>
@@ -111,7 +150,11 @@ public class ChatSession : IChatSessionEvents
     /// </summary>
     public void SetSystemPrompt(string systemPrompt)
     {
-        _systemPrompt = systemPrompt ?? string.Empty;
+        lock (_stateGate)
+        {
+            ThrowIfProcessingUnsafe();
+            _systemPrompt = systemPrompt ?? string.Empty;
+        }
     }
 
     /// <summary>
@@ -126,9 +169,13 @@ public class ChatSession : IChatSessionEvents
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
-        SetSystemPrompt(configuration.SystemPrompt);
-        SetRequestDefaults(configuration.RequestDefaults);
-        RegisterTools(configuration.Tools);
+        lock (_stateGate)
+        {
+            ThrowIfProcessingUnsafe();
+            SetSystemPromptUnsafe(configuration.SystemPrompt);
+            SetRequestDefaultsUnsafe(configuration.RequestDefaults);
+            RegisterToolsUnsafe(configuration.Tools);
+        }
     }
 
     /// <summary>
@@ -136,7 +183,11 @@ public class ChatSession : IChatSessionEvents
     /// </summary>
     public void SetRequestDefaults(ChatRequestOptions? requestDefaults)
     {
-        _requestDefaults = requestDefaults;
+        lock (_stateGate)
+        {
+            ThrowIfProcessingUnsafe();
+            SetRequestDefaultsUnsafe(requestDefaults);
+        }
     }
 
     /// <summary>
@@ -146,13 +197,10 @@ public class ChatSession : IChatSessionEvents
     {
         ArgumentNullException.ThrowIfNull(tools);
 
-        _registeredTools.Clear();
-        _registeredToolsByName.Clear();
-
-        foreach (var tool in tools)
+        lock (_stateGate)
         {
-            _registeredTools.Add(tool);
-            _registeredToolsByName[tool.Name] = tool;
+            ThrowIfProcessingUnsafe();
+            RegisterToolsUnsafe(tools);
         }
     }
 
@@ -160,13 +208,17 @@ public class ChatSession : IChatSessionEvents
     {
         ArgumentNullException.ThrowIfNull(transcript);
 
-        _transcript.Clear();
-        _transcript.AddRange(transcript);
-
-        if (_transcript.Count > 0)
+        lock (_stateGate)
         {
-            _createdAt = _transcript[0].Timestamp.UtcDateTime;
-            _lastActivityAt = _transcript[^1].Timestamp.UtcDateTime;
+            ThrowIfProcessingUnsafe();
+            _transcript.Clear();
+            _transcript.AddRange(transcript);
+
+            if (_transcript.Count > 0)
+            {
+                _createdAt = _transcript[0].Timestamp.UtcDateTime;
+                _lastActivityAt = _transcript[^1].Timestamp.UtcDateTime;
+            }
         }
 
         return Task.CompletedTask;
@@ -175,6 +227,49 @@ public class ChatSession : IChatSessionEvents
     public async Task SendUserMessageAsync(
         string message,
         CancellationToken cancellationToken = default
+    )
+    {
+        var activeTurn = BeginTurn(cancellationToken);
+
+        try
+        {
+            await SendUserMessageCoreAsync(message, activeTurn.CancellationToken);
+        }
+        finally
+        {
+            EndTurn(activeTurn);
+        }
+    }
+
+    public void AbortCurrentTurn()
+    {
+        var activeTurn = Volatile.Read(ref _activeTurn);
+        if (activeTurn == null)
+        {
+            return;
+        }
+
+        try
+        {
+            activeTurn.CancellationSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The turn completed while abort was racing with cleanup.
+        }
+    }
+
+    public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
+    {
+        var activeTurn = Volatile.Read(ref _activeTurn);
+        return activeTurn == null
+            ? Task.CompletedTask
+            : activeTurn.Completion.Task.WaitAsync(cancellationToken);
+    }
+
+    private async Task SendUserMessageCoreAsync(
+        string message,
+        CancellationToken cancellationToken
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -227,6 +322,40 @@ public class ChatSession : IChatSessionEvents
         {
             _lastActivityAt = DateTime.UtcNow;
         }
+    }
+
+    private ActiveTurnState BeginTurn(CancellationToken callerCancellationToken)
+    {
+        var activeTurn = new ActiveTurnState(callerCancellationToken);
+
+        lock (_stateGate)
+        {
+            if (_activeTurn != null)
+            {
+                activeTurn.Dispose();
+                throw new InvalidOperationException(
+                    "A chat turn is already in progress for this session."
+                );
+            }
+
+            _activeTurn = activeTurn;
+        }
+
+        return activeTurn;
+    }
+
+    private void EndTurn(ActiveTurnState activeTurn)
+    {
+        lock (_stateGate)
+        {
+            if (ReferenceEquals(_activeTurn, activeTurn))
+            {
+                _activeTurn = null;
+            }
+        }
+
+        activeTurn.Completion.TrySetResult(null);
+        activeTurn.Dispose();
     }
 
     private async Task<ChatClientTurnResult> RequestProviderAsync(
@@ -501,6 +630,33 @@ public class ChatSession : IChatSessionEvents
     }
 
     private ChatRequestOptions? BuildRequestOptions() => _requestDefaults;
+
+    private void SetSystemPromptUnsafe(string systemPrompt) => _systemPrompt = systemPrompt ?? string.Empty;
+
+    private void SetRequestDefaultsUnsafe(ChatRequestOptions? requestDefaults) =>
+        _requestDefaults = requestDefaults;
+
+    private void RegisterToolsUnsafe(IEnumerable<Tool> tools)
+    {
+        _registeredTools.Clear();
+        _registeredToolsByName.Clear();
+
+        foreach (var tool in tools)
+        {
+            _registeredTools.Add(tool);
+            _registeredToolsByName[tool.Name] = tool;
+        }
+    }
+
+    private void ThrowIfProcessingUnsafe()
+    {
+        if (_activeTurn != null)
+        {
+            throw new InvalidOperationException(
+                "This operation cannot be performed while a chat turn is in progress."
+            );
+        }
+    }
 
     private void UpsertAssistantEntry(ChatClientAssistantTurn turn, string turnId)
     {
