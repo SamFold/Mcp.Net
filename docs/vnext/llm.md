@@ -9,6 +9,8 @@
 - Provider adapters preserve structured tool arguments, stream durable assistant updates keyed by stable transcript/block identifiers, and populate `Usage` / `StopReason` metadata on final assistant turns.
 - `Mcp.Net.Agent` owns the agent/session runtime split: agent definitions, stores, session orchestration, tool inventory, and Web UI session-facing seams all live outside `Mcp.Net.LLM`.
 - `IChatClient` is now a request-based provider boundary with a single `SendAsync(ChatClientRequest, ...)` call.
+- Provider streaming now uses an async-stream wrapper: `IChatClient.SendAsync(...)` returns a stream that supports `await foreach` for `ChatClientAssistantTurn` snapshots plus `GetResultAsync()` for the final `ChatClientTurnResult`.
+- `ChatCompletionStream` now has direct regression coverage for result-only execution, stream-then-result consumption, single-enumerator enforcement, cancellation propagation, early-exit cancellation, and streaming failure surfacing.
 - `ChatSession` now owns system prompt, registered tools, transcript state, reset behavior, and transcript bootstrap, then builds provider requests from that state for each turn.
 - `Mcp.Net.LLM` no longer depends on the MCP tool model or `ToolConverter`; provider tool payloads now cross the boundary through the LLM-local request/tool contract.
 - MCP-backed prompt/resource catalog, completion, and elicitation helpers now live in `Mcp.Net.Agent`, and `Mcp.Net.LLM` no longer depends on `Mcp.Net.Client`.
@@ -28,26 +30,26 @@
   - keep provider implementations, request/response models, replay types, and provider factory in `Mcp.Net.LLM`
   - move MCP-backed prompt/resource catalog, completion, and elicitation services out of `Mcp.Net.LLM`
   - remove `Mcp.Net.Core.Models.Tools.Tool` coupling from the `Mcp.Net.LLM` provider boundary
-  - revisit whether the provider streaming surface should stay snapshot-based or move to a breaking async stream contract
-  - keep the replay/history transformer and block-based transcript architecture stable while the boundary shift lands
+  - keep the async-stream provider boundary stable while deciding whether `ChatClientAssistantTurn` snapshots remain the long-term streamed payload
+  - keep the replay/history transformer and block-based transcript architecture stable while the next API decision lands
 - Out of scope:
-  - session-level cancellation until after the provider-boundary shift
+  - session-level cancellation until after the payload-shape decision; `IMcpClient.CallTool` still exposes no `CancellationToken`
   - another full transcript or message-model rewrite
   - low-level memory or serialization optimization work
-  - a streaming-surface redesign beyond what the new request/context contract requires
+  - another transport rewrite now that the async-stream wrapper is in place
 
 ## Current slice
 
-Decide the next long-term provider streaming surface now that the standalone provider boundary is complete:
+Use the now-covered async-stream transport contract to decide what, if anything, should change above it:
 
-1. **Revisit the provider streaming API shape**: decide whether `IProgress<ChatClientAssistantTurn>` snapshot updates remain the long-term surface or whether `IChatClient` should move to a breaking `IAsyncEnumerable<T>` stream contract.
-   - Code references: `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.LLM/Models/ChatClientAssistantTurn.cs`, `Mcp.Net.Agent/Core/ChatSession.cs`
+1. **Re-evaluate whether `ChatClientAssistantTurn` snapshots are sufficient as the streamed payload**: the async-stream wrapper and its direct contract coverage are now in place, so only revisit a richer event model if a concrete consumer need appears.
+   - Code references: `Mcp.Net.LLM/Interfaces/IChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatClientTurnResult.cs`, `Mcp.Net.Tests/LLM/Models/ChatCompletionStreamTests.cs`
 
-2. **Preserve transcript-upsert semantics if the streaming surface changes**: stable assistant/block identifiers, durable transcript `Updated` events, and current replay assumptions must keep working if the transport contract changes.
+2. **Keep transcript-upsert semantics stable on the new transport**: stable assistant/block identifiers, durable transcript `Updated` events, and current replay assumptions must continue to hold while the payload-shape decision stays open.
    - Code references: `Mcp.Net.Agent/Core/ChatSession.cs`, `Mcp.Net.WebUi/Adapters/SignalR/SignalRChatAdapter.cs`, `Mcp.Net.LLM/OpenAI/*`, `Mcp.Net.LLM/Anthropic/*`
 
-3. **Keep the now-clean provider boundary stable while revisiting that API**: do not reintroduce MCP/session helpers or provider-owned conversation state into `Mcp.Net.LLM`.
-   - Code references: `Mcp.Net.LLM/Mcp.Net.LLM.csproj`, `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.Agent/Tools/ToolResultConverter.cs`
+3. **Keep the provider boundary stable while revisiting that API**: do not reintroduce MCP/session helpers or provider-owned conversation state into `Mcp.Net.LLM` while considering any payload-shape change.
+   - Code references: `Mcp.Net.LLM/Interfaces/IChatClient.cs`, `Mcp.Net.LLM/Interfaces/IChatCompletionStream.cs`, `Mcp.Net.LLM/Models/ChatCompletionStream.cs`
 
 ## Completed background
 
@@ -183,26 +185,27 @@ Decide the next long-term provider streaming surface now that the standalone pro
 
 ## Next slices
 
-1. Revisit whether the long-term streaming API should move from snapshot-based progress updates to a breaking `IAsyncEnumerable<T>` surface after the provider boundary settles.
-2. Revisit session cancellation only after the provider-boundary shift, and only if the MCP client/tool-execution path then needs a clean seam.
+1. Revisit session cancellation only after the payload-shape decision, and only if the MCP client/tool-execution path then needs a clean seam.
+2. Revisit whether the long-term async-stream payload should stay on `ChatClientAssistantTurn` snapshots or later evolve into a richer event model once there is concrete pressure from consumers.
 3. Revisit whether shared `ChatClientOptions` should stay flat or start splitting into provider-specific option shapes once more provider-specific features accumulate.
 
 ## Open decisions
 
-- Should the long-term provider streaming API stay snapshot-based or move to a breaking delta-event `IAsyncEnumerable<T>` contract after parity lands?
+- Should provider streaming keep `ChatClientAssistantTurn` snapshots as the long-term async-stream payload, or is there enough concrete pressure to justify a richer discriminated event model?
 - How far should shared `ChatClientOptions` go before provider-specific option types or nested provider option bags are warranted?
-- After the provider-boundary shift, what seam should the MCP client expose so agent/session orchestration can cancel tool execution without inventing provider-specific escape hatches? Note: `IMcpClient.CallTool` currently accepts no `CancellationToken`, so cancellation still requires an MCP client contract change, not just a session-layer parameter addition.
+- After the payload-shape decision, what seam should the MCP client expose so agent/session orchestration can cancel tool execution without inventing provider-specific escape hatches? Note: `IMcpClient.CallTool` currently accepts no `CancellationToken`, so cancellation still requires an MCP client contract change, not just a session-layer parameter addition.
 - Should the LLM-local tool definition live directly in `Mcp.Net.LLM` or in a thinner shared contract package if other projects need to construct provider requests without taking an agent dependency?
 - Where should `ChatTranscriptEntry` live after the `Mcp.Net.Agent` extraction — it is the shared contract between replay (provider layer) and session persistence (agent layer)? Current plan keeps it in `Mcp.Net.LLM` since replay owns the type definitions.
 
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Verify replay/history transforms continue to run from session-owned transcript state and still preserve same-model/provider degradation rules.
+- Keep the async-stream dual-consumption path green: `await foreach` for snapshots plus `GetResultAsync()` for the final turn result.
+- Keep existing replay/history transform regressions green for same-model preservation and degraded cross-model/provider replay.
+- Keep existing regressions green for stable assistant and block identifiers across partial and final assistant updates.
+- Keep existing regressions green for tool execution appending `ToolResult` entries instead of mutating transcript state.
+- Keep existing regressions green for provider failures surfacing as `Error` entries instead of assistant text.
+- Keep existing regressions green for Web UI/session transcript `Updated` delivery over `TranscriptChanged`.
+- Keep the Anthropic mixed streamed reasoning/text/tool-call ordering regression green.
 - Verify the `Mcp.Net.LLM` provider boundary stays free of provider-owned conversation state and MCP/session helper drift.
-- Verify Web UI and session bootstrap still work after the boundary cleanup with no raw provider-state mutation paths reintroduced.
-- Add regressions for Anthropic ordered assistant blocks containing reasoning, text, and tool calls under streaming updates.
-- Add regressions for stable transcript and block identifiers across partial and final assistant updates.
-- Add regressions for tool execution appending `ToolResult` entries instead of mutating transcript state.
-- Add regressions for provider failures surfacing as `Error` entries instead of assistant text.
-- Add replay/history transform coverage for same-model preservation and degraded cross-model/provider replay.
+- Verify Web UI and session bootstrap still work on the async-stream transport with no raw provider-state mutation paths reintroduced.
