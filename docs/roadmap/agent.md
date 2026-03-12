@@ -2,14 +2,13 @@
 
 ## Current focus
 
-- Harden the `ChatSession` turn loop before adding broader filesystem, write, or shell tools.
-- Keep the first read-only filesystem tools stable while abort/continue transcript correctness and runaway-loop guardrails land.
-- Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, async compaction, and transcript lifecycle-notification surfaces while loop safety improves.
+- Keep the bounded read-only filesystem tool surface stable while the next MCP client ergonomics slice lands.
+- Revisit the MCP client seam before reopening broader filesystem, write, or shell work.
+- Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, async compaction, and transcript lifecycle-notification surfaces while tool coverage expands.
 
 ## What
 
-- Synthesize cancelled placeholder results for unfinished parallel tool calls after abort so the transcript remains structurally valid for `ContinueAsync(...)`.
-- Decide whether a separate non-tool iteration cap is still needed beyond the landed max tool-round guard.
+- Revisit `IMcpClient` ergonomics when a real caller needs tool-call cancellation or async disposal without reopening provider-owned conversation state.
 - Later, replace the entry-count-only compaction trigger with token-aware context budgeting that can target provider max-context limits and reserve output budget explicitly.
 
 ## Why
@@ -24,12 +23,10 @@
 
 ## How
 
-### First built-in tools
+### Next client/runtime seam
 
-- Add a shared filesystem policy object and centralized path canonicalization/containment checks.
-- Add public result helpers and typed local-tool argument binding, then build the first tools on those seams.
-- Add `ReadFileTool` with bounded reads plus explicit truncation metadata.
-- Add `ListFilesTool` with deterministic ordering and bounded entry counts.
+- Keep the landed `ReadFileTool` / `GlobTool` / `ListFilesTool` surface stable while revisiting the MCP client seam beneath the current runtime.
+- Preserve the snapshot-based provider boundary and avoid inventing provider-specific escape hatches just to thread cancellation or ownership through tool execution.
 
 ### Verification
 
@@ -39,14 +36,10 @@
 
 ## Near-term sequence
 
-1. Add loop-safety guards before any write/shell tools:
-   - synthetic cancelled tool results for unfinished parallel tool calls so abort-and-continue leaves a structurally valid transcript
-   - decide whether a separate non-tool iteration cap is needed beyond the landed max tool-round guard
-2. Add `GlobTool` or equivalent bounded file discovery once the first read-only tools prove the surface.
-3. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
-4. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
-5. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
-6. Revisit context-window management with token-aware compaction driven by provider context limits, reserved output budget, and a stronger summarizer path once real conversation pressure justifies it.
+1. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
+2. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
+3. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
+4. Revisit context-window management with token-aware compaction driven by provider context limits, reserved output budget, and a stronger summarizer path once real conversation pressure justifies it.
 
 ## Recently completed
 
@@ -61,8 +54,10 @@
 - Local tools can now bind invocation arguments through `ToolInvocation.BindArguments<TArgs>()` or derive from `LocalToolBase<TArgs>` for typed authoring plus generated input schema from a transport-neutral local-tool generator.
 - `AddChatRuntimeServices()` no longer registers the disconnected tool-registry seam; `ToolRegistry` is now explicit opt-in through `AddToolRegistry()`.
 - `Mcp.Net.Agent` now includes `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
+- `Mcp.Net.Agent` now includes `GlobTool` with compiled segment matching, literal-prefix search-root narrowing, deterministic bounded traversal, and policy-owned skip/depth/result limits on top of the same bounded filesystem seam.
 - `Mcp.Net.Examples.LLMConsole` now uses `ChatSession` in non-MCP mode and can optionally enable the built-in local filesystem tools in direct or mixed MCP sessions.
-- `ChatSession` now enforces a max tool-round guard so runaway tool loops stop with a session error instead of executing indefinitely.
+- `ChatSession` now appends synthetic cancelled tool results for unfinished parallel calls after abort, preserving completed results so `ContinueAsync(...)` sees a structurally valid transcript tail.
+- `ChatSession` no longer enforces the temporary max tool-round guard or exposes a `MaxToolCallRounds` configuration knob, so normal coding-agent exploration is not capped by an artificially small round budget.
 - `Mcp.Net.LLM.OpenAI` now reconstructs streamed tool-call arguments by streaming update index and raw bytes, matching the OpenAI SDK streaming function-calling model.
 - Focused tests now cover mixed local+MCP turns plus missing-session-tool failure semantics through the shared executor seam.
 - `ChatSession` now rejects overlapping turns, exposes `IsProcessing` plus abort/wait lifecycle APIs, and blocks mutable state changes while a turn is active.
@@ -78,7 +73,6 @@
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- Abort can still leave unmatched tool calls in the transcript after partial parallel completion; that safety fix should land before any write/shell tool expansion.
 - The first local tools still need disciplined scope when they land. If they expand into shell/write behavior too early, the slice will mix seam validation with policy decisions.
 - Legacy Web UI composition and registry usage should adapt to the runtime; they are not reasons to keep weaker or older `Mcp.Net.Agent` seams alive.
 - The current compaction trigger is intentionally simple; it does not account for provider context-window limits or reserved output budget, so future pressure should move the runtime toward token-aware compaction and possibly stronger summarization.

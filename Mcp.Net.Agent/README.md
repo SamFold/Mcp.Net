@@ -109,4 +109,4 @@ Transcript compaction runs automatically before each provider request via `IChat
 
 ## Status
 
-The core loop, tool executor seam, cancellation flow, resume path, awaited turn summaries, and first built-in local filesystem tools (`list_files`, `read_file`) are in place. The next runtime slice is loop-safety hardening before broader file-discovery or write/shell tools land.
+The core loop, tool executor seam, cancellation flow, resume path, awaited turn summaries, and bounded built-in local filesystem tools (`list_files`, `glob_files`, `read_file`) are in place. The next runtime slice is revisiting the `IMcpClient` seam around tool-call cancellation and async disposal without reopening provider-owned conversation state.

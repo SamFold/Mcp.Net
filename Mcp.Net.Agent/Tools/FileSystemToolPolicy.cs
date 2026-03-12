@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace Mcp.Net.Agent.Tools;
 
 /// <summary>
@@ -5,11 +7,31 @@ namespace Mcp.Net.Agent.Tools;
 /// </summary>
 public sealed class FileSystemToolPolicy
 {
+    private static readonly StringComparer DirectoryNameComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private static readonly string[] DefaultSkippedDirectoryNames =
+    {
+        ".git",
+        "node_modules",
+        "bin",
+        "obj",
+        ".vs",
+    };
+
+    private readonly string[] _skippedDirectoryNames;
+
     public FileSystemToolPolicy(
         string rootPath,
         int maxReadBytes = 32 * 1024,
         int maxReadLines = 500,
-        int maxDirectoryEntries = 200
+        int maxDirectoryEntries = 200,
+        int maxGlobMatches = 200,
+        int maxGlobDepth = 50,
+        bool ignoreInaccessible = true,
+        bool followReparsePoints = false,
+        IEnumerable<string>? skippedDirectoryNames = null
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
@@ -29,10 +51,30 @@ public sealed class FileSystemToolPolicy
             throw new ArgumentOutOfRangeException(nameof(maxDirectoryEntries));
         }
 
+        if (maxGlobMatches <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGlobMatches));
+        }
+
+        if (maxGlobDepth <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGlobDepth));
+        }
+
         RootPath = Path.GetFullPath(rootPath);
         MaxReadBytes = maxReadBytes;
         MaxReadLines = maxReadLines;
         MaxDirectoryEntries = maxDirectoryEntries;
+        MaxGlobMatches = maxGlobMatches;
+        MaxGlobDepth = maxGlobDepth;
+        IgnoreInaccessible = ignoreInaccessible;
+        FollowReparsePoints = followReparsePoints;
+
+        _skippedDirectoryNames = (skippedDirectoryNames ?? DefaultSkippedDirectoryNames)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(DirectoryNameComparer)
+            .ToArray();
+        SkippedDirectoryNames = _skippedDirectoryNames.ToFrozenSet(DirectoryNameComparer);
     }
 
     public string RootPath { get; }
@@ -42,6 +84,16 @@ public sealed class FileSystemToolPolicy
     public int MaxReadLines { get; }
 
     public int MaxDirectoryEntries { get; }
+
+    public int MaxGlobMatches { get; }
+
+    public int MaxGlobDepth { get; }
+
+    public bool IgnoreInaccessible { get; }
+
+    public bool FollowReparsePoints { get; }
+
+    public IReadOnlySet<string> SkippedDirectoryNames { get; }
 
     public FileSystemToolPath Resolve(string path)
     {
@@ -61,6 +113,26 @@ public sealed class FileSystemToolPolicy
         }
 
         return new FileSystemToolPath(fullPath, NormalizeDisplayPath(relativePath));
+    }
+
+    internal bool ShouldSkipDirectory(ReadOnlySpan<char> directoryName)
+    {
+        foreach (var skippedDirectoryName in _skippedDirectoryNames)
+        {
+            if (
+                directoryName.Equals(
+                    skippedDirectoryName,
+                    OperatingSystem.IsWindows()
+                        ? StringComparison.OrdinalIgnoreCase
+                        : StringComparison.Ordinal
+                )
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsOutsideRoot(string relativePath)
