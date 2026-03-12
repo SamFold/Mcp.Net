@@ -148,13 +148,21 @@ public class ChatSession : IChatSessionEvents
     /// </summary>
     public void ResetConversation()
     {
+        ChatTranscriptChangedEventArgs resetArgs;
+
         lock (_stateGate)
         {
             ThrowIfProcessingUnsafe();
             _transcript.Clear();
             _createdAt = DateTime.UtcNow;
             _lastActivityAt = _createdAt;
+            resetArgs = new ChatTranscriptChangedEventArgs(
+                ChatTranscriptChangeKind.Reset,
+                Array.Empty<ChatTranscriptEntry>()
+            );
         }
+
+        RaiseTranscriptChanged(resetArgs);
     }
 
     /// <summary>
@@ -220,6 +228,7 @@ public class ChatSession : IChatSessionEvents
     {
         ArgumentNullException.ThrowIfNull(transcript);
 
+        ChatTranscriptChangedEventArgs loadedArgs;
         lock (_stateGate)
         {
             ThrowIfProcessingUnsafe();
@@ -231,8 +240,14 @@ public class ChatSession : IChatSessionEvents
                 _createdAt = _transcript[0].Timestamp.UtcDateTime;
                 _lastActivityAt = _transcript[^1].Timestamp.UtcDateTime;
             }
+
+            loadedArgs = new ChatTranscriptChangedEventArgs(
+                ChatTranscriptChangeKind.Loaded,
+                _transcript.ToArray()
+            );
         }
 
+        RaiseTranscriptChanged(loadedArgs);
         return Task.CompletedTask;
     }
 

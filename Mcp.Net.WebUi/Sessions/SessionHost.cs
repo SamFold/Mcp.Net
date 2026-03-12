@@ -213,18 +213,42 @@ public sealed class SessionHost : IHostedService, IDisposable
         {
             try
             {
-                var dto = ChatTranscriptEntryMapper.ToDto(sessionId, args.Entry);
-                var method = args.ChangeKind == ChatTranscriptChangeKind.Updated
-                    ? "UpdateMessage"
-                    : "ReceiveMessage";
+                if (args.Entry != null)
+                {
+                    var dto = ChatTranscriptEntryMapper.ToDto(sessionId, args.Entry);
+                    var method = args.ChangeKind == ChatTranscriptChangeKind.Updated
+                        ? "UpdateMessage"
+                        : "ReceiveMessage";
 
-                await _hubContext.Clients.Group(sessionId).SendAsync(method, dto);
+                    await _hubContext.Clients.Group(sessionId).SendAsync(method, dto);
 
-                // Persist to history
-                if (args.ChangeKind == ChatTranscriptChangeKind.Updated)
-                    await _historyManager.UpsertTranscriptEntryAsync(sessionId, args.Entry);
-                else
-                    await _historyManager.AddTranscriptEntryAsync(sessionId, args.Entry);
+                    if (args.ChangeKind == ChatTranscriptChangeKind.Updated)
+                    {
+                        await _historyManager.UpsertTranscriptEntryAsync(sessionId, args.Entry);
+                    }
+                    else
+                    {
+                        await _historyManager.AddTranscriptEntryAsync(sessionId, args.Entry);
+                    }
+
+                    return;
+                }
+
+                if (args.ChangeKind == ChatTranscriptChangeKind.Reset)
+                {
+                    await _historyManager.ClearSessionTranscriptAsync(sessionId);
+                    return;
+                }
+
+                if (args.ChangeKind == ChatTranscriptChangeKind.Loaded && args.TranscriptSnapshot != null)
+                {
+                    await _historyManager.ClearSessionTranscriptAsync(sessionId);
+
+                    foreach (var entry in args.TranscriptSnapshot)
+                    {
+                        await _historyManager.AddTranscriptEntryAsync(sessionId, entry);
+                    }
+                }
             }
             catch (Exception ex)
             {

@@ -32,6 +32,11 @@ public class ChatUIHandler : IUserInputProvider
 
     private void OnTranscriptChanged(object? sender, ChatTranscriptChangedEventArgs args)
     {
+        if (args.Entry == null)
+        {
+            return;
+        }
+
         switch (args.Entry)
         {
             case AssistantChatEntry assistant:

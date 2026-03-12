@@ -6,6 +6,8 @@ public enum ChatTranscriptChangeKind
 {
     Added,
     Updated,
+    Reset,
+    Loaded,
 }
 
 public enum ChatSessionActivity
@@ -31,13 +33,44 @@ public sealed class ChatTranscriptChangedEventArgs : EventArgs
         ChatTranscriptChangeKind changeKind
     )
     {
+        if (changeKind is ChatTranscriptChangeKind.Reset or ChatTranscriptChangeKind.Loaded)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(changeKind),
+                "Entry-based events must use Added or Updated change kinds."
+            );
+        }
+
+        ArgumentNullException.ThrowIfNull(entry);
+
         Entry = entry;
         ChangeKind = changeKind;
     }
 
-    public ChatTranscriptEntry Entry { get; }
+    public ChatTranscriptChangedEventArgs(
+        ChatTranscriptChangeKind changeKind,
+        IReadOnlyList<ChatTranscriptEntry> transcriptSnapshot
+    )
+    {
+        if (changeKind is not ChatTranscriptChangeKind.Reset and not ChatTranscriptChangeKind.Loaded)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(changeKind),
+                "Whole-transcript events must use Reset or Loaded change kinds."
+            );
+        }
+
+        ArgumentNullException.ThrowIfNull(transcriptSnapshot);
+
+        ChangeKind = changeKind;
+        TranscriptSnapshot = transcriptSnapshot;
+    }
+
+    public ChatTranscriptEntry? Entry { get; }
 
     public ChatTranscriptChangeKind ChangeKind { get; }
+
+    public IReadOnlyList<ChatTranscriptEntry>? TranscriptSnapshot { get; }
 }
 
 public sealed class ChatSessionActivityChangedEventArgs : EventArgs

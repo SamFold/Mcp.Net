@@ -2,39 +2,42 @@
 
 ## Current focus
 
-- Finish the remaining runtime-hygiene work identified in the readiness review before expanding the built-in tool surface.
-- Keep the `ChatSession` lifecycle and factory seams stable while transcript lifecycle cleanup lands.
-- Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, and async compaction surfaces while tightening the remaining transcript contract.
+- Validate the library with the first bounded built-in/local tools now that the core runtime hygiene slice is complete.
+- Keep the `ChatSession` lifecycle and factory seams stable while the first read-only filesystem tools land.
+- Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, async compaction, and transcript lifecycle-notification surfaces while the tool layer starts to grow.
 
 ## What
 
-- Add explicit transcript change notifications for reset/load flows so observers stop missing whole-state mutations.
+- Add a shared bounded filesystem policy for root containment, output limits, and truncation behavior.
+- Ship read-only `ReadFileTool` and `ListFilesTool` on top of the existing local-tool/runtime seams.
 - Later, replace the entry-count-only compaction trigger with token-aware context budgeting that can target provider max-context limits and reserve output budget explicitly.
 
 ## Why
 
 - The runtime and factory seams are now in place and the dead model layer is gone.
-- Continue/resume, per-turn summaries, and the dead session-start seam are now in place.
-- The remaining high-value gaps are correctness and lifecycle hygiene, not more tool breadth.
-- This keeps the consumer runtime stable before the first concrete built-in tools widen adoption.
+- Continue/resume, per-turn summaries, transcript lifecycle notifications, and the dead session-start seam are now in place.
+- The next highest-value gap is not another runtime seam; it is proving the library with concrete tools that real consumers can use.
+- Bounded read-only filesystem tools are the narrowest useful validation slice before broader search, write, or shell behavior.
 - The current entry-count compactor is a good MVP, but it does not track real context-window pressure or leave deliberate room for model output.
 
 ## How
 
-### Runtime hygiene
+### First built-in tools
 
-- Add reset/load change kinds or equivalent transcript notifications so whole-transcript mutations become observable.
+- Add a shared filesystem policy object and centralized path canonicalization/containment checks.
+- Add `ReadFileTool` with bounded reads plus explicit truncation metadata.
+- Add `ListFilesTool` with deterministic ordering and bounded entry counts.
 
 ### Verification
 
-- Add lifecycle coverage for reset/load transcript notifications and async compaction flow.
+- Add focused tool coverage for containment checks, truncation, and error paths.
+- Add executor/session coverage as needed to prove the tools flow through the current runtime seams.
 - Keep the completed `ChatSession` lifecycle tests and broader agent/runtime coverage green.
-- Re-run impacted `Mcp.Net.WebUi` adapter coverage because the web path still consumes the same transcript/activity events.
 
 ## Near-term sequence
 
-1. Close the reset/load transcript event gaps before more consumers depend on the current lifecycle shape.
-2. Add the first concrete built-in/local tools once the core consumer loop is easier to drive directly and the remaining hygiene work is in place.
+1. Add the shared bounded filesystem policy plus read-only `ReadFileTool` and `ListFilesTool`.
+2. Add `GlobTool` or equivalent bounded file discovery once the first read-only tools prove the surface.
 3. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
 4. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
 5. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
@@ -57,12 +60,12 @@
 - `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification is now owned by the Web UI adapter where it is actually consumed.
 - `ChatSession` now guards runtime event dispatch so observer exceptions are logged and swallowed instead of breaking turns.
 - `IChatTranscriptCompactor` now uses `CompactAsync(...)`, and `ChatSession` awaits compaction with cancellation propagation before provider requests.
+- `ChatSession` now raises `Reset` and `Loaded` transcript notifications with whole-transcript snapshots for reset/load operations.
 
 ## Dependencies and risks
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- `ResetConversation()` and `LoadTranscriptAsync(...)` still mutate transcript state without change notifications today, so the next lifecycle-hygiene slice should close that observer gap before the tool surface grows.
 - The first local tools still need disciplined scope when they land. If they expand into shell/write behavior too early, the slice will mix seam validation with policy decisions.
 - The current compaction trigger is intentionally simple; it does not account for provider context-window limits or reserved output budget, so future pressure should move the runtime toward token-aware compaction and possibly stronger summarization.
 

@@ -17,57 +17,67 @@
 - `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification now lives in the Web UI adapter that actually broadcasts it.
 - `ChatSession` now guards `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` per subscriber so observer exceptions are logged and swallowed instead of faulting turns.
 - Transcript compaction now uses `CompactAsync(...)`, and `ChatSession` awaits it with turn-cancellation propagation before provider requests.
+- Transcript lifecycle events now cover `Reset` and `Loaded`, including whole-transcript snapshots for reset/load operations.
 
 ## Goal
 
-- Close the remaining transcript-lifecycle hygiene gap before shipping the first concrete built-in/local tools.
+- Validate the agent tool surface with the first bounded built-in/local filesystem tools.
 
 ## What
 
-- Add explicit reset/load transcript notifications so observer-visible transcript state stays coherent.
+- Add a shared read-only filesystem policy for bounded path resolution, traversal limits, and truncation.
+- Ship `ReadFileTool` and `ListFilesTool` on top of the existing local-tool/executor/runtime seams.
 
 ## Why
 
 - The runtime and factory seams are now in place and the obsolete model layer is gone.
-- Continue/resume, awaited turn summaries, guarded event dispatch, and async compaction are now in place, so the next highest-value issue is transcript lifecycle hygiene.
-- Whole-transcript mutations are still invisible to observers.
-- This is the last narrow runtime cleanup before the first bounded built-in tools.
+- Continue/resume, awaited turn summaries, guarded event dispatch, async compaction, and transcript lifecycle notifications are now in place.
+- The next meaningful validation step is to prove the runtime with real tools that consumers can use immediately.
+- Filesystem navigation is the narrowest useful tool family if it stays read-only and explicitly bounded.
 
 ## How
 
-### 1. Make transcript lifecycle observable
+### 1. Add shared filesystem policy
 
-- Add reset/load transcript notifications via new change kinds or an equivalent explicit event shape.
-- Keep transcript mutation semantics stable while making whole-state changes visible to observers.
-- Re-run the Web UI adapter/event tests because they depend on the same event stream.
+- Add a shared `FileSystemToolPolicy` or equivalent bounded policy object.
+- Canonicalize paths against a configured root and reject traversal outside the allowed scope.
+- Define clear limits for file bytes, line counts, and directory entry counts so tool outputs stay bounded.
 
-### 2. Prove the contract
+### 2. Add the first concrete tools
 
-- Add coverage for reset/load transcript notifications and async compaction flow.
+- Add `ReadFileTool` with partial-read/truncation metadata.
+- Add `ListFilesTool` with deterministic ordering and bounded output.
+- Keep the tools read-only; do not mix in shell/process/write behavior.
+
+### 3. Prove the contract
+
+- Add focused tool tests for containment checks, truncation, and error cases.
+- Add executor/session coverage as needed to prove the new tools work through the existing runtime surface.
 - Keep the completed lifecycle, factory, executor, and provider-boundary tests green.
-- Re-run the impacted `Mcp.Net.WebUi` adapter coverage because it already depends on transcript/activity event behavior.
 
 ## Scope
 
 - In scope:
-  - add explicit reset/load transcript notifications
-  - preserve the completed async compaction contract and `ChatSession` lifecycle, executor, factory, and provider-boundary behavior
+  - add a bounded filesystem policy for built-in local tools
+  - add read-only `ReadFileTool` and `ListFilesTool`
+  - preserve the completed `ChatSession` lifecycle, executor, factory, and provider-boundary behavior
 - Out of scope:
-  - `BashTool`, write/edit tools, or broad shell/process-policy work
+  - write/edit tools, shell/process tools, or broad shell/process-policy work
+  - text search or `GlobTool`
   - new consumer-facing runtime APIs beyond the already-landed continue/turn-summary slice
-  - concrete built-in/local tools in this slice
   - full MCP tool-call cancellation while `IMcpClient.CallTool(...)` lacks `CancellationToken`
   - transcript persistence redesign
   - changes to the provider request/stream contract beyond the current lifecycle surface
 
 ## Current slice
 
-1. Add explicit reset/load transcript notifications.
-2. Keep the current lifecycle contract, factory seam, mixed local+MCP routing, and Web UI adapter event behavior stable.
+1. Add the shared bounded filesystem policy.
+2. Add read-only `ReadFileTool` and `ListFilesTool`.
+3. Keep the current runtime, executor, and provider-boundary contracts stable.
 
 ## Next slices
 
-1. Add the first concrete built-in/local tools such as bounded `ReadFileTool` and `ListFilesTool` on top of the clarified consumer runtime surface.
+1. Add `GlobTool` or equivalent bounded file-discovery support once the first read-only tools prove the surface.
 2. Revisit `IMcpClient` ergonomics around `CallTool` cancellation and async disposal once a real caller needs it.
 3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
 4. Consider hook/extension or branching surfaces only after the core loop is more robust.
@@ -88,6 +98,7 @@
 - Removed `StartSession()` / `SessionStarted` from `ChatSession` and moved session-start notification ownership into the Web UI adapter.
 - Guarded `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` dispatch so observer exceptions no longer break otherwise healthy turns.
 - Changed `IChatTranscriptCompactor` to `CompactAsync(...)` and updated `ChatSession` to await compaction with cancellation propagation before provider requests.
+- Added `Reset`/`Loaded` transcript notifications with whole-transcript snapshots so reset/load operations are observable to consumers.
 
 ## Open decisions
 
@@ -97,6 +108,6 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while changing transcript lifecycle behavior.
-- Verify whole-transcript mutations become visible to subscribers without regressing async compaction or provider-boundary behavior.
-- Run broader `Mcp.Net.Tests.Agent` and relevant `Mcp.Net.Tests.WebUi` coverage after the focused pass is green.
+- Keep the completed `ChatSession` lifecycle contract stable while adding built-in read-only tools.
+- Verify containment rules, truncation behavior, and executor/runtime integration without regressing provider-boundary behavior.
+- Run broader `Mcp.Net.Tests.Agent` coverage after the focused pass is green.

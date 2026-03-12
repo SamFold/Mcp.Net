@@ -51,7 +51,13 @@ public class ChatSessionTests
         var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
-        session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
+        session.TranscriptChanged += (_, args) =>
+        {
+            if (args.Entry != null)
+            {
+                transcriptEntries.Add(args.Entry);
+            }
+        };
 
         await session.SendUserMessageAsync("Hi there");
 
@@ -100,7 +106,13 @@ public class ChatSessionTests
         var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
-        session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
+        session.TranscriptChanged += (_, args) =>
+        {
+            if (args.Entry != null)
+            {
+                transcriptEntries.Add(args.Entry);
+            }
+        };
 
         await session.SendUserMessageAsync("Hi there");
 
@@ -176,10 +188,18 @@ public class ChatSessionTests
 
         transcriptChanges.Should().HaveCount(3);
         transcriptChanges[1].ChangeKind.Should().Be(ChatTranscriptChangeKind.Added);
-        transcriptChanges[1].Entry.Should().BeOfType<AssistantChatEntry>();
+        var addedAssistantEntry = transcriptChanges[1]
+            .Entry
+            .Should()
+            .BeOfType<AssistantChatEntry>()
+            .Subject;
         transcriptChanges[2].ChangeKind.Should().Be(ChatTranscriptChangeKind.Updated);
-        transcriptChanges[2].Entry.Should().BeOfType<AssistantChatEntry>();
-        transcriptChanges[2].Entry.Id.Should().Be(transcriptChanges[1].Entry.Id);
+        var updatedAssistantEntry = transcriptChanges[2]
+            .Entry
+            .Should()
+            .BeOfType<AssistantChatEntry>()
+            .Subject;
+        updatedAssistantEntry.Id.Should().Be(addedAssistantEntry.Id);
 
         var assistantEntry = session.Transcript.OfType<AssistantChatEntry>().Single();
         assistantEntry.StopReason.Should().Be("stop");
@@ -263,7 +283,13 @@ public class ChatSessionTests
         var receivedEntries = new List<ChatTranscriptEntry>();
 
         session.TranscriptChanged += (_, _) => throw new InvalidOperationException("broken observer");
-        session.TranscriptChanged += (_, args) => receivedEntries.Add(args.Entry);
+        session.TranscriptChanged += (_, args) =>
+        {
+            if (args.Entry != null)
+            {
+                receivedEntries.Add(args.Entry);
+            }
+        };
 
         var summary = await session.SendUserMessageAsync("hello");
 
@@ -396,7 +422,13 @@ public class ChatSessionTests
         var session = CreateSession(llmClient.Object, toolRegistry.Object);
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
-        session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
+        session.TranscriptChanged += (_, args) =>
+        {
+            if (args.Entry != null)
+            {
+                transcriptEntries.Add(args.Entry);
+            }
+        };
 
         await session.SendUserMessageAsync("Hi there");
 
@@ -802,7 +834,13 @@ public class ChatSessionTests
 
         var transcriptEntries = new List<ChatTranscriptEntry>();
         var toolActivities = new List<ToolCallActivityChangedEventArgs>();
-        session.TranscriptChanged += (_, args) => transcriptEntries.Add(args.Entry);
+        session.TranscriptChanged += (_, args) =>
+        {
+            if (args.Entry != null)
+            {
+                transcriptEntries.Add(args.Entry);
+            }
+        };
         session.ToolCallActivityChanged += (_, args) => toolActivities.Add(args);
 
         await session.SendUserMessageAsync("Please add numbers");
@@ -1473,6 +1511,40 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task LoadTranscriptAsync_ShouldRaiseTranscriptChangedWithLoadedSnapshot()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-2), "hello", "turn-1"),
+            new AssistantChatEntry(
+                "assistant-1",
+                DateTimeOffset.UtcNow.AddMinutes(-1),
+                new AssistantContentBlock[] { new TextAssistantBlock("text-1", "hi") },
+                "turn-1"
+            ),
+        };
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        ChatTranscriptChangedEventArgs? change = null;
+        IReadOnlyList<ChatTranscriptEntry>? transcriptSeenInHandler = null;
+        session.TranscriptChanged += (_, args) =>
+        {
+            change = args;
+            transcriptSeenInHandler = session.Transcript.ToArray();
+        };
+
+        await session.LoadTranscriptAsync(transcript);
+
+        change.Should().NotBeNull();
+        change!.ChangeKind.Should().Be(ChatTranscriptChangeKind.Loaded);
+        change.Entry.Should().BeNull();
+        change.TranscriptSnapshot.Should().Equal(transcript);
+        transcriptSeenInHandler.Should().Equal(transcript);
+    }
+
+    [Fact]
     public async Task ContinueAsync_ShouldResumeFromToolResultTailWithoutAppendingUserEntry()
     {
         var llmClient = new Mock<IChatClient>();
@@ -1899,6 +1971,37 @@ public class ChatSessionTests
 
         session.Transcript.Should().BeEmpty();
         llmClient.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ResetConversation_ShouldRaiseTranscriptChangedWithResetSnapshot()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry("user-1", DateTimeOffset.UtcNow.AddMinutes(-1), "hello", "turn-1"),
+        };
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+        await session.LoadTranscriptAsync(transcript);
+
+        ChatTranscriptChangedEventArgs? change = null;
+        IReadOnlyList<ChatTranscriptEntry>? transcriptSeenInHandler = null;
+        session.TranscriptChanged += (_, args) =>
+        {
+            change = args;
+            transcriptSeenInHandler = session.Transcript.ToArray();
+        };
+
+        session.ResetConversation();
+
+        change.Should().NotBeNull();
+        change!.ChangeKind.Should().Be(ChatTranscriptChangeKind.Reset);
+        change.Entry.Should().BeNull();
+        change.TranscriptSnapshot.Should().BeEmpty();
+        transcriptSeenInHandler.Should().BeEmpty();
     }
 
     [Fact]
