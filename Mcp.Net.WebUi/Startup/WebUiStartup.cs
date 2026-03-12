@@ -1,24 +1,16 @@
-using System.Net.Http;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.Agent.Extensions;
 using Mcp.Net.Agent.Interfaces;
-using Mcp.Net.LLM.Anthropic;
-using Mcp.Net.LLM.Interfaces;
-using Mcp.Net.LLM.Models;
-using Mcp.Net.LLM.OpenAI;
-using Mcp.Net.LLM.Replay;
 using Mcp.Net.Agent.Tools;
+using Mcp.Net.LLM.Anthropic;
+using Mcp.Net.LLM.OpenAI;
 using Mcp.Net.WebUi.Authentication;
-using Mcp.Net.WebUi.Chat.Factories;
-using Mcp.Net.WebUi.Chat.Interfaces;
-using Mcp.Net.WebUi.Chat.Repositories;
+using Mcp.Net.WebUi.LLM;
 using Mcp.Net.WebUi.Hubs;
-using Mcp.Net.WebUi.Infrastructure;
 using Mcp.Net.WebUi.Infrastructure.Notifications;
 using Mcp.Net.WebUi.Infrastructure.Persistence;
-using Mcp.Net.WebUi.Infrastructure.Services;
 using Mcp.Net.WebUi.LLM.Factories;
 using Mcp.Net.WebUi.LLM.Services;
+using Mcp.Net.WebUi.Sessions;
 using Mcp.Net.WebUi.Startup.Factories;
 using Mcp.Net.WebUi.Startup.Helpers;
 
@@ -71,25 +63,7 @@ public class WebUiStartup
 
     private void ConfigureServices(WebApplicationBuilder builder, string[] args)
     {
-        ConfigureBasicServices(builder);
-        ConfigureCors(builder);
-        ConfigureMcpClient(builder, args);
-        ConfigureChatRuntime(builder);
-        ConfigureLlmServices(builder);
-        ConfigureApplicationServices(builder);
-
-        builder.Services.AddSingleton<IMcpClientBuilderConfigurator>(sp =>
-            new McpAuthenticationService(
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<McpAuthenticationService>>(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                args
-            )
-        );
-    }
-
-    private void ConfigureBasicServices(WebApplicationBuilder builder)
-    {
+        // Basic services
         builder.Services.AddControllers();
         builder.Services.AddSignalR();
         builder.Services.AddEndpointsApiExplorer();
@@ -101,10 +75,8 @@ public class WebUiStartup
             {
                 AllowAutoRedirect = false
             });
-    }
 
-    private void ConfigureCors(WebApplicationBuilder builder)
-    {
+        // CORS
         builder.Services.AddCors(options =>
         {
             options.AddDefaultPolicy(policy =>
@@ -116,27 +88,18 @@ public class WebUiStartup
                     .WithOrigins("http://localhost:3000");
             });
         });
-    }
 
-    private void ConfigureMcpClient(WebApplicationBuilder builder, string[] args)
-    {
-        // No longer registering a singleton MCP client
-        // Each ChatFactory will create dedicated MCP clients per session
-        // Keep this method for consistency but remove the registration
-    }
-
-    private void ConfigureChatRuntime(WebApplicationBuilder builder)
-    {
+        // Agent runtime (IChatSessionFactory, IToolRegistry)
         builder.Services.AddChatRuntimeServices();
-    }
 
-    private void ConfigureLlmServices(WebApplicationBuilder builder)
-    {
+        // LLM
         builder.Services.AddSingleton<LlmClientFactory>(sp => new LlmClientFactory(
             sp.GetRequiredService<ILogger<AnthropicChatClient>>(),
             sp.GetRequiredService<ILogger<OpenAiChatClient>>(),
             sp.GetRequiredService<ILogger<LlmClientFactory>>()
         ));
+        builder.Services.AddSingleton<ILlmClientProvider>(sp =>
+            sp.GetRequiredService<LlmClientFactory>());
 
         builder.Services.AddSingleton<DefaultLlmSettings>(sp =>
         {
@@ -145,22 +108,30 @@ public class WebUiStartup
                 sp.GetRequiredService<ILogger<WebUiStartup>>()
             );
         });
-    }
 
-    private void ConfigureApplicationServices(WebApplicationBuilder builder)
-    {
+        // Persistence
         builder.Services.AddSingleton<IChatHistoryManager, InMemoryChatHistoryManager>();
-        builder.Services.AddSingleton<IChatTranscriptReplayTransformer, ChatTranscriptReplayTransformer>();
+
+        // Notifications
         builder.Services.AddSingleton<SessionNotifier>();
-        builder.Services.AddSingleton<IChatRepository, ChatRepository>();
-        builder.Services.AddSingleton<IChatFactory, ChatFactory>();
+
+        // LLM services
         builder.Services.AddSingleton<IOneOffLlmService, OneOffLlmService>();
         builder.Services.AddSingleton<ITitleGenerationService, TitleGenerationService>();
 
-        builder.Services.AddSingleton<IChatAdapterManager, ChatAdapterManager>();
-        builder.Services.AddHostedService(sp =>
-            (ChatAdapterManager)sp.GetRequiredService<IChatAdapterManager>()
+        // Auth
+        builder.Services.AddSingleton<IMcpClientBuilderConfigurator>(sp =>
+            new McpAuthenticationService(
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<ILogger<McpAuthenticationService>>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                args
+            )
         );
+
+        // Session lifecycle
+        builder.Services.AddSingleton<SessionHost>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHost>());
     }
 
     private async Task InitializeServicesAsync(WebApplication app)
@@ -179,7 +150,6 @@ public class WebUiStartup
 
             var authConfigurator = app.Services.GetRequiredService<IMcpClientBuilderConfigurator>();
 
-            // Create a temporary MCP client just for tool discovery
             var tempMcpClient = await McpClientFactory.CreateClientAsync(
                 configuration,
                 _logger!,
@@ -195,7 +165,6 @@ public class WebUiStartup
                 tools.Length
             );
 
-            // Close the temporary client
             if (tempMcpClient is IDisposable disposableClient)
             {
                 disposableClient.Dispose();

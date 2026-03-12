@@ -10,7 +10,7 @@ namespace Mcp.Net.WebUi.LLM.Factories;
 /// <summary>
 /// Factory for creating LLM clients
 /// </summary>
-public class LlmClientFactory
+public class LlmClientFactory : ILlmClientProvider
 {
     private readonly ILogger<AnthropicChatClient> _anthropicLogger;
     private readonly ILogger<OpenAiChatClient> _openAiLogger;
@@ -26,6 +26,12 @@ public class LlmClientFactory
         _openAiLogger = openAiLogger;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Create a new LLM client for the given provider and model.
+    /// </summary>
+    public IChatClient Create(LlmProvider provider, string model) =>
+        Create(provider, new ChatClientOptions { Model = model });
 
     /// <summary>
     /// Create a new LLM client with the specified provider and options

@@ -1,6 +1,6 @@
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
-using Mcp.Net.WebUi.Chat.Factories;
+using Mcp.Net.WebUi.LLM;
 
 namespace Mcp.Net.WebUi.Startup.Factories;
 
