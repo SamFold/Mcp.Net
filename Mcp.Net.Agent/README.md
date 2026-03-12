@@ -109,4 +109,4 @@ Transcript compaction runs automatically before each provider request via `IChat
 
 ## Status
 
-The core loop, tool executor seam, cancellation flow, resume path, and awaited turn summaries are in place. The next runtime slices are event-fault hardening and transcript lifecycle cleanup before concrete built-in local tools land.
+The core loop, tool executor seam, cancellation flow, resume path, awaited turn summaries, and first built-in local filesystem tools (`list_files`, `read_file`) are in place. The next runtime slice is loop-safety hardening before broader file-discovery or write/shell tools land.

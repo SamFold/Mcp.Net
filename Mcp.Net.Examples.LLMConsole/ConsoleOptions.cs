@@ -13,9 +13,11 @@ internal sealed class ConsoleOptions
 {
     public string? ServerUrl { get; private set; }
     public string? ServerCommand { get; private set; }
+    public string? LocalFilesRoot { get; private set; }
     public ConsoleAuthMode AuthMode { get; private set; } = ConsoleAuthMode.ClientCredentials;
     public bool SkipToolSelection { get; private set; }
     public bool EnableAllTools => SkipToolSelection && _enableAllToolsRequested;
+    public bool EnableLocalFiles { get; private set; }
 
     private bool _enableAllToolsRequested;
 
@@ -56,6 +58,15 @@ internal sealed class ConsoleOptions
                 case "--skip-tool-selection":
                     options.SkipToolSelection = true;
                     break;
+
+                case "--local-files":
+                    options.EnableLocalFiles = true;
+                    break;
+
+                case "--local-files-root" when i + 1 < args.Length:
+                    options.EnableLocalFiles = true;
+                    options.LocalFilesRoot = args[++i];
+                    break;
             }
         }
 
@@ -72,6 +83,11 @@ internal sealed class ConsoleOptions
             {
                 ServerUrl = envUrl;
             }
+        }
+
+        if (EnableLocalFiles && string.IsNullOrWhiteSpace(LocalFilesRoot))
+        {
+            LocalFilesRoot = Environment.CurrentDirectory;
         }
     }
 

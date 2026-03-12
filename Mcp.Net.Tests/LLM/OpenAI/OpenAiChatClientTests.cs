@@ -105,6 +105,138 @@ public class OpenAiChatClientTests
     }
 
     [Fact]
+    public async Task SendAsync_WithClosedObjectToolSchema_ShouldEnableStrictFunctionSchema()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var tools = new[]
+        {
+            CreateTool(
+                "read_file",
+                "Reads a file",
+                """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["path"],
+                  "additionalProperties": false
+                }
+                """
+            ),
+        };
+
+        try
+        {
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("hello"), tools)
+            ).GetResultAsync();
+        }
+        catch (InvalidOperationException) { }
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().ContainSingle();
+        completionInvoker.CapturedOptions.Tools[0].FunctionSchemaIsStrict.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SendAsync_WithOptionalObjectProperty_ShouldLeaveFunctionSchemaNonStrict()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var tools = new[]
+        {
+            CreateTool(
+                "list_files",
+                "Lists files",
+                """
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string" }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+                """
+            ),
+        };
+
+        try
+        {
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("hello"), tools)
+            ).GetResultAsync();
+        }
+        catch (InvalidOperationException) { }
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().ContainSingle();
+        completionInvoker.CapturedOptions.Tools[0].FunctionSchemaIsStrict.Should().NotBeTrue();
+    }
+
+    [Fact]
+    public async Task SendAsync_WithUnsupportedToolSchemaKeyword_ShouldLeaveFunctionSchemaNonStrict()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var tools = new[]
+        {
+            CreateTool(
+                "search",
+                "Searches content",
+                """
+                {
+                  "type": "object",
+                  "properties": {
+                    "query": { "type": "string" }
+                  },
+                  "required": ["query"],
+                  "additionalProperties": false,
+                  "oneOf": [
+                    { "required": ["query"] }
+                  ]
+                }
+                """
+            ),
+        };
+
+        try
+        {
+            await client.SendAsync(
+                CreateRequest("test prompt", CreateUserTranscript("hello"), tools)
+            ).GetResultAsync();
+        }
+        catch (InvalidOperationException) { }
+
+        completionInvoker.CapturedOptions.Should().NotBeNull();
+        completionInvoker.CapturedOptions!.Tools.Should().ContainSingle();
+        completionInvoker.CapturedOptions.Tools[0].FunctionSchemaIsStrict.Should().NotBeTrue();
+    }
+
+    [Fact]
     public async Task SendAsync_TwoCallsWithDifferentToolSets_ShouldNotRetainPriorToolState()
     {
         var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
@@ -601,9 +733,10 @@ public class OpenAiChatClientTests
         var updateTimestamp = DateTimeOffset.UtcNow;
         var completionInvoker = new StreamingChatCompletionInvoker(
             CreateTextUpdate("stream-2", "Checking", updateTimestamp),
-            CreateToolUpdate("stream-2", "call-1", "search", """{"query":"weath""", updateTimestamp),
+            CreateToolUpdate("stream-2", 0, "call-1", "search", """{"query":"weath""", updateTimestamp),
             CreateToolUpdate(
                 "stream-2",
+                0,
                 "call-1",
                 "search",
                 """er"}""",
@@ -654,6 +787,67 @@ public class OpenAiChatClientTests
             .Be("call-1");
     }
 
+    [Fact]
+    public async Task SendMessageAsync_WithIndexedToolCallUpdates_ShouldAccumulateFragmentsWithoutRepeatedToolCallId()
+    {
+        const string systemPrompt = "OpenAI configured prompt";
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var updateTimestamp = DateTimeOffset.UtcNow;
+        var completionInvoker = new StreamingChatCompletionInvoker(
+            CreateToolUpdate(
+                "stream-3",
+                0,
+                "call-1",
+                "read_file",
+                """{"path":"READ""",
+                updateTimestamp
+            ),
+            CreateToolUpdate(
+                "stream-3",
+                0,
+                null,
+                null,
+                """ME.md"}""",
+                updateTimestamp,
+                ChatFinishReason.ToolCalls,
+                OpenAIChatModelFactory.ChatTokenUsage(
+                    outputTokenCount: 4,
+                    inputTokenCount: 8,
+                    totalTokenCount: 12
+                )
+            )
+        );
+
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        var (streamedTurns, result) = await ExecuteStreamAsync(
+            client.SendAsync(CreateRequest(systemPrompt, CreateUserTranscript("read the file")))
+        );
+
+        streamedTurns.Should().NotBeEmpty();
+        var finalStreamedTurn = streamedTurns[^1];
+        finalStreamedTurn.Blocks.Should().ContainSingle();
+        finalStreamedTurn.Blocks[0]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.Arguments["path"].Should()
+            .Be("README.md");
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.StopReason.Should().Be("tool_calls");
+        assistantTurn.Blocks.Should().ContainSingle();
+        assistantTurn.Blocks[0]
+            .Should()
+            .BeOfType<ToolCallAssistantBlock>()
+            .Which.ToolCallId.Should()
+            .Be("call-1");
+    }
+
     private static string ExtractSystemPrompt(IReadOnlyList<ChatMessage> messages)
     {
         messages[0].Should().BeOfType<SystemChatMessage>();
@@ -685,9 +879,9 @@ public class OpenAiChatClientTests
             new UserChatEntry("user-1", DateTimeOffset.UtcNow, userMessage, "turn-1"),
         ];
 
-    private static ChatClientTool CreateTool(string name, string description)
+    private static ChatClientTool CreateTool(string name, string description, string schema = "{}")
     {
-        using var schemaDocument = JsonDocument.Parse("{}");
+        using var schemaDocument = JsonDocument.Parse(schema);
         return new ChatClientTool(name, description, schemaDocument.RootElement.Clone());
     }
 
@@ -695,7 +889,10 @@ public class OpenAiChatClientTests
     {
         var parseMethod = typeof(OpenAiChatClient).GetMethod(
             "ParseToolArguments",
-            BindingFlags.NonPublic | BindingFlags.Static
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null
         );
 
         parseMethod.Should().NotBeNull();
@@ -843,8 +1040,9 @@ public class OpenAiChatClientTests
 
     private static StreamingChatCompletionUpdate CreateToolUpdate(
         string id,
-        string toolCallId,
-        string toolName,
+        int index,
+        string? toolCallId,
+        string? toolName,
         string argumentsFragment,
         DateTimeOffset createdAt,
         ChatFinishReason? finishReason = null,
@@ -856,7 +1054,7 @@ public class OpenAiChatClientTests
             null,
             [
                 OpenAIChatModelFactory.StreamingChatToolCallUpdate(
-                    0,
+                    index,
                     toolCallId,
                     ChatToolCallKind.Function,
                     toolName,

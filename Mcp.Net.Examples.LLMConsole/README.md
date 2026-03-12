@@ -1,13 +1,15 @@
 # Mcp.Net.Examples.LLMConsole
 
-A console-based example application demonstrating how to integrate Mcp.Net with LLM providers (OpenAI and Anthropic) for tool calling.
+A console-based example application demonstrating how to integrate `Mcp.Net.Agent` and `Mcp.Net.LLM` with OpenAI or Anthropic models for tool calling.
 
 ## Features
 
 - Interactive console-based chat UI
 - Support for OpenAI (GPT-5) and Anthropic (Claude Sonnet 4.5) models
 - Interactive provider selection when no provider is specified via CLI/env
-- Dynamic tool discovery and registration
+- `ChatSession`-driven chat loop in both MCP and non-MCP modes
+- Dynamic MCP tool discovery and registration
+- Optional built-in local filesystem tools (`list_files`, `read_file`) without any MCP server
 - Tool selection interface
 - Real-time tool execution visualization
 - Event-based UI architecture
@@ -90,7 +92,23 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 When no provider is supplied via CLI or environment variables, the client will prompt you to choose (OpenAI or Anthropic) before starting the session. The client will then:
 1. Connect to the SimpleServer (SSE or stdio)
 2. Present a tool selection interface (unless skipped)
-3. Start a chat session with your chosen LLM
+3. Start a `ChatSession` with your chosen LLM
+
+To exercise the built-in non-MCP tools only, skip the server entirely and root the local filesystem tools at the current directory:
+
+```bash
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj -- --local-files
+```
+
+Or point them at a specific directory:
+
+```bash
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj -- --local-files-root ..
+```
+
+That enables:
+- `list_files` for deterministic, bounded directory listings
+- `read_file` for bounded text-file reads with truncation metadata
 
 ### Command Line Options
 
@@ -110,6 +128,12 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 # Connect to a stdio server process
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio"
 
+# Use built-in local filesystem tools without MCP
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --local-files
+
+# Combine MCP tools with built-in local filesystem tools
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio" --local-files-root ..
+
 # Disable authentication (for unsecured servers)
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp --no-auth
 
@@ -122,10 +146,11 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 
 ## Architecture
 
-This example application demonstrates proper usage of the Mcp.Net.LLM library:
+This example application demonstrates the agent/runtime integration points that library consumers would use:
 
+- `ChatSession` owns the conversation loop, transcript, and tool execution flow
 - Event-based UI design separates the chat session logic from UI concerns
 - Dependency injection for improved testability and flexibility
-- Console-specific UI implementation using the core LLM library
+- Console-specific UI implementation layered on top of `Mcp.Net.Agent`
 - Proper event subscription and handling
 - Asynchronous messaging with proper cancellation support

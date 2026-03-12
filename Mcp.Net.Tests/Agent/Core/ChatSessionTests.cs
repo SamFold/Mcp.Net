@@ -1759,6 +1759,76 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_WhenToolCallRoundsExceedLimit_ShouldAppendSessionErrorAndStopLoop()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var tool = CreateToolDescriptor("list_files", "Lists files");
+        var sendCount = 0;
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                sendCount++;
+                var toolCallId = $"call-{sendCount}";
+                return CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        $"assistant-{sendCount}",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[]
+                        {
+                            new ToolCallAssistantBlock(
+                                $"block-{sendCount}",
+                                toolCallId,
+                                "list_files",
+                                new Dictionary<string, object?>()
+                            ),
+                        },
+                        StopReason: "tool_calls"
+                    )
+                );
+            });
+
+        var toolExecutor = new Mock<IToolExecutor>();
+        toolExecutor
+            .Setup(executor => executor.ExecuteAsync(It.IsAny<RuntimeToolInvocation>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+                (RuntimeToolInvocation invocation, CancellationToken _) =>
+                    CreateToolResult(invocation.ToolCallId, invocation.ToolName, "ok")
+            );
+
+        var session = CreateSession(
+            llmClient.Object,
+            toolRegistry.Object,
+            toolExecutor: toolExecutor.Object,
+            configuration: new ChatSessionConfiguration
+            {
+                Tools = new[] { tool },
+                MaxToolCallRounds = 2,
+            }
+        );
+
+        var summary = await session.SendUserMessageAsync("loop");
+
+        sendCount.Should().Be(3);
+        toolExecutor.Verify(
+            executor => executor.ExecuteAsync(It.IsAny<RuntimeToolInvocation>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2)
+        );
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        session.Transcript
+            .OfType<ErrorChatEntry>()
+            .Should()
+            .ContainSingle(error =>
+                error.Source == ChatErrorSource.Session
+                && error.Message.Contains("maximum tool-call rounds", StringComparison.Ordinal)
+            );
+        session.Transcript.OfType<ToolResultChatEntry>().Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ShouldBuildProviderRequestFromSessionState()
     {
         var llmClient = new Mock<IChatClient>();

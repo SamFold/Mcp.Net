@@ -218,7 +218,7 @@ public sealed class OpenAiChatClient : IChatClient
 
     private static ToolInvocation BuildToolInvocation(ChatToolCall toolCall)
     {
-        var arguments = ParseToolArguments(toolCall.FunctionArguments.ToString());
+        var arguments = ParseToolArguments(toolCall.FunctionArguments.ToMemory());
         return new ToolInvocation(toolCall.Id, toolCall.FunctionName, arguments);
     }
 
@@ -254,7 +254,10 @@ public sealed class OpenAiChatClient : IChatClient
         );
     }
 
-    private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argumentsJson)
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(string argumentsJson) =>
+        ParseToolArguments(Encoding.UTF8.GetBytes(argumentsJson));
+
+    private static IReadOnlyDictionary<string, object?> ParseToolArguments(ReadOnlyMemory<byte> argumentsJson)
     {
         var result = new Dictionary<string, object?>();
         using var doc = JsonDocument.Parse(argumentsJson);
@@ -521,15 +524,141 @@ public sealed class OpenAiChatClient : IChatClient
         ChatTool.CreateFunctionTool(
             functionName: tool.Name,
             functionDescription: tool.Description,
-            functionParameters: BinaryData.FromString(tool.InputSchema.GetRawText())
+            functionParameters: BinaryData.FromString(tool.InputSchema.GetRawText()),
+            functionSchemaIsStrict: IsStrictCompatibleFunctionSchema(tool.InputSchema)
         );
+
+    private static bool IsStrictCompatibleFunctionSchema(JsonElement schema)
+    {
+        return schema.ValueKind == JsonValueKind.Object
+            && schema.TryGetProperty("type", out var type)
+            && string.Equals(type.GetString(), "object", StringComparison.Ordinal)
+            && IsStrictCompatibleSchemaNode(schema);
+    }
+
+    private static bool IsStrictCompatibleSchemaNode(JsonElement schema)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        HashSet<string>? propertyNames = null;
+        HashSet<string>? requiredPropertyNames = null;
+        var hasObjectShape = false;
+        var hasClosedObjectShape = false;
+
+        foreach (var property in schema.EnumerateObject())
+        {
+            switch (property.Name)
+            {
+                case "type":
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                    {
+                        return false;
+                    }
+
+                    hasObjectShape = string.Equals(
+                        property.Value.GetString(),
+                        "object",
+                        StringComparison.Ordinal
+                    );
+                    break;
+
+                case "description":
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                    {
+                        return false;
+                    }
+                    break;
+
+                case "properties":
+                    if (property.Value.ValueKind != JsonValueKind.Object)
+                    {
+                        return false;
+                    }
+
+                    propertyNames = new HashSet<string>(
+                        property.Value.EnumerateObject().Select(child => child.Name),
+                        StringComparer.Ordinal
+                    );
+
+                    foreach (var child in property.Value.EnumerateObject())
+                    {
+                        if (!IsStrictCompatibleSchemaNode(child.Value))
+                        {
+                            return false;
+                        }
+                    }
+                    break;
+
+                case "required":
+                    if (
+                        property.Value.ValueKind != JsonValueKind.Array
+                        || property.Value.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String)
+                    )
+                    {
+                        return false;
+                    }
+
+                    requiredPropertyNames = new HashSet<string>(
+                        property.Value.EnumerateArray().Select(item => item.GetString()!),
+                        StringComparer.Ordinal
+                    );
+                    break;
+
+                case "items":
+                    if (!IsStrictCompatibleSchemaNode(property.Value))
+                    {
+                        return false;
+                    }
+                    break;
+
+                case "enum":
+                    if (property.Value.ValueKind != JsonValueKind.Array)
+                    {
+                        return false;
+                    }
+                    break;
+
+                case "additionalProperties":
+                    if (property.Value.ValueKind != JsonValueKind.False)
+                    {
+                        return false;
+                    }
+
+                    hasClosedObjectShape = true;
+                    break;
+
+                case "minLength":
+                    if (property.Value.ValueKind != JsonValueKind.Number)
+                    {
+                        return false;
+                    }
+                    break;
+
+                default:
+                    return false;
+            }
+        }
+
+        if (propertyNames != null)
+        {
+            if (requiredPropertyNames == null || !requiredPropertyNames.SetEquals(propertyNames))
+            {
+                return false;
+            }
+        }
+
+        return !hasObjectShape || hasClosedObjectShape;
+    }
 
     private sealed class StreamingAssistantTurnAccumulator
     {
         private readonly string _assistantTurnId = Guid.NewGuid().ToString("n");
         private readonly string _textBlockId = Guid.NewGuid().ToString("n");
         private readonly StringBuilder _textBuilder = new();
-        private readonly List<StreamingToolCallAccumulator> _toolCalls = new();
+        private readonly SortedDictionary<int, StreamingToolCallAccumulator> _toolCalls = new();
 
         public ChatFinishReason? FinishReason { get; private set; }
 
@@ -604,7 +733,7 @@ public sealed class OpenAiChatClient : IChatClient
                 blocks.Add(new TextAssistantBlock(_textBlockId, _textBuilder.ToString()));
             }
 
-            foreach (var toolCall in _toolCalls)
+            foreach (var toolCall in _toolCalls.Values)
             {
                 var block = toolCall.BuildBlock(lenientToolArguments);
                 if (block != null)
@@ -620,17 +749,13 @@ public sealed class OpenAiChatClient : IChatClient
             StreamingChatToolCallUpdate update
         )
         {
-            if (!string.IsNullOrWhiteSpace(update.ToolCallId))
+            if (_toolCalls.TryGetValue(update.Index, out var existing))
             {
-                var existing = _toolCalls.FirstOrDefault(call => call.ToolCallId == update.ToolCallId);
-                if (existing != null)
-                {
-                    return existing;
-                }
+                return existing;
             }
 
             var created = new StreamingToolCallAccumulator();
-            _toolCalls.Add(created);
+            _toolCalls[update.Index] = created;
             return created;
         }
     }
@@ -638,7 +763,7 @@ public sealed class OpenAiChatClient : IChatClient
     private sealed class StreamingToolCallAccumulator
     {
         private readonly string _blockId = Guid.NewGuid().ToString("n");
-        private readonly StringBuilder _argumentsBuilder = new();
+        private readonly MemoryStream _argumentsBuffer = new();
 
         public string? ToolCallId { get; private set; }
 
@@ -656,10 +781,10 @@ public sealed class OpenAiChatClient : IChatClient
                 FunctionName = update.FunctionName;
             }
 
-            var argumentsUpdate = update.FunctionArgumentsUpdate?.ToString();
-            if (!string.IsNullOrEmpty(argumentsUpdate))
+            var argumentsUpdate = update.FunctionArgumentsUpdate?.ToMemory();
+            if (argumentsUpdate is { IsEmpty: false })
             {
-                _argumentsBuilder.Append(argumentsUpdate);
+                _argumentsBuffer.Write(argumentsUpdate.Value.Span);
             }
         }
 
@@ -670,13 +795,12 @@ public sealed class OpenAiChatClient : IChatClient
                 return null;
             }
 
-            var argumentsText = _argumentsBuilder.ToString();
             IReadOnlyDictionary<string, object?> arguments;
-            if (string.IsNullOrWhiteSpace(argumentsText))
+            if (_argumentsBuffer.Length == 0)
             {
                 arguments = new Dictionary<string, object?>();
             }
-            else if (TryParseToolArguments(argumentsText, out var parsedArguments))
+            else if (TryParseToolArguments(_argumentsBuffer.GetBuffer().AsMemory(0, (int)_argumentsBuffer.Length), out var parsedArguments))
             {
                 arguments = parsedArguments;
             }
@@ -686,7 +810,7 @@ public sealed class OpenAiChatClient : IChatClient
             }
             else
             {
-                arguments = ParseToolArguments(argumentsText);
+                arguments = ParseToolArguments(_argumentsBuffer.GetBuffer().AsMemory(0, (int)_argumentsBuffer.Length));
             }
 
             return new ToolCallAssistantBlock(_blockId, ToolCallId, FunctionName, arguments);
@@ -694,7 +818,7 @@ public sealed class OpenAiChatClient : IChatClient
     }
 
     private static bool TryParseToolArguments(
-        string argumentsJson,
+        ReadOnlyMemory<byte> argumentsJson,
         out IReadOnlyDictionary<string, object?> arguments
     )
     {

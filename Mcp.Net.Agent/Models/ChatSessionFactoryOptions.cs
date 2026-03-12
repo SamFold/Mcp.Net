@@ -11,6 +11,8 @@ public sealed record ChatSessionFactoryOptions
 
     public ChatRequestOptions? RequestDefaults { get; init; }
 
+    public int MaxToolCallRounds { get; init; } = ChatSessionConfiguration.DefaultMaxToolCallRounds;
+
     public IReadOnlyList<ILocalTool> LocalTools { get; init; } = Array.Empty<ILocalTool>();
 
     public IMcpClient? McpClient { get; init; }

@@ -11,6 +11,8 @@ public static class ConsoleBanner
     private static readonly ConsoleColor Err = ConsoleColor.Red;
 
     public static void DisplayStartupBanner(
+        LlmProvider provider,
+        string model,
         Mcp.Net.Core.Models.Tools.Tool[] availableTools,
         IEnumerable<string>? enabledToolNames = null,
         int promptCount = 0,
@@ -23,10 +25,6 @@ public static class ConsoleBanner
         WriteColored("  mcp.net", Accent);
         WriteColoredLine(" llm console", ConsoleColor.White);
         WriteColoredLine("  ─────────────────────────────", Dim);
-
-        // Config
-        var provider = Program.PeekProvider(Environment.GetCommandLineArgs());
-        var model = Program.GetModelName(Environment.GetCommandLineArgs(), provider);
 
         WriteConfig("provider", provider.ToString());
         WriteConfig("model", model.Length > 40 ? model[..37] + "..." : model);
@@ -113,6 +111,8 @@ public static class ConsoleBanner
         WriteColoredLine("Tools:", ConsoleColor.White);
         WriteHelpLine("--all-tools", "Enable all tools, skip selection");
         WriteHelpLine("--skip-tool-selection", "Same as --all-tools");
+        WriteHelpLine("--local-files", "Enable local file tools rooted at the current directory");
+        WriteHelpLine("--local-files-root <path>", "Enable local file tools rooted at a specific directory");
         Console.WriteLine();
 
         WriteColoredLine("Logging:", ConsoleColor.White);
@@ -136,6 +136,10 @@ public static class ConsoleBanner
         WriteColored("  $ ", Dim);
         Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --provider anthropic");
         WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --local-files");
+        WriteColored("  $ ", Dim);
+        Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --local-files-root ..");
+        WriteColored("  $ ", Dim);
         Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --url http://localhost:5000/mcp");
         WriteColored("  $ ", Dim);
         Console.WriteLine("dotnet run --project Mcp.Net.Examples.LLMConsole --command \"dotnet run --project ../Mcp.Net.Examples.SimpleServer -- --stdio\"");
@@ -149,7 +153,7 @@ public static class ConsoleBanner
 
     private static void WriteHelpLine(string flag, string description)
     {
-        WriteColored($"  {flag,-24}", ConsoleColor.White);
+        WriteColored($"  {flag,-28}", ConsoleColor.White);
         WriteColoredLine(description, Dim);
     }
 

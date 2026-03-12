@@ -24,46 +24,40 @@
 
 ## Goal
 
-- Validate the agent tool surface with the first bounded built-in/local filesystem tools on top of the now-completed public authoring seam.
+- Finish the remaining loop-safety correctness work before expanding beyond the first read-only filesystem tools.
 
 ## What
 
-- Add a shared read-only filesystem policy for bounded path resolution, traversal limits, and truncation.
-- Ship `ReadFileTool` and `ListFilesTool` on top of the existing local-tool/executor/runtime seams and the now-public typed/result-helper authoring surface.
+- Synthesize cancelled placeholder results for unfinished parallel tool calls after abort so the transcript remains structurally valid for `ContinueAsync(...)`.
+- Decide whether `RunTurnLoopAsync` still needs a separate non-tool iteration cap beyond the now-landed max tool-round guard.
 
 ## Why
 
 - The runtime and factory seams are now in place and the obsolete model layer is gone.
 - Continue/resume, awaited turn summaries, guarded event dispatch, async compaction, and transcript lifecycle notifications are now in place.
-- The obvious consumer friction around result creation and disconnected DI registration is now removed.
-- Typed local-tool argument binding is now in place, so the next meaningful validation step is to prove it with real tools instead of one-off parsing.
-- The next meaningful validation step is to prove the runtime with real tools that consumers can use immediately.
-- The first built-in tools should build on the public authoring seam that now exists instead of adding one-off argument parsing.
+- The first built-in read-only filesystem tools are now in place on top of the public local-tool authoring seam.
+- `Mcp.Net.Examples.LLMConsole` now exercises `ChatSession` in both MCP and non-MCP modes, including optional built-in local filesystem tools.
+- The max tool-round guard is now in place, but abort can still leave unfinished parallel tool calls without transcript results.
+- The OpenAI provider path now matches the SDK's streaming tool-call assembly model, so the next correctness gap is back in the runtime loop rather than provider-specific parsing.
 - `Mcp.Net.WebUi` is a legacy adapter layer and should not influence `Mcp.Net.Agent` design decisions; if needed, Web UI can be rebuilt around the runtime that the library actually wants.
 
 ## How
 
-### 1. Add shared filesystem policy
+### 1. Finish abort transcript safety
 
-- Add a shared `FileSystemToolPolicy` or equivalent bounded policy object.
-- Canonicalize paths against a configured root and reject traversal outside the allowed scope.
-- Define clear limits for file bytes, line counts, and directory entry counts so tool outputs stay bounded.
+- Detect unfinished parallel local-tool calls after an abort.
+- Append synthetic cancelled tool results for any calls that never produced a transcript result.
+- Preserve the existing completed-result behavior for tool work that did finish before cancellation.
 
-### 2. Add typed local-tool binding
+### 2. Re-check the turn-loop guard shape
 
-- Use the landed `LocalToolBase<TArgs>` / `BindArguments<TArgs>()` path together with the already-public result helpers so the built-in tools prove the intended authoring model.
+- Keep the landed max tool-round guard as the first runaway protection.
+- Decide whether a separate non-tool iteration cap is still needed once abort transcript correctness is finished.
 
-### 3. Add the first concrete tools
+### 3. Keep the tool surface stable
 
-- Add `ReadFileTool` with partial-read/truncation metadata.
-- Add `ListFilesTool` with deterministic ordering and bounded output.
-- Keep the tools read-only; do not mix in shell/process/write behavior.
-
-### 4. Prove the contract
-
-- Add focused tool tests for containment checks, truncation, typed argument binding, and error cases.
-- Add executor/session coverage as needed to prove the new tools work through the existing runtime surface.
-- Keep the completed lifecycle, factory, executor, and provider-boundary tests green.
+- Do not change the public local-tool authoring seam while finishing loop safety.
+- Keep `ReadFileTool`, `ListFilesTool`, and the `LLMConsole` sample green as regression coverage.
 
 ## Scope
 
@@ -83,20 +77,17 @@
 
 ## Current slice
 
-1. Add the shared bounded filesystem policy.
-2. Add read-only `ReadFileTool` and `ListFilesTool`.
-3. Keep the current runtime, executor, and provider-boundary contracts stable.
+1. Synthesize cancelled results for aborted unfinished tool calls.
+2. Decide whether to add a separate non-tool iteration cap on top of the landed max tool-round guard.
+3. Keep the current tool, lifecycle, executor, and provider-boundary contracts stable.
 
 ## Next slices
 
-1. Add loop-safety guards before any write/shell tools:
-   - max iteration / max tool-round guard for `RunTurnLoopAsync`
-   - synthesize cancelled tool results for unfinished tool calls so abort-and-continue leaves a structurally valid transcript
-2. Add `GlobTool` or equivalent bounded file-discovery support once the first read-only tools and authoring seams prove the surface.
-3. Revisit `IMcpClient` ergonomics around `CallTool` cancellation and async disposal once a real caller needs it.
-4. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-5. Consider hook/extension or branching surfaces only after the core loop is more robust.
-6. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Add `GlobTool` or equivalent bounded file-discovery support once the first read-only tools and loop-safety fixes prove the surface.
+2. Revisit `IMcpClient` ergonomics around `CallTool` cancellation and async disposal once a real caller needs it.
+3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+4. Consider hook/extension or branching surfaces only after the core loop is more robust.
+5. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
 
@@ -107,6 +98,10 @@
 - Added public local-tool result helpers through `ToolInvocation` and `ToolInvocationResults` so local tools no longer need to call the raw `ToolInvocationResult` constructor directly.
 - Removed `ToolRegistry` from `AddChatRuntimeServices()` and made it an explicit `AddToolRegistry()` opt-in.
 - Added typed local-tool argument binding through `ToolInvocation.BindArguments<TArgs>()` and `LocalToolBase<TArgs>`, including schema generation for nullable primitive arguments.
+- Added `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
+- Updated `Mcp.Net.Examples.LLMConsole` so non-MCP mode now runs through `ChatSession` and can optionally enable the built-in local filesystem tools.
+- Added a max tool-round guard to `RunTurnLoopAsync(...)` so runaway tool loops now stop with a session-visible error entry instead of continuing indefinitely.
+- Fixed the OpenAI provider path to assemble streamed tool-call arguments by `StreamingChatToolCallUpdate.Index` and raw argument bytes, matching the SDK's streaming function-calling model.
 - Added focused executor tests and `ChatSession` regressions covering missing-session-tool failures plus mixed local+MCP turns through one executor graph.
 - Added a single-active-turn lifecycle contract to `ChatSession`, including overlap rejection, busy-state lifecycle APIs, and mutation guards while a turn is active.
 - Added `IChatSessionFactory`, `ChatSessionFactoryOptions`, and `ChatSessionFactory` so callers can compose sessions from local tools plus an optional caller-owned `IMcpClient`.

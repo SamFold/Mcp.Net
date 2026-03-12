@@ -20,10 +20,27 @@ public class LocalToolSchemaGeneratorTests
         required.Should().NotContain("note");
     }
 
+    [Fact]
+    public void GenerateJsonSchema_ShouldCloseObjectShapesForStrictToolSchemas()
+    {
+        var schema = LocalToolSchemaGenerator.GenerateJsonSchema(typeof(NestedArgs));
+
+        schema.TryGetProperty("$schema", out _).Should().BeFalse();
+        schema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+
+        var child = schema.GetProperty("properties").GetProperty("child");
+        child.GetProperty("type").GetString().Should().Be("object");
+        child.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+    }
+
     private sealed record SampleArgs(
         string Path,
         int RetryCount,
         int? MaxLines,
         string? Note
     );
+
+    private sealed record NestedArgs(ChildArgs Child);
+
+    private sealed record ChildArgs(string Name);
 }

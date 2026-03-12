@@ -80,6 +80,7 @@ public class ChatSession : IChatSessionEvents
         StringComparer.OrdinalIgnoreCase
     );
     private ChatRequestOptions? _requestDefaults;
+    private int _maxToolCallRounds = ChatSessionConfiguration.DefaultMaxToolCallRounds;
     private string? _sessionId;
     private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
@@ -194,6 +195,7 @@ public class ChatSession : IChatSessionEvents
             ThrowIfProcessingUnsafe();
             SetSystemPromptUnsafe(configuration.SystemPrompt);
             SetRequestDefaultsUnsafe(configuration.RequestDefaults);
+            SetMaxToolCallRoundsUnsafe(configuration.MaxToolCallRounds);
             RegisterToolsUnsafe(configuration.Tools);
         }
     }
@@ -359,6 +361,8 @@ public class ChatSession : IChatSessionEvents
         CancellationToken cancellationToken
     )
     {
+        var toolCallRoundCount = 0;
+
         try
         {
             var request = await BuildRequestAsync(cancellationToken);
@@ -375,6 +379,22 @@ public class ChatSession : IChatSessionEvents
                 var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
                 if (toolCalls.Count == 0)
                 {
+                    break;
+                }
+
+                toolCallRoundCount++;
+                if (toolCallRoundCount > _maxToolCallRounds)
+                {
+                    AppendTranscript(
+                        ToErrorEntry(
+                            new ChatClientFailure(
+                                ChatErrorSource.Session,
+                                $"The assistant exceeded the maximum tool-call rounds for a single turn ({_maxToolCallRounds})."
+                            ),
+                            turn.TurnId
+                        ),
+                        turn
+                    );
                     break;
                 }
 
@@ -713,6 +733,16 @@ public class ChatSession : IChatSessionEvents
 
     private void SetRequestDefaultsUnsafe(ChatRequestOptions? requestDefaults) =>
         _requestDefaults = requestDefaults;
+
+    private void SetMaxToolCallRoundsUnsafe(int maxToolCallRounds)
+    {
+        if (maxToolCallRounds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxToolCallRounds));
+        }
+
+        _maxToolCallRounds = maxToolCallRounds;
+    }
 
     private void RegisterToolsUnsafe(IEnumerable<Tool> tools)
     {

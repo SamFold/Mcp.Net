@@ -1,16 +1,18 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Text;
 using System.Threading;
 using Mcp.Net.Client;
 using Mcp.Net.Client.Authentication;
 using Mcp.Net.Client.Interfaces;
+using Mcp.Net.Agent.Extensions;
 using Mcp.Net.Examples.LLMConsole.UI;
 using Mcp.Net.Agent.Core;
 using Mcp.Net.Agent.Catalog;
 using Mcp.Net.Agent.Completions;
 using Mcp.Net.Agent.Elicitation;
+using Mcp.Net.Agent.Interfaces;
+using Mcp.Net.Agent.Models;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.Examples.LLMConsole.Elicitation;
 using Mcp.Net.Agent.Tools;
@@ -61,26 +63,26 @@ public class Program
         }
         else
         {
-            await RunDirectLlmAsync(args, loggerFactory, chatUI);
+            await RunDirectLlmAsync(args, options, loggerFactory, chatUI);
         }
     }
 
     /// <summary>
-    /// Runs a direct LLM chat session without an MCP server.
-    /// Exercises the Mcp.Net.LLM layer directly for smoke testing.
+    /// Runs a ChatSession-backed console session without an MCP server.
+    /// This still exercises Mcp.Net.Agent, optionally with local tools only.
     /// </summary>
     private static async Task RunDirectLlmAsync(
         string[] args,
+        ConsoleOptions options,
         ILoggerFactory loggerFactory,
         ChatUI chatUI
     )
     {
-        var services = new ServiceCollection();
-        services.AddSingleton(loggerFactory);
-        services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
-        services.AddSingleton(chatUI);
-        services.AddSingleton<ProviderSelectionService>();
-        var serviceProvider = services.BuildServiceProvider();
+        using var serviceProvider = CreateServiceProvider(
+            loggerFactory,
+            chatUI,
+            includeChatRuntime: true
+        );
 
         var providerSelectionService = serviceProvider.GetRequiredService<ProviderSelectionService>();
         var provider = ResolveProvider(args, providerSelectionService);
@@ -97,99 +99,31 @@ public class Program
 
         var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
         var chatClient = CreateChatClient(provider, chatClientOptions, loggerFactory);
+        var localTools = CreateLocalTools(options);
+        AvailableTools = localTools.Select(tool => tool.Descriptor).ToArray();
 
-        chatUI.DrawChatInterface();
+        ConsoleBanner.DisplayStartupBanner(provider, modelName, AvailableTools);
+        WriteLocalFilesRootBanner(options);
 
-        var transcript = new List<ChatTranscriptEntry>();
+        var chatSessionFactory = serviceProvider.GetRequiredService<IChatSessionFactory>();
+        var chatSession = await chatSessionFactory.CreateAsync(
+            chatClient,
+            new ChatSessionFactoryOptions { LocalTools = localTools }
+        );
 
-        while (true)
-        {
-            var userInput = chatUI.GetUserInput();
-            if (string.IsNullOrWhiteSpace(userInput))
-            {
-                continue;
-            }
+        _ = new ChatUIHandler(
+            chatUI,
+            chatSession,
+            loggerFactory.CreateLogger<ChatUIHandler>()
+        );
 
-            if (userInput.Equals(":quit", StringComparison.OrdinalIgnoreCase)
-                || userInput.Equals(":exit", StringComparison.OrdinalIgnoreCase))
-            {
-                break;
-            }
+        using var consoleAdapter = new ConsoleAdapter(
+            chatSession,
+            chatUI,
+            loggerFactory.CreateLogger<ConsoleAdapter>()
+        );
 
-            transcript.Add(new UserChatEntry(
-                Guid.NewGuid().ToString("n"),
-                DateTimeOffset.UtcNow,
-                userInput
-            ));
-
-            var request = new ChatClientRequest(
-                systemPrompt: null,
-                transcript: transcript
-            );
-
-            var stream = chatClient.SendAsync(request);
-
-            // Stream text incrementally as snapshots arrive
-            var printedLength = 0;
-
-            await foreach (var snapshot in stream)
-            {
-                var currentText = ExtractText(snapshot.Blocks);
-                if (currentText.Length <= printedLength)
-                {
-                    continue;
-                }
-
-                // Print only the new text delta
-                Console.Write(currentText.Substring(printedLength));
-                printedLength = currentText.Length;
-            }
-
-            var result = await stream.GetResultAsync();
-
-            switch (result)
-            {
-                case ChatClientAssistantTurn turn:
-                    // Print any remaining text not yet streamed
-                    var finalText = ExtractText(turn.Blocks);
-                    if (finalText.Length > printedLength)
-                    {
-                        Console.Write(finalText.Substring(printedLength));
-                    }
-
-                    if (printedLength > 0 || finalText.Length > 0)
-                    {
-                        Console.WriteLine();
-                    }
-
-                    transcript.Add(new AssistantChatEntry(
-                        turn.Id,
-                        DateTimeOffset.UtcNow,
-                        turn.Blocks,
-                        Provider: turn.Provider,
-                        Model: turn.Model,
-                        StopReason: turn.StopReason,
-                        Usage: turn.Usage
-                    ));
-
-                    if (turn.Usage is { } usage)
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write($"  {turn.Provider}/{turn.Model}");
-                        Console.Write($"  in:{usage.InputTokens}");
-                        Console.Write($" out:{usage.OutputTokens}");
-                        Console.WriteLine($" total:{usage.TotalTokens}");
-                        Console.ResetColor();
-                    }
-
-                    Console.WriteLine();
-                    break;
-
-                case ChatClientFailure failure:
-                    chatUI.DisplayToolError("LLM", failure.Message);
-                    break;
-            }
-        }
+        await consoleAdapter.RunAsync();
     }
 
     /// <summary>
@@ -223,6 +157,8 @@ public class Program
         var completionService = new CompletionService(mcpClient, completionLogger);
         var promptCatalog = new PromptResourceCatalog(mcpClient, promptCatalogLogger);
         await promptCatalog.InitializeAsync();
+        var localTools = CreateLocalTools(options);
+        var localDescriptors = localTools.Select(tool => tool.Descriptor).ToArray();
 
         var toolRegistryLogger = loggerFactory.CreateLogger<ToolRegistry>();
         var toolRegistry = new ToolRegistry(toolRegistryLogger);
@@ -230,12 +166,15 @@ public class Program
         ChatSession? activeChatSession = null;
         toolRegistry.ToolsUpdated += (_, tools) =>
         {
-            AvailableTools = tools.ToArray();
+            ValidateDuplicateToolNames(localDescriptors, tools);
+            AvailableTools = CombineTools(localDescriptors, tools);
             if (activeChatSession != null)
             {
                 try
                 {
-                    activeChatSession.RegisterTools(toolRegistry.EnabledTools);
+                    activeChatSession.RegisterTools(
+                        CombineTools(localDescriptors, toolRegistry.EnabledTools)
+                    );
                 }
                 catch (Exception ex)
                 {
@@ -277,23 +216,25 @@ public class Program
         var availablePrompts = await promptCatalog.GetPromptsAsync();
         var availableResources = await promptCatalog.GetResourcesAsync();
 
+        using var tempServiceProvider = CreateServiceProvider(
+            loggerFactory,
+            chatUI,
+            includeChatRuntime: false
+        );
+
+        var providerSelectionService = tempServiceProvider.GetRequiredService<ProviderSelectionService>();
+        var provider = ResolveProvider(args, providerSelectionService);
+        var modelName = GetModelName(args, provider);
+
         ConsoleBanner.DisplayStartupBanner(
+            provider,
+            modelName,
             AvailableTools,
             null,
             availablePrompts.Count,
             availableResources.Count
         );
-
-        var services = new ServiceCollection();
-
-        services.AddSingleton(loggerFactory);
-        services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
-        services.AddSingleton(chatUI);
-        services.AddSingleton<ToolSelectionService>();
-        services.AddSingleton<ProviderSelectionService>();
-
-        // Build temporary service provider for tool selection
-        var tempServiceProvider = services.BuildServiceProvider();
+        WriteLocalFilesRootBanner(options);
 
         if (!options.SkipToolSelection && !options.EnableAllTools)
         {
@@ -305,15 +246,15 @@ public class Program
 
             Console.Clear();
             ConsoleBanner.DisplayStartupBanner(
+                provider,
+                modelName,
                 AvailableTools,
-                toolRegistry.EnabledTools.Select(t => t.Name),
+                CombineEnabledToolNames(localDescriptors, toolRegistry.EnabledTools),
                 availablePrompts.Count,
                 availableResources.Count
             );
+            WriteLocalFilesRootBanner(options);
         }
-
-        var providerSelectionService = tempServiceProvider.GetRequiredService<ProviderSelectionService>();
-        var provider = ResolveProvider(args, providerSelectionService);
 
         _logger.LogInformation("Using LLM provider: {Provider}", provider);
 
@@ -324,9 +265,20 @@ public class Program
             return;
         }
 
-        // Get model name from command line args or use default
-        string modelName = GetModelName(args, provider);
         _logger.LogInformation("Using model: {Model}", modelName);
+
+        Console.Clear();
+        ConsoleBanner.DisplayStartupBanner(
+            provider,
+            modelName,
+            AvailableTools,
+            options.SkipToolSelection || options.EnableAllTools
+                ? CombineEnabledToolNames(localDescriptors, toolRegistry.EnabledTools)
+                : CombineEnabledToolNames(localDescriptors, toolRegistry.EnabledTools),
+            availablePrompts.Count,
+            availableResources.Count
+        );
+        WriteLocalFilesRootBanner(options);
 
         var chatSessionLogger = loggerFactory.CreateLogger<ChatSession>();
         var chatUIHandlerLogger = loggerFactory.CreateLogger<ChatUIHandler>();
@@ -334,13 +286,17 @@ public class Program
 
         var chatClientOptions = new ChatClientOptions { ApiKey = apiKey, Model = modelName };
         var chatClient = CreateChatClient(provider, chatClientOptions, loggerFactory);
+        var mcpToolExecutor = new McpToolExecutor(mcpClient, toolExecutorLogger);
+        IToolExecutor toolExecutor = localTools.Count == 0
+            ? mcpToolExecutor
+            : new CompositeToolExecutor(new LocalToolExecutor(localTools), mcpToolExecutor);
 
         var chatSession = new ChatSession(
             chatClient,
-            new McpToolExecutor(mcpClient, toolExecutorLogger),
+            toolExecutor,
             chatSessionLogger
         );
-        chatSession.RegisterTools(toolRegistry.EnabledTools);
+        chatSession.RegisterTools(CombineTools(localDescriptors, toolRegistry.EnabledTools));
         activeChatSession = chatSession;
 
         var chatUIHandler = new ChatUIHandler(chatUI, chatSession, chatUIHandlerLogger);
@@ -374,19 +330,6 @@ public class Program
                 loggerFactory.CreateLogger<LLM.OpenAI.OpenAiChatClient>()
             ),
         };
-    }
-
-    private static string ExtractText(IReadOnlyList<AssistantContentBlock> blocks)
-    {
-        var sb = new StringBuilder();
-        foreach (var block in blocks)
-        {
-            if (block is TextAssistantBlock text)
-            {
-                sb.Append(text.Text);
-            }
-        }
-        return sb.ToString();
     }
 
     private static void PrintApiKeyError(LlmProvider provider)
@@ -707,6 +650,99 @@ public class Program
         }
 
         return mcpClient;
+    }
+
+    private static ServiceProvider CreateServiceProvider(
+        ILoggerFactory loggerFactory,
+        ChatUI chatUI,
+        bool includeChatRuntime
+    )
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(loggerFactory);
+        services.AddSingleton(typeof(ILogger<>), typeof(Logger<>));
+        services.AddSingleton(chatUI);
+        services.AddSingleton<ToolSelectionService>();
+        services.AddSingleton<ProviderSelectionService>();
+
+        if (includeChatRuntime)
+        {
+            services.AddChatRuntimeServices();
+        }
+
+        return services.BuildServiceProvider();
+    }
+
+    private static IReadOnlyList<ILocalTool> CreateLocalTools(ConsoleOptions options)
+    {
+        if (!options.EnableLocalFiles)
+        {
+            return Array.Empty<ILocalTool>();
+        }
+
+        var rootPath = Path.GetFullPath(options.LocalFilesRoot ?? Environment.CurrentDirectory);
+        if (!Directory.Exists(rootPath))
+        {
+            throw new InvalidOperationException(
+                $"Local files root '{rootPath}' does not exist."
+            );
+        }
+
+        _logger.LogInformation(
+            "Enabling local filesystem tools rooted at {RootPath}",
+            rootPath
+        );
+
+        var policy = new FileSystemToolPolicy(rootPath);
+        return new ILocalTool[]
+        {
+            new ListFilesTool(policy),
+            new ReadFileTool(policy),
+        };
+    }
+
+    private static Core.Models.Tools.Tool[] CombineTools(
+        IEnumerable<Core.Models.Tools.Tool> localTools,
+        IEnumerable<Core.Models.Tools.Tool> remoteTools
+    ) => localTools.Concat(remoteTools).ToArray();
+
+    private static IEnumerable<string> CombineEnabledToolNames(
+        IEnumerable<Core.Models.Tools.Tool> localTools,
+        IEnumerable<Core.Models.Tools.Tool> remoteTools
+    ) => localTools.Select(tool => tool.Name).Concat(remoteTools.Select(tool => tool.Name));
+
+    private static void ValidateDuplicateToolNames(
+        IEnumerable<Core.Models.Tools.Tool> localTools,
+        IEnumerable<Core.Models.Tools.Tool> remoteTools
+    )
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tool in localTools.Concat(remoteTools))
+        {
+            if (!seen.Add(tool.Name))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate tool name '{tool.Name}' was configured for this session."
+                );
+            }
+        }
+    }
+
+    private static void WriteLocalFilesRootBanner(ConsoleOptions options)
+    {
+        if (!options.EnableLocalFiles)
+        {
+            return;
+        }
+
+        var previousColor = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine(
+            $"  local root {Path.GetFullPath(options.LocalFilesRoot ?? Environment.CurrentDirectory)}"
+        );
+        Console.ForegroundColor = previousColor;
+        Console.WriteLine();
     }
 
     private static void ConfigureLogging(string[] args)

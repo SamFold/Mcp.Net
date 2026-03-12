@@ -11,14 +11,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Start the first `Mcp.Net.Agent` built-in tool slice: bounded read-only filesystem tools plus the public local-tool authoring seam they require
+1. Finish the remaining `Mcp.Net.Agent` loop-safety cleanup after the landed first built-in filesystem tools and OpenAI tool-streaming fix
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: validate the agent tool surface with the first bounded read-only filesystem tools and the public authoring seam behind them.
+  - Current focus: finish abort/continue transcript safety now that the first bounded read-only filesystem tools and OpenAI streaming fix have landed.
 - `Mcp.Net.WebUi`: `docs/roadmap/webui.md`
   - Current focus: evaluate using `IChatSessionFactory` directly so Web UI stops duplicating `ChatSession` construction logic.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`

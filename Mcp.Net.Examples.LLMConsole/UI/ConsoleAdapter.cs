@@ -19,8 +19,8 @@ public class ConsoleAdapter : IDisposable
     private readonly ChatSession _chatSession;
     private readonly ChatUI _chatUI;
     private readonly ILogger<ConsoleAdapter> _logger;
-    private readonly IPromptResourceCatalog _catalog;
-    private readonly ICompletionService _completionService;
+    private readonly IPromptResourceCatalog? _catalog;
+    private readonly ICompletionService? _completionService;
     private readonly CancellationTokenSource _cts = new();
     private Task? _runTask;
 
@@ -28,8 +28,8 @@ public class ConsoleAdapter : IDisposable
         ChatSession chatSession,
         ChatUI chatUI,
         ILogger<ConsoleAdapter> logger,
-        IPromptResourceCatalog catalog,
-        ICompletionService completionService
+        IPromptResourceCatalog? catalog = null,
+        ICompletionService? completionService = null
     )
     {
         _chatSession = chatSession;
@@ -40,8 +40,11 @@ public class ConsoleAdapter : IDisposable
 
         // Subscribe to events
         _chatSession.ActivityChanged += OnActivityChanged;
-        _catalog.PromptsUpdated += OnPromptCatalogUpdated;
-        _catalog.ResourcesUpdated += OnResourceCatalogUpdated;
+        if (_catalog != null)
+        {
+            _catalog.PromptsUpdated += OnPromptCatalogUpdated;
+            _catalog.ResourcesUpdated += OnResourceCatalogUpdated;
+        }
     }
 
     /// <summary>
@@ -176,21 +179,35 @@ public class ConsoleAdapter : IDisposable
     private void PrintCommandHelp()
     {
         Console.WriteLine("Console commands:");
-        Console.WriteLine("  :prompts                 List available prompts");
-        Console.WriteLine("  :prompt <name>           Show prompt details and arguments");
-        Console.WriteLine("  :resources               List MCP resources");
-        Console.WriteLine("  :resource <uri>          Show resource metadata");
-        Console.WriteLine(
-            "  :complete prompt <name> <argument> [value] [--context key=value,...]"
-        );
-        Console.WriteLine(
-            "  :complete resource <uri> <argument> [value] [--context key=value,...]"
-        );
         Console.WriteLine("  :help                    Display this help message");
+
+        if (_catalog != null)
+        {
+            Console.WriteLine("  :prompts                 List available prompts");
+            Console.WriteLine("  :prompt <name>           Show prompt details and arguments");
+            Console.WriteLine("  :resources               List MCP resources");
+            Console.WriteLine("  :resource <uri>          Show resource metadata");
+        }
+
+        if (_completionService != null)
+        {
+            Console.WriteLine(
+                "  :complete prompt <name> <argument> [value] [--context key=value,...]"
+            );
+            Console.WriteLine(
+                "  :complete resource <uri> <argument> [value] [--context key=value,...]"
+            );
+        }
     }
 
     private async Task ShowPromptsAsync()
     {
+        if (_catalog == null)
+        {
+            Console.WriteLine("Prompt commands are unavailable without an MCP server.");
+            return;
+        }
+
         var prompts = await _catalog.GetPromptsAsync();
         if (prompts.Count == 0)
         {
@@ -220,6 +237,12 @@ public class ConsoleAdapter : IDisposable
 
     private async Task ShowPromptDetailAsync(IReadOnlyList<string> tokens)
     {
+        if (_catalog == null)
+        {
+            Console.WriteLine("Prompt commands are unavailable without an MCP server.");
+            return;
+        }
+
         if (tokens.Count < 2)
         {
             Console.WriteLine("Usage: :prompt <name>");
@@ -278,6 +301,12 @@ public class ConsoleAdapter : IDisposable
 
     private async Task ShowResourcesAsync()
     {
+        if (_catalog == null)
+        {
+            Console.WriteLine("Resource commands are unavailable without an MCP server.");
+            return;
+        }
+
         var resources = await _catalog.GetResourcesAsync();
         if (resources.Count == 0)
         {
@@ -306,6 +335,12 @@ public class ConsoleAdapter : IDisposable
 
     private async Task ShowResourceDetailAsync(IReadOnlyList<string> tokens)
     {
+        if (_catalog == null)
+        {
+            Console.WriteLine("Resource commands are unavailable without an MCP server.");
+            return;
+        }
+
         if (tokens.Count < 2)
         {
             Console.WriteLine("Usage: :resource <uri>");
@@ -355,6 +390,12 @@ public class ConsoleAdapter : IDisposable
 
     private async Task HandleCompletionCommandAsync(IReadOnlyList<string> tokens)
     {
+        if (_completionService == null)
+        {
+            Console.WriteLine("Completion commands are unavailable without an MCP server.");
+            return;
+        }
+
         if (tokens.Count < 4)
         {
             Console.WriteLine(
@@ -494,8 +535,11 @@ public class ConsoleAdapter : IDisposable
 
         // Unsubscribe from events
         _chatSession.ActivityChanged -= OnActivityChanged;
-        _catalog.PromptsUpdated -= OnPromptCatalogUpdated;
-        _catalog.ResourcesUpdated -= OnResourceCatalogUpdated;
+        if (_catalog != null)
+        {
+            _catalog.PromptsUpdated -= OnPromptCatalogUpdated;
+            _catalog.ResourcesUpdated -= OnResourceCatalogUpdated;
+        }
 
         // Cancel and wait for the task to complete
         _cts.Cancel();

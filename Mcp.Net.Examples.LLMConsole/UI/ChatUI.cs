@@ -32,11 +32,23 @@ public class ChatUI
 
     public void DisplayAssistantMessage(string message)
     {
-        var lines = message.Split('\n');
-        foreach (var line in lines)
+        DisplayAssistantDelta(message);
+        CompleteAssistantMessage();
+    }
+
+    public void DisplayAssistantDelta(string message)
+    {
+        if (string.IsNullOrEmpty(message))
         {
-            Console.WriteLine(line);
+            return;
         }
+
+        Console.Write(message);
+    }
+
+    public void CompleteAssistantMessage()
+    {
+        Console.WriteLine();
         Console.WriteLine();
     }
 

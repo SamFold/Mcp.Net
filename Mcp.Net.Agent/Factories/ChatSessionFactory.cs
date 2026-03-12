@@ -66,6 +66,7 @@ public sealed class ChatSessionFactory : IChatSessionFactory
             SystemPrompt = options.SystemPrompt,
             Tools = localDescriptors.Concat(remoteDescriptors).ToArray(),
             RequestDefaults = options.RequestDefaults,
+            MaxToolCallRounds = options.MaxToolCallRounds,
         };
 
         return Create(

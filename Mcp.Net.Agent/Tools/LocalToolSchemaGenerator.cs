@@ -52,10 +52,10 @@ public static class LocalToolSchemaGenerator
 
         return new SchemaObject
         {
-            Schema = "https://json-schema.org/draft/2020-12/schema",
             Type = "object",
             Properties = properties,
             Required = requiredProperties,
+            AdditionalProperties = false,
         };
     }
 
@@ -187,9 +187,6 @@ public static class LocalToolSchemaGenerator
 
     private sealed class SchemaObject
     {
-        [JsonPropertyName("$schema")]
-        public string Schema { get; set; } = "https://json-schema.org/draft/2020-12/schema";
-
         [JsonPropertyName("type")]
         public string Type { get; set; } = "object";
 
@@ -198,5 +195,8 @@ public static class LocalToolSchemaGenerator
 
         [JsonPropertyName("required")]
         public List<string> Required { get; set; } = new();
+
+        [JsonPropertyName("additionalProperties")]
+        public bool AdditionalProperties { get; set; }
     }
 }
