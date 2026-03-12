@@ -1796,6 +1796,91 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_ShouldAwaitTranscriptCompactorBeforeSendingProviderRequest()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var compactionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowCompactionToFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ChatClientRequest? capturedRequest = null;
+        IReadOnlyList<ChatTranscriptEntry>? compactedTranscript = null;
+
+        var compactor = new DelegateChatTranscriptCompactor(async (transcript, cancellationToken) =>
+        {
+            compactedTranscript = transcript.ToArray();
+            compactionStarted.TrySetResult();
+            await allowCompactionToFinish.Task.WaitAsync(cancellationToken);
+            return compactedTranscript;
+        });
+
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ChatClientRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "ok") }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, transcriptCompactor: compactor);
+
+        var sendTask = session.SendUserMessageAsync("hello");
+
+        await compactionStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        llmClient.Verify(
+            c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never
+        );
+
+        allowCompactionToFinish.TrySetResult();
+        await sendTask;
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Transcript.Should().Equal(compactedTranscript!);
+    }
+
+    [Fact]
+    public async Task SendUserMessageAsync_WhenCanceledDuringTranscriptCompaction_ShouldReturnCancelledSummary()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var compactionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var compactor = new DelegateChatTranscriptCompactor(async (_, cancellationToken) =>
+        {
+            compactionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Compaction should have been canceled.");
+        });
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, transcriptCompactor: compactor);
+
+        var sendTask = session.SendUserMessageAsync("hello", cancellationTokenSource.Token);
+        await compactionStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        cancellationTokenSource.Cancel();
+
+        var summary = await sendTask;
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
+        llmClient.Verify(
+            c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never
+        );
+        session.Transcript
+            .OfType<UserChatEntry>()
+            .Should()
+            .ContainSingle()
+            .Which.Content.Should().Be("hello");
+    }
+
+    [Fact]
     public async Task ResetConversation_ShouldClearTranscriptWithoutCallingProvider()
     {
         var llmClient = new Mock<IChatClient>();
@@ -1949,5 +2034,15 @@ public class ChatSessionTests
             RuntimeToolInvocation invocation,
             CancellationToken cancellationToken = default
         ) => executeAsync(invocation, cancellationToken);
+    }
+
+    private sealed class DelegateChatTranscriptCompactor(
+        Func<IReadOnlyList<ChatTranscriptEntry>, CancellationToken, Task<IReadOnlyList<ChatTranscriptEntry>>> compactAsync
+    ) : IChatTranscriptCompactor
+    {
+        public Task<IReadOnlyList<ChatTranscriptEntry>> CompactAsync(
+            IReadOnlyList<ChatTranscriptEntry> transcript,
+            CancellationToken cancellationToken = default
+        ) => compactAsync(transcript, cancellationToken);
     }
 }

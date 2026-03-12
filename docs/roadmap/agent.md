@@ -3,13 +3,13 @@
 ## Current focus
 
 - Finish the remaining runtime-hygiene work identified in the readiness review before expanding the built-in tool surface.
-- Keep the `ChatSession` lifecycle and factory seams stable while transcript lifecycle cleanup and async compaction land.
-- Preserve the now-completed continue/resume, per-turn summary, and guarded event-dispatch surfaces while tightening the remaining transcript/compaction contract.
+- Keep the `ChatSession` lifecycle and factory seams stable while transcript lifecycle cleanup lands.
+- Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, and async compaction surfaces while tightening the remaining transcript contract.
 
 ## What
 
-- Change transcript compaction to `CompactAsync(...)` before more consumers depend on the synchronous contract.
 - Add explicit transcript change notifications for reset/load flows so observers stop missing whole-state mutations.
+- Later, replace the entry-count-only compaction trigger with token-aware context budgeting that can target provider max-context limits and reserve output budget explicitly.
 
 ## Why
 
@@ -17,12 +17,12 @@
 - Continue/resume, per-turn summaries, and the dead session-start seam are now in place.
 - The remaining high-value gaps are correctness and lifecycle hygiene, not more tool breadth.
 - This keeps the consumer runtime stable before the first concrete built-in tools widen adoption.
+- The current entry-count compactor is a good MVP, but it does not track real context-window pressure or leave deliberate room for model output.
 
 ## How
 
 ### Runtime hygiene
 
-- Change compaction to `CompactAsync(...)` and flow that through the request-build path.
 - Add reset/load change kinds or equivalent transcript notifications so whole-transcript mutations become observable.
 
 ### Verification
@@ -33,12 +33,12 @@
 
 ## Near-term sequence
 
-1. Change transcript compaction to `CompactAsync(...)` and close the reset/load transcript event gaps before more consumers depend on the current shape.
+1. Close the reset/load transcript event gaps before more consumers depend on the current lifecycle shape.
 2. Add the first concrete built-in/local tools once the core consumer loop is easier to drive directly and the remaining hygiene work is in place.
 3. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
 4. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
 5. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
-6. Revisit context-window management with a stronger trigger or summarizer path once real conversation pressure justifies it.
+6. Revisit context-window management with token-aware compaction driven by provider context limits, reserved output budget, and a stronger summarizer path once real conversation pressure justifies it.
 
 ## Recently completed
 
@@ -56,18 +56,19 @@
 - `SendUserMessageAsync(...)` and `ContinueAsync(...)` now return `ChatTurnSummary` so awaited callers can inspect per-turn changes directly.
 - `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification is now owned by the Web UI adapter where it is actually consumed.
 - `ChatSession` now guards runtime event dispatch so observer exceptions are logged and swallowed instead of breaking turns.
+- `IChatTranscriptCompactor` now uses `CompactAsync(...)`, and `ChatSession` awaits compaction with cancellation propagation before provider requests.
 
 ## Dependencies and risks
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- The current compactor shape is still synchronous, which will become a breaking change later if compaction ever needs async summarization work.
 - `ResetConversation()` and `LoadTranscriptAsync(...)` still mutate transcript state without change notifications today, so the next lifecycle-hygiene slice should close that observer gap before the tool surface grows.
 - The first local tools still need disciplined scope when they land. If they expand into shell/write behavior too early, the slice will mix seam validation with policy decisions.
-- The current compaction trigger is intentionally simple; future pressure may require token-aware estimation or a stronger summarizer path.
+- The current compaction trigger is intentionally simple; it does not account for provider context-window limits or reserved output budget, so future pressure should move the runtime toward token-aware compaction and possibly stronger summarization.
 
 ## Open questions
 
 - Should concrete built-in tools live under `Mcp.Net.Agent` temporarily, or should the repo create a dedicated `Mcp.Net.Tools` project as soon as the contracts land?
 - Should local tools always be app-owned reusable registrations, or should the runtime explicitly support session-owned local tool instances from the start?
-- When context-window pressure grows further, should the next compaction improvement be token-aware estimation or provider-backed summarization?
+- When context-window pressure grows further, how should token-aware compaction get provider context-window and output-budget information without reopening provider-owned session state?
+- Should stronger summarization land in the same slice as token-aware budgeting, or only after budget-based trimming proves insufficient?

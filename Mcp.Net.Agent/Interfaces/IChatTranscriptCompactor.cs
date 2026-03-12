@@ -4,5 +4,8 @@ namespace Mcp.Net.Agent.Interfaces;
 
 public interface IChatTranscriptCompactor
 {
-    IReadOnlyList<ChatTranscriptEntry> Compact(IReadOnlyList<ChatTranscriptEntry> transcript);
+    Task<IReadOnlyList<ChatTranscriptEntry>> CompactAsync(
+        IReadOnlyList<ChatTranscriptEntry> transcript,
+        CancellationToken cancellationToken = default
+    );
 }

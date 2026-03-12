@@ -11,14 +11,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Finish the next `Mcp.Net.Agent` runtime-hygiene slice: transcript compaction/reset-load lifecycle cleanup
+1. Finish the next `Mcp.Net.Agent` runtime-hygiene slice: reset/load transcript lifecycle cleanup
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: close the remaining transcript-lifecycle and compaction hygiene gaps before adding concrete built-in tools.
+  - Current focus: close the remaining transcript-lifecycle hygiene gap before adding concrete built-in tools.
 - `Mcp.Net.WebUi`: `docs/roadmap/webui.md`
   - Current focus: evaluate using `IChatSessionFactory` directly so Web UI stops duplicating `ChatSession` construction logic.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`
@@ -36,6 +36,7 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 ## Current cross-project dependencies
 
 - `Mcp.Net.Agent` runtime hygiene work and later local-tool work should preserve the now-stable `Mcp.Net.LLM` request/stream boundary rather than reopening provider-owned conversation state.
+- Future token-aware compaction in `Mcp.Net.Agent` should consume provider context-window metadata without reintroducing provider-owned conversation state into the runtime.
 - `Mcp.Net.WebUi` deletion of agent-driven flows depends on the surviving `ChatSession`, tool-registry, prompt/resource, completion, and elicitation services staying intact in `Mcp.Net.Agent`.
 - `Mcp.Net.LLM` cancellation still depends on a `Mcp.Net.Client` cancellation seam for `IMcpClient.CallTool`, but that work is deferred until the client contract changes.
 - `Mcp.Net.Client` Streamable HTTP reconnect and stale-state work should keep re-running the relevant server-client integration slice so client behavior does not drift from `Mcp.Net.Server`.

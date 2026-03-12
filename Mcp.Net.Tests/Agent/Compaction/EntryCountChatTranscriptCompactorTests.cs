@@ -7,7 +7,7 @@ namespace Mcp.Net.Tests.Agent.Compaction;
 public class EntryCountChatTranscriptCompactorTests
 {
     [Fact]
-    public void Compact_WhenTranscriptExceedsThreshold_ShouldInsertSummaryAndPreserveWholeRecentTurn()
+    public async Task CompactAsync_WhenTranscriptExceedsThreshold_ShouldInsertSummaryAndPreserveWholeRecentTurn()
     {
         var transcript = new ChatTranscriptEntry[]
         {
@@ -37,7 +37,7 @@ public class EntryCountChatTranscriptCompactorTests
             }
         );
 
-        var compacted = compactor.Compact(transcript);
+        var compacted = await compactor.CompactAsync(transcript);
 
         compacted.Should().HaveCount(4);
         compacted[0].Should().BeOfType<AssistantChatEntry>();
@@ -53,7 +53,7 @@ public class EntryCountChatTranscriptCompactorTests
     }
 
     [Fact]
-    public void Compact_WhenTranscriptIsWithinThreshold_ShouldReturnOriginalEntries()
+    public async Task CompactAsync_WhenTranscriptIsWithinThreshold_ShouldReturnOriginalEntries()
     {
         var transcript = new ChatTranscriptEntry[]
         {
@@ -74,7 +74,7 @@ public class EntryCountChatTranscriptCompactorTests
             }
         );
 
-        var compacted = compactor.Compact(transcript);
+        var compacted = await compactor.CompactAsync(transcript);
 
         compacted.Should().Equal(transcript);
     }

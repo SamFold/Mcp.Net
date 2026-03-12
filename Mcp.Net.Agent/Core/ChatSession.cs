@@ -346,8 +346,9 @@ public class ChatSession : IChatSessionEvents
     {
         try
         {
+            var request = await BuildRequestAsync(cancellationToken);
             var nextTurn = await RequestProviderAsync(
-                () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
+                () => _llmClient.SendAsync(request, cancellationToken),
                 turn,
                 cancellationToken
             );
@@ -365,8 +366,9 @@ public class ChatSession : IChatSessionEvents
                 cancellationToken.ThrowIfCancellationRequested();
                 await ExecuteToolCallsAsync(toolCalls, turn, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
+                request = await BuildRequestAsync(cancellationToken);
                 nextTurn = await RequestProviderAsync(
-                    () => _llmClient.SendAsync(BuildRequest(), cancellationToken),
+                    () => _llmClient.SendAsync(request, cancellationToken),
                     turn,
                     cancellationToken
                 );
@@ -667,9 +669,12 @@ public class ChatSession : IChatSessionEvents
         RaiseTranscriptChanged(new ChatTranscriptChangedEventArgs(entry, changeKind));
     }
 
-    private ChatClientRequest BuildRequest()
+    private async Task<ChatClientRequest> BuildRequestAsync(CancellationToken cancellationToken)
     {
-        var compactedTranscript = _transcriptCompactor.Compact(_transcript);
+        var compactedTranscript = await _transcriptCompactor.CompactAsync(
+            _transcript,
+            cancellationToken
+        );
         if (compactedTranscript.Count != _transcript.Count)
         {
             _logger.LogDebug(

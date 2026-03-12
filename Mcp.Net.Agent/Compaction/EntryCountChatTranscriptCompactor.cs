@@ -41,25 +41,29 @@ public sealed class EntryCountChatTranscriptCompactor : IChatTranscriptCompactor
         }
     }
 
-    public IReadOnlyList<ChatTranscriptEntry> Compact(IReadOnlyList<ChatTranscriptEntry> transcript)
+    public Task<IReadOnlyList<ChatTranscriptEntry>> CompactAsync(
+        IReadOnlyList<ChatTranscriptEntry> transcript,
+        CancellationToken cancellationToken = default
+    )
     {
         ArgumentNullException.ThrowIfNull(transcript);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (transcript.Count <= _options.MaxEntryCount)
         {
-            return transcript;
+            return Task.FromResult(transcript);
         }
 
         var safeStartIndex = FindSafeStartIndex(transcript);
         if (safeStartIndex <= 0)
         {
-            return transcript;
+            return Task.FromResult(transcript);
         }
 
         var entriesToCompact = transcript.Take(safeStartIndex).ToArray();
         if (entriesToCompact.Length == 0)
         {
-            return transcript;
+            return Task.FromResult(transcript);
         }
 
         var compactedTranscript = new List<ChatTranscriptEntry>(transcript.Count - safeStartIndex + 1)
@@ -68,7 +72,7 @@ public sealed class EntryCountChatTranscriptCompactor : IChatTranscriptCompactor
         };
         compactedTranscript.AddRange(transcript.Skip(safeStartIndex));
 
-        return compactedTranscript;
+        return Task.FromResult<IReadOnlyList<ChatTranscriptEntry>>(compactedTranscript);
     }
 
     private int FindSafeStartIndex(IReadOnlyList<ChatTranscriptEntry> transcript)
