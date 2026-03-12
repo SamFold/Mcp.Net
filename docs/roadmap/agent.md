@@ -3,12 +3,11 @@
 ## Current focus
 
 - Finish the remaining runtime-hygiene work identified in the readiness review before expanding the built-in tool surface.
-- Keep the `ChatSession` lifecycle and factory seams stable while event-fault hardening and transcript lifecycle cleanup land.
-- Preserve the now-completed continue/resume and per-turn summary surface while tightening the observer/compaction contract.
+- Keep the `ChatSession` lifecycle and factory seams stable while transcript lifecycle cleanup and async compaction land.
+- Preserve the now-completed continue/resume, per-turn summary, and guarded event-dispatch surfaces while tightening the remaining transcript/compaction contract.
 
 ## What
 
-- Guard runtime event dispatch so subscriber exceptions cannot fault otherwise healthy turns.
 - Change transcript compaction to `CompactAsync(...)` before more consumers depend on the synchronous contract.
 - Add explicit transcript change notifications for reset/load flows so observers stop missing whole-state mutations.
 
@@ -23,26 +22,23 @@
 
 ### Runtime hygiene
 
-- Wrap `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` dispatch so observer bugs are logged and swallowed.
 - Change compaction to `CompactAsync(...)` and flow that through the request-build path.
 - Add reset/load change kinds or equivalent transcript notifications so whole-transcript mutations become observable.
 
 ### Verification
 
-- Add focused regressions proving event-handler faults do not break a turn.
 - Add lifecycle coverage for reset/load transcript notifications and async compaction flow.
 - Keep the completed `ChatSession` lifecycle tests and broader agent/runtime coverage green.
 - Re-run impacted `Mcp.Net.WebUi` adapter coverage because the web path still consumes the same transcript/activity events.
 
 ## Near-term sequence
 
-1. Guard runtime event dispatch so observer faults cannot break otherwise healthy turns.
-2. Change transcript compaction to `CompactAsync(...)` and close the reset/load transcript event gaps before more consumers depend on the current shape.
-3. Add the first concrete built-in/local tools once the core consumer loop is easier to drive directly and the remaining hygiene work is in place.
-4. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
-5. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
-6. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
-7. Revisit context-window management with a stronger trigger or summarizer path once real conversation pressure justifies it.
+1. Change transcript compaction to `CompactAsync(...)` and close the reset/load transcript event gaps before more consumers depend on the current shape.
+2. Add the first concrete built-in/local tools once the core consumer loop is easier to drive directly and the remaining hygiene work is in place.
+3. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
+4. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
+5. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
+6. Revisit context-window management with a stronger trigger or summarizer path once real conversation pressure justifies it.
 
 ## Recently completed
 
@@ -59,12 +55,12 @@
 - `ChatSession` now supports `ContinueAsync(...)` with explicit transcript-tail rules.
 - `SendUserMessageAsync(...)` and `ContinueAsync(...)` now return `ChatTurnSummary` so awaited callers can inspect per-turn changes directly.
 - `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification is now owned by the Web UI adapter where it is actually consumed.
+- `ChatSession` now guards runtime event dispatch so observer exceptions are logged and swallowed instead of breaking turns.
 
 ## Dependencies and risks
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- The current event surface is still participation-shaped in practice because subscriber exceptions can escape the turn loop; the next hygiene slice should close that before more consumers attach observers.
 - The current compactor shape is still synchronous, which will become a breaking change later if compaction ever needs async summarization work.
 - `ResetConversation()` and `LoadTranscriptAsync(...)` still mutate transcript state without change notifications today, so the next lifecycle-hygiene slice should close that observer gap before the tool surface grows.
 - The first local tools still need disciplined scope when they land. If they expand into shell/write behavior too early, the slice will mix seam validation with policy decisions.

@@ -15,47 +15,40 @@
 - `ChatSession` now supports `ContinueAsync(...)` with explicit transcript-tail validation for resumed turns.
 - `SendUserMessageAsync(...)` and `ContinueAsync(...)` now return `ChatTurnSummary`, including per-turn transcript additions/updates plus completed/cancelled status.
 - `ChatSession` no longer exposes `StartSession()` / `SessionStarted`; session-start notification now lives in the Web UI adapter that actually broadcasts it.
+- `ChatSession` now guards `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` per subscriber so observer exceptions are logged and swallowed instead of faulting turns.
 
 ## Goal
 
-- Close the remaining observer and transcript-lifecycle hygiene gaps before shipping the first concrete built-in/local tools.
+- Close the remaining transcript-lifecycle and compaction hygiene gaps before shipping the first concrete built-in/local tools.
 
 ## What
 
-- Guard event dispatch so subscriber exceptions cannot break otherwise healthy turns.
 - Change transcript compaction to `CompactAsync(...)` before more consumers depend on the synchronous contract.
 - Add explicit reset/load transcript notifications so observer-visible transcript state stays coherent.
 
 ## Why
 
 - The runtime and factory seams are now in place and the obsolete model layer is gone.
-- Continue/resume and awaited turn summaries are now in place, so the next highest-value issues are correctness and lifecycle hygiene.
-- Today a throwing event subscriber can still fault a turn, and whole-transcript mutations are still invisible to observers.
+- Continue/resume, awaited turn summaries, and guarded event dispatch are now in place, so the next highest-value issues are transcript lifecycle and compaction hygiene.
+- Whole-transcript mutations are still invisible to observers, and the compactor contract is still sync-only.
 - This is the last narrow runtime cleanup before the first bounded built-in tools.
 
 ## How
 
-### 1. Harden event dispatch
-
-- Wrap `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` dispatch in log-and-swallow guards.
-- Keep synchronous ordering for now; do not add async dispatch complexity until a real consumer needs it.
-- Preserve the current activity/transcript ordering that Web UI and tests already consume.
-
-### 2. Make transcript lifecycle observable
+### 1. Make transcript lifecycle observable
 
 - Add reset/load transcript notifications via new change kinds or an equivalent explicit event shape.
 - Keep transcript mutation semantics stable while making whole-state changes visible to observers.
 - Re-run the Web UI adapter/event tests because they depend on the same event stream.
 
-### 3. Break the compactor contract once, early
+### 2. Break the compactor contract once, early
 
 - Change `IChatTranscriptCompactor.Compact(...)` to `CompactAsync(...)`.
 - Flow the async compactor through request building without weakening the current provider-boundary snapshot model.
 - Keep the default entry-count compactor behavior the same while changing the contract.
 
-### 4. Prove the contract
+### 3. Prove the contract
 
-- Add focused regressions proving observer exceptions are logged and swallowed instead of faulting turns.
 - Add coverage for reset/load transcript notifications and async compaction flow.
 - Keep the completed lifecycle, factory, executor, and provider-boundary tests green.
 - Re-run the impacted `Mcp.Net.WebUi` adapter coverage because it already depends on transcript/activity event behavior.
@@ -63,7 +56,6 @@
 ## Scope
 
 - In scope:
-  - guard runtime event dispatch against observer faults
   - add explicit reset/load transcript notifications
   - change transcript compaction to an async contract
   - preserve the completed `ChatSession` lifecycle, executor, factory, and provider-boundary behavior
@@ -77,10 +69,9 @@
 
 ## Current slice
 
-1. Guard runtime event dispatch so observer exceptions are logged and swallowed instead of breaking turns.
-2. Change transcript compaction to `CompactAsync(...)`.
-3. Add explicit reset/load transcript notifications.
-4. Keep the current lifecycle contract, factory seam, mixed local+MCP routing, and Web UI adapter event behavior stable.
+1. Change transcript compaction to `CompactAsync(...)`.
+2. Add explicit reset/load transcript notifications.
+3. Keep the current lifecycle contract, factory seam, mixed local+MCP routing, and Web UI adapter event behavior stable.
 
 ## Next slices
 
@@ -103,6 +94,7 @@
 - Added `ContinueAsync(...)` with explicit transcript-tail validation.
 - Added `ChatTurnSummary` return values for awaited turn inspection, including completed/cancelled status.
 - Removed `StartSession()` / `SessionStarted` from `ChatSession` and moved session-start notification ownership into the Web UI adapter.
+- Guarded `TranscriptChanged`, `ActivityChanged`, and `ToolCallActivityChanged` dispatch so observer exceptions no longer break otherwise healthy turns.
 
 ## Open decisions
 
@@ -112,6 +104,6 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while hardening events and transcript lifecycle behavior.
-- Verify observer bugs no longer fault turns and whole-transcript mutations become visible to subscribers.
+- Keep the completed `ChatSession` lifecycle contract stable while changing transcript lifecycle and compaction behavior.
+- Verify whole-transcript mutations become visible to subscribers and async compaction does not change provider-boundary behavior.
 - Run broader `Mcp.Net.Tests.Agent` and relevant `Mcp.Net.Tests.WebUi` coverage after the focused pass is green.

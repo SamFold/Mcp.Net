@@ -14,7 +14,7 @@ Use it to see which component or system tracks are active and where each next sl
 ## Active Tracks
 
 - `Mcp.Net.Agent`: `docs/vnext/agent.md`
-  - Current slice: guard event dispatch and close transcript compaction/reset-load lifecycle gaps on top of the narrowed `ChatSession` runtime.
+  - Current slice: change transcript compaction to `CompactAsync(...)` and add reset/load transcript notifications on top of the narrowed `ChatSession` runtime.
 - `Mcp.Net.WebUi`: `docs/vnext/webui.md`
   - Current slice: decide whether Web UI should compose sessions through `IChatSessionFactory` instead of constructing `ChatSession` inline.
 - `Mcp.Net.Server`: `docs/vnext/server.md`
