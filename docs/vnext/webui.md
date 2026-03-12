@@ -22,6 +22,7 @@
 - The legacy agent path is gone, so the remaining question is whether Web UI should now consume the shared runtime seam more directly.
 - Using `IChatSessionFactory` would reduce duplicate session-construction logic and keep Web UI aligned with the library-first composition story.
 - This is a small follow-up slice now that the obsolete path is out of the way.
+- Web UI is an older adapter layer and should not constrain `Mcp.Net.Agent`; if the runtime wants a cleaner seam, Web UI should adapt or be rebuilt around it.
 
 ## How
 
@@ -54,6 +55,7 @@
   - redesigning the Web UI chat UX
   - reintroducing agent-definition concepts
   - changing the MCP transport/auth flow beyond what deletion requires
+  - preserving legacy Web UI construction shapes if they conflict with the cleaner shared runtime surface
 
 ## Current slice
 

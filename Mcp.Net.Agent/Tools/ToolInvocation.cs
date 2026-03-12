@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Text.Json;
+using Mcp.Net.LLM.Models;
 
 namespace Mcp.Net.Agent.Tools;
 
@@ -24,4 +26,27 @@ public sealed record ToolInvocation
     public string ToolName { get; }
 
     public IReadOnlyDictionary<string, object?> Arguments { get; }
+
+    public ToolInvocationResult CreateResult(
+        IEnumerable<string>? text = null,
+        JsonElement? structured = null,
+        IEnumerable<ToolResultResourceLink>? resourceLinks = null,
+        JsonElement? metadata = null,
+        bool isError = false
+    ) =>
+        ToolInvocationResults.Create(
+            ToolCallId,
+            ToolName,
+            isError,
+            text,
+            structured,
+            resourceLinks,
+            metadata
+        );
+
+    public ToolInvocationResult CreateTextResult(params string[] text) =>
+        ToolInvocationResults.Success(ToolCallId, ToolName, text);
+
+    public ToolInvocationResult CreateErrorResult(params string[] text) =>
+        ToolInvocationResults.Error(ToolCallId, ToolName, text);
 }

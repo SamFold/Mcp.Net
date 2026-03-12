@@ -89,8 +89,9 @@ public class WebUiStartup
             });
         });
 
-        // Agent runtime (IChatSessionFactory, IToolRegistry)
+        // Agent runtime plus legacy tool-registry adapter surface.
         builder.Services.AddChatRuntimeServices();
+        builder.Services.AddToolRegistry();
 
         // LLM
         builder.Services.AddSingleton<LlmClientFactory>(sp => new LlmClientFactory(

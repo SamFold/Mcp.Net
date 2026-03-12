@@ -53,6 +53,17 @@ public interface ILocalTool
 }
 ```
 
+`ToolInvocation` includes result helpers so local tools do not need to call the raw `ToolInvocationResult` constructor directly:
+
+```csharp
+public Task<ToolInvocationResult> ExecuteAsync(
+    ToolInvocation invocation,
+    CancellationToken cancellationToken = default)
+{
+    return Task.FromResult(invocation.CreateTextResult("sunny"));
+}
+```
+
 Merge local tool descriptors with MCP-discovered tools before session creation. The session sees a flat tool list regardless of backend.
 
 ## Events

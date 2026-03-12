@@ -32,7 +32,7 @@ public static class ToolResultConverter
             ? null
             : JsonSerializer.SerializeToElement(result.Meta, JsonOptions);
 
-        return new ToolInvocationResult(
+        return ToolInvocationResults.Create(
             toolCallId,
             toolName,
             result.IsError,

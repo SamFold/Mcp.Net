@@ -17,6 +17,7 @@
 - The obsolete path is gone, so duplicated session-construction logic is now the most obvious remaining overlap between Web UI and the shared runtime.
 - Using `IChatSessionFactory` may reduce drift without forcing Web UI to give up its per-session MCP-client orchestration.
 - The next meaningful Web UI improvements should build on direct chat-session composition, not on reviving old agent-definition concepts.
+- Web UI is a replaceable legacy adapter, so it should follow `Mcp.Net.Agent` rather than constrain runtime API or seam decisions.
 
 ## Near-term sequence
 
@@ -30,3 +31,4 @@
 - Session-start notification is now adapter-owned after the `Mcp.Net.Agent` session-start seam removal, so future runtime changes should keep re-running adapter lifecycle tests.
 - The deletion slice should not weaken the current per-session MCP-client lifecycle or tool-list refresh behavior.
 - Session titles and metadata defaults may need small follow-up cleanup after the agent-derived naming path disappears.
+- If `Mcp.Net.Agent` chooses cleaner runtime seams that invalidate older Web UI assumptions, Web UI should adapt or be rebuilt rather than block that change.

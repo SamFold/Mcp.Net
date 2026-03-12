@@ -10,7 +10,7 @@ namespace Mcp.Net.Tests.Agent.Extensions;
 public class ChatRuntimeServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddChatRuntimeServices_ShouldRegisterChatRuntimeSurface()
+    public void AddChatRuntimeServices_ShouldRegisterOnlyChatRuntimeSurface()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -20,9 +20,23 @@ public class ChatRuntimeServiceCollectionExtensionsTests
         var provider = services.BuildServiceProvider();
 
         provider.GetService<IChatSessionFactory>().Should().NotBeNull();
+        provider.GetService<IToolRegistry>().Should().BeNull();
+        provider.GetService<ToolRegistry>().Should().BeNull();
+        provider.GetService<IToolExecutor>().Should().BeNull();
+    }
+
+    [Fact]
+    public void AddToolRegistry_ShouldRegisterToolRegistrySurface()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddToolRegistry();
+
+        var provider = services.BuildServiceProvider();
+
         provider.GetService<IToolRegistry>().Should().BeOfType<ToolRegistry>();
         provider.GetService<ToolRegistry>().Should().NotBeNull();
-        provider.GetService<IToolExecutor>().Should().BeNull();
     }
 
     [Fact]

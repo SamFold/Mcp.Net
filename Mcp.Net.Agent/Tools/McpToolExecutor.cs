@@ -51,7 +51,7 @@ public sealed class McpToolExecutor : IToolExecutor
                 ex.Message
             );
 
-            return ToolInvocationResultFactory.CreateError(
+            return ToolInvocationResults.Error(
                 invocation.ToolCallId,
                 invocation.ToolName,
                 ex.Message

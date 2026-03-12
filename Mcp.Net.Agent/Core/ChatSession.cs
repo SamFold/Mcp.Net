@@ -534,7 +534,7 @@ public class ChatSession : IChatSessionEvents
         {
             _logger.LogError("Tool {ToolName} not registered for this session", toolCall.ToolName);
 
-            var missingResult = ToolInvocationResultFactory.CreateError(
+            var missingResult = ToolInvocationResults.Error(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
                 "Tool not registered for this session"
@@ -615,7 +615,7 @@ public class ChatSession : IChatSessionEvents
                 ex.Message
             );
 
-            var errorResult = ToolInvocationResultFactory.CreateError(
+            var errorResult = ToolInvocationResults.Error(
                 toolCall.ToolCallId,
                 toolCall.ToolName,
                 ex.Message

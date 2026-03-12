@@ -15,8 +15,6 @@ public static class ChatRuntimeServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddChatSessionFactory();
-        services.AddSingleton<IToolRegistry, ToolRegistry>();
-        services.AddSingleton(sp => (ToolRegistry)sp.GetRequiredService<IToolRegistry>());
 
         return services;
     }
@@ -26,6 +24,15 @@ public static class ChatRuntimeServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<IChatSessionFactory, ChatSessionFactory>();
+        return services;
+    }
+
+    public static IServiceCollection AddToolRegistry(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<ToolRegistry>();
+        services.AddSingleton<IToolRegistry>(sp => sp.GetRequiredService<ToolRegistry>());
         return services;
     }
 }
