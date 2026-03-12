@@ -10,6 +10,9 @@ namespace Mcp.Net.Agent.Tools;
 /// </summary>
 public sealed record ToolInvocation
 {
+    private static readonly JsonSerializerOptions BindingJsonOptions =
+        new(JsonSerializerDefaults.Web);
+
     public ToolInvocation(
         string toolCallId,
         string toolName,
@@ -26,6 +29,22 @@ public sealed record ToolInvocation
     public string ToolName { get; }
 
     public IReadOnlyDictionary<string, object?> Arguments { get; }
+
+    public TArgs BindArguments<TArgs>(JsonSerializerOptions? serializerOptions = null)
+    {
+        var options = serializerOptions ?? BindingJsonOptions;
+        var payload = JsonSerializer.SerializeToElement(Arguments, options);
+        var arguments = payload.Deserialize<TArgs>(options);
+
+        if (arguments is null)
+        {
+            throw new JsonException(
+                $"Tool arguments for '{ToolName}' could not be bound to {typeof(TArgs).Name}."
+            );
+        }
+
+        return arguments;
+    }
 
     public ToolInvocationResult CreateResult(
         IEnumerable<string>? text = null,

@@ -42,8 +42,8 @@
 
 ## Near-term sequence
 
-1. Add typed local-tool argument binding plus the shared bounded filesystem policy for local tool authors.
-2. Add read-only `ReadFileTool` and `ListFilesTool` on top of those public seams.
+1. Add the shared bounded filesystem policy for local tool authors.
+2. Add read-only `ReadFileTool` and `ListFilesTool` on top of the now-landed public authoring seams.
 3. Add loop-safety guards before any write/shell tools:
    - max iteration / max tool-round guard in the turn loop
    - synthetic cancelled tool results for unfinished parallel tool calls so abort-and-continue leaves a structurally valid transcript
@@ -63,6 +63,7 @@
 - `ChatSession` now validates tool execution against its own configured tool catalog and no longer depends on `IToolRegistry` at runtime.
 - `Mcp.Net.Agent.Tools` now includes `ILocalTool`, `LocalToolExecutor`, and `CompositeToolExecutor`.
 - Local tools can now create results through public `ToolInvocation` / `ToolInvocationResults` helpers instead of relying on the raw `ToolInvocationResult` constructor.
+- Local tools can now bind invocation arguments through `ToolInvocation.BindArguments<TArgs>()` or derive from `LocalToolBase<TArgs>` for typed authoring plus generated input schema from a transport-neutral local-tool generator.
 - `AddChatRuntimeServices()` no longer registers the disconnected tool-registry seam; `ToolRegistry` is now explicit opt-in through `AddToolRegistry()`.
 - Focused tests now cover mixed local+MCP turns plus missing-session-tool failure semantics through the shared executor seam.
 - `ChatSession` now rejects overlapping turns, exposes `IsProcessing` plus abort/wait lifecycle APIs, and blocks mutable state changes while a turn is active.
@@ -78,7 +79,6 @@
 
 - Full MCP tool-call cancellation still depends on a `Mcp.Net.Client` seam because `IMcpClient.CallTool` does not yet accept a `CancellationToken`.
 - The provider boundary should remain snapshot-based; the runtime should not reintroduce provider-owned conversation state.
-- Typed local-tool argument binding is still missing today, so tools still parse raw argument dictionaries manually unless callers add their own wrapper.
 - The current turn loop has no max-iteration guard and abort can leave unmatched tool calls in the transcript after partial parallel completion; those safety fixes should land before any write/shell tool expansion.
 - The first local tools still need disciplined scope when they land. If they expand into shell/write behavior too early, the slice will mix seam validation with policy decisions.
 - Legacy Web UI composition and registry usage should adapt to the runtime; they are not reasons to keep weaker or older `Mcp.Net.Agent` seams alive.

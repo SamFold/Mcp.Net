@@ -64,6 +64,23 @@ public Task<ToolInvocationResult> ExecuteAsync(
 }
 ```
 
+For typed local tools, derive from `LocalToolBase<TArgs>` so argument binding happens once in shared code instead of each tool parsing `invocation.Arguments` manually:
+
+```csharp
+public sealed record ReadFileArgs(string Path, int? MaxLines);
+
+public sealed class ReadFileTool() : LocalToolBase<ReadFileArgs>("read_file", "Reads a file")
+{
+    protected override Task<ToolInvocationResult> ExecuteAsync(
+        ToolInvocation invocation,
+        ReadFileArgs arguments,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(invocation.CreateTextResult($"{arguments.Path}:{arguments.MaxLines}"));
+    }
+}
+```
+
 Merge local tool descriptors with MCP-discovered tools before session creation. The session sees a flat tool list regardless of backend.
 
 ## Events

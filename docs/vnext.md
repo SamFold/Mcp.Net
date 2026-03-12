@@ -14,7 +14,7 @@ Use it to see which component or system tracks are active and where each next sl
 ## Active Tracks
 
 - `Mcp.Net.Agent`: `docs/vnext/agent.md`
-  - Current slice: add typed local-tool binding plus the first bounded built-in filesystem tools.
+  - Current slice: add the shared bounded filesystem policy plus the first read-only built-in filesystem tools.
 - `Mcp.Net.WebUi`: `docs/vnext/webui.md`
   - Current slice: decide whether Web UI should compose sessions through `IChatSessionFactory` instead of constructing `ChatSession` inline.
 - `Mcp.Net.Server`: `docs/vnext/server.md`
