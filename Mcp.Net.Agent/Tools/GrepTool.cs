@@ -54,7 +54,7 @@ public sealed class GrepTool : LocalToolBase<GrepTool.Arguments>
             if (string.IsNullOrWhiteSpace(arguments.Pattern))
             {
                 return invocation.CreateErrorResult(
-                    "The 'pattern' argument is required. Provide a literal string or regular expression to search for within the bounded local filesystem."
+                    "The 'pattern' argument is required. Provide a literal string or regular expression to search for within the configured local filesystem scope."
                 );
             }
 
@@ -72,8 +72,7 @@ public sealed class GrepTool : LocalToolBase<GrepTool.Arguments>
                 );
             }
 
-            var requestedPath = string.IsNullOrWhiteSpace(arguments.Path) ? "." : arguments.Path;
-            var basePath = _policy.Resolve(requestedPath);
+            var basePath = _policy.ResolveOrBase(arguments.Path);
 
             if (!Directory.Exists(basePath.FullPath) && !File.Exists(basePath.FullPath))
             {
@@ -153,7 +152,7 @@ public sealed class GrepTool : LocalToolBase<GrepTool.Arguments>
         {
             Name = "grep_files",
             Description =
-                "Searches file contents within the bounded local filesystem using ripgrep when available on the host. Returns deterministic root-relative matches with line numbers and bounded output. Use glob_files to narrow by name and read_file to inspect full file contents.",
+                "Searches file contents within the configured local filesystem scope using ripgrep when available on the host. Returns deterministic line-numbered matches with bounded output. Paths stay relative when they remain under the configured base path.",
             InputSchema = JsonSerializer.SerializeToElement(
                 new
                 {
@@ -171,7 +170,7 @@ public sealed class GrepTool : LocalToolBase<GrepTool.Arguments>
                         {
                             type = "string",
                             description =
-                                "Optional. File or directory path relative to the local root to search within. Defaults to '.'.",
+                                "Optional. File or directory path resolved from the configured base path to search within. Defaults to '.'.",
                         },
                         glob = new
                         {

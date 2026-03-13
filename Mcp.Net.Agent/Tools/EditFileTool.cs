@@ -32,7 +32,7 @@ public sealed class EditFileTool : LocalToolBase<EditFileTool.Arguments>
                     invocation,
                     reason: "missing_path",
                     message:
-                        "The 'path' argument is required. Provide a single file path relative to the local root."
+                        "The 'path' argument is required. Provide a single file path resolved from the configured base path."
                 );
             }
 
@@ -258,7 +258,7 @@ public sealed class EditFileTool : LocalToolBase<EditFileTool.Arguments>
         {
             Name = "edit_file",
             Description =
-                "Edits an existing text file inside the bounded local filesystem using optimistic concurrency. Call read_file first, pass its contentHash as expectedContentHash, and provide one or more exact oldText/newText replacements.",
+                "Edits an existing text file inside the configured local filesystem scope using optimistic concurrency. Call read_file first, pass its contentHash as expectedContentHash, and provide one or more exact oldText/newText replacements.",
             InputSchema = JsonSerializer.SerializeToElement(
                 new
                 {
@@ -270,7 +270,7 @@ public sealed class EditFileTool : LocalToolBase<EditFileTool.Arguments>
                             type = "string",
                             minLength = 1,
                             description =
-                                "Required. Existing file path relative to the local root. This tool edits files in place and does not create new files.",
+                                "Required. Existing file path resolved from the configured base path. This tool edits files in place and does not create new files.",
                         },
                         expectedContentHash = new
                         {

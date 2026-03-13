@@ -35,6 +35,41 @@ public class FileSystemToolPolicyTests
             .Throw<InvalidOperationException>()
             .WithMessage("*outside the configured root*");
     }
+
+    [Fact]
+    public void Resolve_ShouldAllowPathOutsideBasePathInUnboundedMode()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        Directory.CreateDirectory(basePath);
+        var outsidePath = Path.Combine(workspace.Path, "outside.txt");
+        File.WriteAllText(outsidePath, "outside");
+
+        var policy = new FileSystemToolPolicy(
+            basePath,
+            scopeMode: FileSystemScopeMode.Unbounded
+        );
+
+        var resolved = policy.Resolve("../outside.txt");
+
+        resolved.FullPath.Should().Be(Path.GetFullPath(outsidePath));
+        resolved.DisplayPath.Should().Be(Path.GetFullPath(outsidePath).Replace('\\', '/'));
+    }
+
+    [Fact]
+    public void ResolveOrBase_ShouldReturnBasePathWhenPathIsMissing()
+    {
+        using var root = new TemporaryDirectory();
+        var policy = new FileSystemToolPolicy(
+            root.Path,
+            scopeMode: FileSystemScopeMode.Unbounded
+        );
+
+        var resolved = policy.ResolveOrBase(null);
+
+        resolved.FullPath.Should().Be(Path.GetFullPath(root.Path));
+        resolved.DisplayPath.Should().Be(".");
+    }
 }
 
 public class ReadFileToolTests
@@ -80,6 +115,40 @@ public class ReadFileToolTests
         result.IsError.Should().BeTrue();
         result.Text.Should().ContainSingle();
         result.Text[0].Should().Contain("outside the configured root");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldReadOutOfTreeFileWhenPolicyIsUnbounded()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        Directory.CreateDirectory(basePath);
+        var outsidePath = Path.Combine(workspace.Path, "outside.txt");
+        await File.WriteAllTextAsync(outsidePath, "external");
+
+        var tool = new ReadFileTool(
+            new FileSystemToolPolicy(
+                basePath,
+                scopeMode: FileSystemScopeMode.Unbounded
+            )
+        );
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-1b",
+                "read_file",
+                new Dictionary<string, object?> { ["path"] = "../outside.txt" }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Text.Should().ContainSingle().Which.Should().Be("external");
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value
+            .GetProperty("path")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(outsidePath).Replace('\\', '/'));
     }
 
     [Fact]
@@ -341,6 +410,56 @@ public class EditFileToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldEditOutOfTreeFileWhenPolicyIsUnbounded()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        Directory.CreateDirectory(basePath);
+        var outsidePath = Path.Combine(workspace.Path, "outside.txt");
+        await File.WriteAllTextAsync(outsidePath, "alpha\nbeta\n");
+
+        var policy = new FileSystemToolPolicy(
+            basePath,
+            scopeMode: FileSystemScopeMode.Unbounded
+        );
+        var readTool = new ReadFileTool(policy);
+        var editTool = new EditFileTool(policy);
+        var contentHash = await FileSystemToolTestHelpers.ReadContentHashAsync(
+            readTool,
+            "../outside.txt"
+        );
+
+        var result = await editTool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-2u",
+                "edit_file",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "../outside.txt",
+                    ["expectedContentHash"] = contentHash,
+                    ["edits"] = new object?[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["oldText"] = "beta",
+                            ["newText"] = "gamma",
+                        },
+                    },
+                }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value
+            .GetProperty("path")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(outsidePath).Replace('\\', '/'));
+        (await File.ReadAllTextAsync(outsidePath)).Should().Be("alpha\ngamma\n");
+    }
+
+    [Fact]
     public void Descriptor_ShouldRequirePathHashAndEdits()
     {
         using var root = new TemporaryDirectory();
@@ -428,6 +547,43 @@ public class ListFilesToolTests
         result.Text[0].Should().Be("alpha.txt");
         result.Metadata.Should().NotBeNull();
         result.Metadata!.Value.GetProperty("path").GetString().Should().Be(".");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldListOutOfTreeEntriesWithAbsolutePathsWhenPolicyIsUnbounded()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        var outsideDirectory = Path.Combine(workspace.Path, "external");
+        Directory.CreateDirectory(basePath);
+        Directory.CreateDirectory(outsideDirectory);
+        await File.WriteAllTextAsync(Path.Combine(outsideDirectory, "alpha.txt"), "a");
+
+        var tool = new ListFilesTool(
+            new FileSystemToolPolicy(
+                basePath,
+                scopeMode: FileSystemScopeMode.Unbounded
+            )
+        );
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-1u",
+                "list_files",
+                new Dictionary<string, object?> { ["path"] = "../external" }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Text.Should().ContainSingle().Which.Should().Be(
+            $"{Path.GetFullPath(Path.Combine(outsideDirectory, "alpha.txt")).Replace('\\', '/')}"
+        );
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value
+            .GetProperty("path")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(outsideDirectory).Replace('\\', '/'));
     }
 
     [Fact]

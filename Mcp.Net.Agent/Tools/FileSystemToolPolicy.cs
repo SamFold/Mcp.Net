@@ -3,7 +3,7 @@ using System.Collections.Frozen;
 namespace Mcp.Net.Agent.Tools;
 
 /// <summary>
-/// Shared bounded filesystem policy for built-in local tools.
+/// Shared filesystem policy for built-in local tools.
 /// </summary>
 public sealed class FileSystemToolPolicy
 {
@@ -23,7 +23,8 @@ public sealed class FileSystemToolPolicy
     private readonly string[] _skippedDirectoryNames;
 
     public FileSystemToolPolicy(
-        string rootPath,
+        string basePath,
+        FileSystemScopeMode scopeMode = FileSystemScopeMode.BoundedToBasePath,
         int maxReadBytes = 32 * 1024,
         int maxReadLines = 500,
         int maxDirectoryEntries = 200,
@@ -43,7 +44,7 @@ public sealed class FileSystemToolPolicy
         int maxGrepContextLines = 3
     )
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(basePath);
 
         if (maxReadBytes <= 0)
         {
@@ -105,7 +106,8 @@ public sealed class FileSystemToolPolicy
             throw new ArgumentOutOfRangeException(nameof(maxGrepContextLines));
         }
 
-        RootPath = Path.GetFullPath(rootPath);
+        BasePath = Path.GetFullPath(basePath);
+        ScopeMode = scopeMode;
         MaxReadBytes = maxReadBytes;
         MaxReadLines = maxReadLines;
         MaxDirectoryEntries = maxDirectoryEntries;
@@ -130,7 +132,11 @@ public sealed class FileSystemToolPolicy
         SkippedDirectoryNames = _skippedDirectoryNames.ToFrozenSet(DirectoryNameComparer);
     }
 
-    public string RootPath { get; }
+    public string BasePath { get; }
+
+    public string RootPath => BasePath;
+
+    public FileSystemScopeMode ScopeMode { get; }
 
     public int MaxReadBytes { get; }
 
@@ -172,18 +178,34 @@ public sealed class FileSystemToolPolicy
 
         var candidatePath = Path.IsPathRooted(path)
             ? path
-            : Path.Combine(RootPath, path);
+            : Path.Combine(BasePath, path);
         var fullPath = Path.GetFullPath(candidatePath);
-        var relativePath = Path.GetRelativePath(RootPath, fullPath);
+        var relativePath = Path.GetRelativePath(BasePath, fullPath);
 
-        if (IsOutsideRoot(relativePath))
+        if (
+            ScopeMode == FileSystemScopeMode.BoundedToBasePath
+            && IsOutsideBasePath(relativePath)
+        )
         {
             throw new InvalidOperationException(
                 $"Path '{path}' is outside the configured root."
             );
         }
 
-        return new FileSystemToolPath(fullPath, NormalizeDisplayPath(relativePath));
+        return new FileSystemToolPath(fullPath, ToDisplayPath(fullPath, relativePath));
+    }
+
+    public FileSystemToolPath ResolveOrBase(string? path) =>
+        Resolve(string.IsNullOrWhiteSpace(path) ? "." : path);
+
+    public string GetDisplayPath(string fullPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+
+        var normalizedFullPath = Path.GetFullPath(fullPath);
+        var relativePath = Path.GetRelativePath(BasePath, normalizedFullPath);
+
+        return ToDisplayPath(normalizedFullPath, relativePath);
     }
 
     internal bool ShouldSkipDirectory(ReadOnlySpan<char> directoryName)
@@ -206,7 +228,30 @@ public sealed class FileSystemToolPolicy
         return false;
     }
 
-    private static bool IsOutsideRoot(string relativePath)
+    private string ToDisplayPath(string fullPath, string relativePath)
+    {
+        if (
+            ScopeMode == FileSystemScopeMode.BoundedToBasePath
+            && IsOutsideBasePath(relativePath)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Path '{fullPath}' is outside the configured root."
+            );
+        }
+
+        if (
+            ScopeMode == FileSystemScopeMode.Unbounded
+            && IsOutsideBasePath(relativePath)
+        )
+        {
+            return NormalizeAbsoluteDisplayPath(fullPath);
+        }
+
+        return NormalizeRelativeDisplayPath(relativePath);
+    }
+
+    private static bool IsOutsideBasePath(string relativePath)
     {
         if (Path.IsPathRooted(relativePath))
         {
@@ -232,7 +277,7 @@ public sealed class FileSystemToolPolicy
             );
     }
 
-    private static string NormalizeDisplayPath(string relativePath)
+    private static string NormalizeRelativeDisplayPath(string relativePath)
     {
         if (relativePath == ".")
         {
@@ -241,4 +286,7 @@ public sealed class FileSystemToolPolicy
 
         return relativePath.Replace('\\', '/');
     }
+
+    private static string NormalizeAbsoluteDisplayPath(string fullPath) =>
+        Path.GetFullPath(fullPath).Replace('\\', '/');
 }

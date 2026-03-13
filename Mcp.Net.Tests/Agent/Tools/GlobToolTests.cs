@@ -154,6 +154,51 @@ public class GlobToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldReturnAbsoluteMatchesWhenSearchingOutsideBasePathInUnboundedMode()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        var externalPath = Path.Combine(workspace.Path, "external");
+        Directory.CreateDirectory(basePath);
+        Directory.CreateDirectory(externalPath);
+        await File.WriteAllTextAsync(Path.Combine(externalPath, "alpha.cs"), "// external");
+
+        var tool = new GlobTool(
+            new FileSystemToolPolicy(
+                basePath,
+                scopeMode: FileSystemScopeMode.Unbounded
+            )
+        );
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-1u",
+                "glob_files",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "../external",
+                    ["pattern"] = "*.cs",
+                }
+            )
+        );
+
+        var expectedPath = Path.GetFullPath(Path.Combine(externalPath, "alpha.cs")).Replace('\\', '/');
+        result.IsError.Should().BeFalse();
+        result.Text.Should().ContainSingle().Which.Should().Be(expectedPath);
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value
+            .GetProperty("path")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(externalPath).Replace('\\', '/'));
+        result.Metadata!.Value
+            .GetProperty("searchRoot")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(externalPath).Replace('\\', '/'));
+    }
+
+    [Fact]
     public void Descriptor_ShouldRequirePatternAndDescribeOptionalPathAndLimit()
     {
         using var root = new TemporaryDirectory();

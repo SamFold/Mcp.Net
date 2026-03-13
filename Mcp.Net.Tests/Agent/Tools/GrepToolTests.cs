@@ -326,6 +326,55 @@ public class GrepToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldReturnAbsolutePathsForMatchesOutsideBasePathWhenUnbounded()
+    {
+        using var workspace = new TemporaryDirectory();
+        var basePath = Path.Combine(workspace.Path, "repo");
+        var externalPath = Path.Combine(workspace.Path, "external");
+        Directory.CreateDirectory(basePath);
+        Directory.CreateDirectory(externalPath);
+        await File.WriteAllTextAsync(Path.Combine(externalPath, "alpha.cs"), "token\n");
+
+        var externalFilePath = Path.Combine(externalPath, "alpha.cs");
+        using var fakeRipgrep = new FakeRipgrepExecutable(
+            basePath,
+            stdoutLines:
+            [
+                CreateBeginEvent(externalFilePath),
+                CreateMatchEvent(externalFilePath, 1, "token\n"),
+                CreateSummaryEvent(searches: 1, searchesWithMatch: 1, matchedLines: 1),
+            ]
+        );
+        var tool = CreateTool(
+            basePath,
+            fakeRipgrep.ExecutablePath,
+            scopeMode: FileSystemScopeMode.Unbounded
+        );
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-5u",
+                "grep_files",
+                new Dictionary<string, object?>
+                {
+                    ["pattern"] = "token",
+                    ["path"] = "../external",
+                }
+            )
+        );
+
+        var expectedPath = Path.GetFullPath(externalFilePath).Replace('\\', '/');
+        result.IsError.Should().BeFalse();
+        result.Text.Should().ContainSingle().Which.Should().Be($"{expectedPath}:1: token");
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value
+            .GetProperty("path")
+            .GetString()
+            .Should()
+            .Be(Path.GetFullPath(externalPath).Replace('\\', '/'));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldReturnErrorWhenRipgrepReportsInvalidPattern()
     {
         using var root = new TemporaryDirectory();
@@ -423,11 +472,13 @@ public class GrepToolTests
         int maxGrepMatches = 100,
         int maxGrepOutputBytes = 64 * 1024,
         int maxGrepLineLength = 500,
-        int maxGrepContextLines = 3
+        int maxGrepContextLines = 3,
+        FileSystemScopeMode scopeMode = FileSystemScopeMode.BoundedToBasePath
     )
     {
         var policy = new FileSystemToolPolicy(
             rootPath,
+            scopeMode: scopeMode,
             maxGrepMatches: maxGrepMatches,
             maxGrepOutputBytes: maxGrepOutputBytes,
             maxGrepLineLength: maxGrepLineLength,

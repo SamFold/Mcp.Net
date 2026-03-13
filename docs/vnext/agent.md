@@ -24,11 +24,11 @@
 
 ## Goal
 
-- Add a bounded `WriteFileTool` for new-file creation on top of the landed read/edit/grep/shell seams.
+- Add `WriteFileTool` on top of the redesigned filesystem-scope seam.
 
 ## What
 
-- Add `WriteFileTool` as the bounded whole-file creation and overwrite primitive for paths inside `FileSystemToolPolicy.RootPath`.
+- Add `WriteFileTool` as the whole-file creation and overwrite primitive on top of the redesigned filesystem seam.
 
 ## Why
 
@@ -44,9 +44,9 @@
 
 ## How
 
-### 1. Add bounded `WriteFileTool`
+### 1. Add `WriteFileTool`
 
-- Scope the first whole-file mutation tool to bounded text writes inside `FileSystemToolPolicy.RootPath`.
+- Scope the first whole-file mutation tool to text writes that ride on top of the redesigned filesystem policy seam.
 - Keep parent-directory creation, overwrite semantics, and size limits explicit in policy rather than hidden in the tool body.
 
 ### 2. Keep the mutation and process seams coherent
@@ -57,7 +57,7 @@
 ## Scope
 
 - In scope:
-  - add a bounded `WriteFileTool` for new-file creation or explicit overwrite under the current filesystem policy seam
+  - add `WriteFileTool` on top of the redesigned bounded-vs-unbounded filesystem seam
   - preserve the completed `ChatSession` lifecycle, executor, factory, provider-boundary, and bounded process-tool behavior
 - Out of scope:
   - persistent shell sessions, PTY support, background jobs, or arbitrary process-session management
@@ -70,12 +70,12 @@
 
 ## Current slice
 
-1. Add `WriteFileTool` for bounded new-file creation and explicit overwrite.
+1. Add `WriteFileTool` for whole-file creation and explicit overwrite on top of the redesigned filesystem seam.
 2. Keep the current tool, lifecycle, executor, and provider-boundary contracts stable.
 
 ## Next slices
 
-1. Add `WriteFileTool` for bounded new-file creation and explicit overwrite.
+1. Add `WriteFileTool` for whole-file creation and explicit overwrite on top of the redesigned filesystem-scope seam.
 2. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
 3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
 4. Consider hook/extension or branching surfaces only after the core loop is more robust.
@@ -91,6 +91,7 @@
 - Removed `ToolRegistry` from `AddChatRuntimeServices()` and made it an explicit `AddToolRegistry()` opt-in.
 - Added typed local-tool argument binding through `ToolInvocation.BindArguments<TArgs>()` and `LocalToolBase<TArgs>`, including schema generation for nullable primitive arguments.
 - Added `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
+- Redesigned `FileSystemToolPolicy` so the built-in file tools can run either bounded to the configured base path or unbounded from that same base path while keeping traversal defaults anchored to the base path.
 - Extended `ReadFileTool` metadata with `contentHash`, encoding/BOM, and newline-style information so later mutation tools can use optimistic concurrency and preserve file shape.
 - Added `GlobTool` with compiled segment matching, literal-prefix search-root narrowing, deterministic bounded traversal, and policy-owned skip/depth/result limits on top of the same filesystem seam.
 - Added `EditFileTool` as the first bounded filesystem mutation primitive for existing text files, including optimistic concurrency, one-snapshot batch planning, newline-normalized fallback matching, and atomic temp-file-plus-replace commits.
@@ -119,6 +120,7 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while adding the next bounded mutation tool.
+- Keep the completed `ChatSession` lifecycle contract stable while adding the next mutation tool.
+- Verify bounded mode remains behaviorally identical for the current file tools while `WriteFileTool` lands on top of the redesigned filesystem seam.
 - Verify containment rules, overwrite semantics, truncation behavior, and executor/runtime integration without regressing provider-boundary behavior or the landed process-tool seam.
 - Run broader `Mcp.Net.Tests.Agent` coverage after the focused pass is green.

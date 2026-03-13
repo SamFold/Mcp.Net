@@ -22,8 +22,7 @@ public sealed class ListFilesTool : LocalToolBase<ListFilesTool.Arguments>
     {
         try
         {
-            var requestedPath = string.IsNullOrWhiteSpace(arguments.Path) ? "." : arguments.Path;
-            var path = _policy.Resolve(requestedPath);
+            var path = _policy.ResolveOrBase(arguments.Path);
 
             if (File.Exists(path.FullPath))
             {
@@ -108,7 +107,7 @@ public sealed class ListFilesTool : LocalToolBase<ListFilesTool.Arguments>
         {
             Name = "list_files",
             Description =
-                "Lists files and directories from the bounded local filesystem. The optional path is relative to the local root and defaults to the current directory '.'.",
+                "Lists files and directories from the configured local filesystem scope. The optional path is resolved from the configured base path and defaults to the current directory '.'.",
             InputSchema = JsonSerializer.SerializeToElement(
                 new
                 {
@@ -119,7 +118,7 @@ public sealed class ListFilesTool : LocalToolBase<ListFilesTool.Arguments>
                         {
                             type = "string",
                             description =
-                                "Optional. Directory path relative to the local root. Defaults to '.'. Use this to inspect folders before calling read_file.",
+                                "Optional. Directory path resolved from the configured base path. Defaults to '.'. Use this to inspect folders before calling read_file.",
                         },
                     },
                     required = Array.Empty<string>(),

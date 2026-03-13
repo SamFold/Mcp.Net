@@ -115,7 +115,7 @@ internal sealed class RipgrepSearch
                 continue;
             }
 
-            var displayPath = NormalizeDisplayPath(Path.GetRelativePath(_policy.RootPath, fullPath));
+            var displayPath = _policy.GetDisplayPath(fullPath);
 
             if (eventType == RipgrepEventType.Match)
             {
@@ -410,9 +410,6 @@ internal sealed class RipgrepSearch
 
         return false;
     }
-
-    private static string NormalizeDisplayPath(string relativePath) =>
-        relativePath.Replace('\\', '/');
 
     private static string TrimLineEnding(string text) => text.TrimEnd('\r', '\n');
 

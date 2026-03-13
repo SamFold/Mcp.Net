@@ -26,7 +26,7 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
             if (string.IsNullOrWhiteSpace(arguments.Path))
             {
                 return invocation.CreateErrorResult(
-                    "The 'path' argument is required. Provide a single file path relative to the local root, for example 'README.md'. If you need a path, call list_files first."
+                    "The 'path' argument is required. Provide a single file path resolved from the configured base path, for example 'README.md'. If you need a path, call list_files first."
                 );
             }
 
@@ -156,7 +156,7 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
         {
             Name = "read_file",
             Description =
-                "Reads a text file from the bounded local filesystem. Requires a single file path relative to the local root. Use list_files first if you need to discover a path.",
+                "Reads a text file from the configured local filesystem scope. Requires a single file path resolved from the configured base path. Use list_files first if you need to discover a path.",
             InputSchema = JsonSerializer.SerializeToElement(
                 new
                 {
@@ -168,7 +168,7 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
                             type = "string",
                             minLength = 1,
                             description =
-                                "Required. File path relative to the local root, for example 'README.md' or 'docs/vnext/agent.md'. Do not pass a directory path.",
+                                "Required. File path resolved from the configured base path, for example 'README.md' or 'docs/vnext/agent.md'. Do not pass a directory path.",
                         },
                     },
                     required = new[] { "path" },
