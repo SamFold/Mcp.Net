@@ -11,14 +11,14 @@ Use it to see which project roadmaps are active, how they are sequenced, and whe
 - Use `docs/vnext.md` and `docs/vnext/*.md` for commit-sized execution slices.
 
 ## Current priorities
-1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal now that bounded read-only file discovery has landed
+1. Continue bounded local-tool coverage in `Mcp.Net.Agent` with `WriteFileTool` now that `run_shell_command` has landed
 2. Continue the `Mcp.Net.Client` Streamable HTTP reconnect, retry, and stale-state cleanup review slice
 3. Finish the remaining `Mcp.Net.Server` logging/debuggability and hidden-state review
 
 ## Active Project Roadmaps
 
 - `Mcp.Net.Agent`: `docs/roadmap/agent.md`
-  - Current focus: revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal now that bounded read-only file discovery is in place.
+  - Current focus: add a bounded `WriteFileTool` now that the first shell/process seam has landed.
 - `Mcp.Net.WebUi`: `docs/roadmap/webui.md`
   - Current focus: evaluate using `IChatSessionFactory` directly so Web UI stops duplicating `ChatSession` construction logic.
 - `Mcp.Net.Client`: `docs/roadmap/client.md`

@@ -24,11 +24,11 @@
 
 ## Goal
 
-- Revisit the MCP client seam around tool-call cancellation and async disposal now that the bounded read-only filesystem tool surface is in place.
+- Add a bounded `WriteFileTool` for new-file creation on top of the landed read/edit/grep/shell seams.
 
 ## What
 
-- Revisit `IMcpClient` ergonomics once a real caller exists for tool-call cancellation or async disposal.
+- Add `WriteFileTool` as the bounded whole-file creation and overwrite primitive for paths inside `FileSystemToolPolicy.RootPath`.
 
 ## Why
 
@@ -38,29 +38,31 @@
 - `Mcp.Net.Examples.LLMConsole` now exercises `ChatSession` in both MCP and non-MCP modes, including optional built-in local filesystem tools.
 - Abort now appends synthetic cancelled tool results for unfinished parallel tool calls, so `ContinueAsync(...)` can resume from an aborted mixed-result turn with a structurally complete transcript tail.
 - The OpenAI provider path now matches the SDK's streaming tool-call assembly model, and the temporary tool-round guard has been removed so normal coding-agent exploration is no longer artificially capped.
+- `ReadFileTool` now returns mutation-oriented metadata including `contentHash`, encoding/BOM, and newline-style information.
+- `EditFileTool` now enables bounded edits to existing text files, and `run_shell_command` now enables bounded host CLI execution for real coding-agent flows.
 - `Mcp.Net.WebUi` is a legacy adapter layer and should not influence `Mcp.Net.Agent` design decisions; if needed, Web UI can be rebuilt around the runtime that the library actually wants.
 
 ## How
 
-### 1. Revisit the MCP client contract
+### 1. Add bounded `WriteFileTool`
 
-- Decide what cancellation and disposal shape `IMcpClient` should expose once a real caller needs to interrupt or own tool execution cleanly.
-- Preserve the snapshot-based provider boundary while tightening the MCP-facing contract beneath the existing agent/session loop.
+- Scope the first whole-file mutation tool to bounded text writes inside `FileSystemToolPolicy.RootPath`.
+- Keep parent-directory creation, overwrite semantics, and size limits explicit in policy rather than hidden in the tool body.
 
-### 2. Keep the tool surface stable
+### 2. Keep the mutation and process seams coherent
 
-- Do not reopen the just-landed local-tool authoring seam or bounded filesystem policy while revisiting MCP client ergonomics.
-- Keep `ReadFileTool`, `GlobTool`, `ListFilesTool`, and the `LLMConsole` sample green as regression coverage.
+- Keep `ReadFileTool`, `EditFileTool`, `GrepTool`, `GlobTool`, `ListFilesTool`, `RunShellCommandTool`, and the `LLMConsole` sample green as regression coverage while adding the next bounded write primitive.
+- Avoid widening the process surface into persistent sessions or PTY work while the bounded file-mutation seam is still being validated.
 
 ## Scope
 
 - In scope:
-  - revisit the `IMcpClient` seam around cancellation or ownership while preserving the current agent/session runtime contract
-  - preserve the completed `ChatSession` lifecycle, executor, factory, and provider-boundary behavior
+  - add a bounded `WriteFileTool` for new-file creation or explicit overwrite under the current filesystem policy seam
+  - preserve the completed `ChatSession` lifecycle, executor, factory, provider-boundary, and bounded process-tool behavior
 - Out of scope:
-  - further DI cleanup beyond the already-landed `AddToolRegistry()` split
-  - expanding the read-only filesystem surface beyond the landed `ReadFileTool` / `GlobTool` / `ListFilesTool` slice
-  - write/edit tools, shell/process tools, or broad shell/process-policy work
+  - persistent shell sessions, PTY support, background jobs, or arbitrary process-session management
+  - a public structured `run_process` tool surface until a real host needs it
+  - broader fuzzy edit heuristics beyond the landed newline-normalized `EditFileTool` matching
   - new consumer-facing runtime APIs beyond the already-landed continue/turn-summary slice
   - transcript persistence redesign
   - changes to the provider request/stream contract beyond the current lifecycle surface
@@ -68,14 +70,16 @@
 
 ## Current slice
 
-1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
+1. Add `WriteFileTool` for bounded new-file creation and explicit overwrite.
 2. Keep the current tool, lifecycle, executor, and provider-boundary contracts stable.
 
 ## Next slices
 
-1. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-2. Consider hook/extension or branching surfaces only after the core loop is more robust.
-3. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Add `WriteFileTool` for bounded new-file creation and explicit overwrite.
+2. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
+3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+4. Consider hook/extension or branching surfaces only after the core loop is more robust.
+5. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
 
@@ -87,7 +91,11 @@
 - Removed `ToolRegistry` from `AddChatRuntimeServices()` and made it an explicit `AddToolRegistry()` opt-in.
 - Added typed local-tool argument binding through `ToolInvocation.BindArguments<TArgs>()` and `LocalToolBase<TArgs>`, including schema generation for nullable primitive arguments.
 - Added `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
+- Extended `ReadFileTool` metadata with `contentHash`, encoding/BOM, and newline-style information so later mutation tools can use optimistic concurrency and preserve file shape.
 - Added `GlobTool` with compiled segment matching, literal-prefix search-root narrowing, deterministic bounded traversal, and policy-owned skip/depth/result limits on top of the same filesystem seam.
+- Added `EditFileTool` as the first bounded filesystem mutation primitive for existing text files, including optimistic concurrency, one-snapshot batch planning, newline-normalized fallback matching, and atomic temp-file-plus-replace commits.
+- Added `GrepTool` as a bounded local content-search tool backed by ripgrep when available on the host, including root-relative deterministic output, policy-owned truncation limits, and conditional sample registration when `rg` is discoverable.
+- Added `ProcessToolPolicy` plus `RunShellCommandTool` as the first bounded local process-execution seam, including deterministic host-shell resolution, root-bounded working-directory overrides, timeout/process-tree-kill behavior, and bounded head+tail output capture.
 - Updated `Mcp.Net.Examples.LLMConsole` so non-MCP mode now runs through `ChatSession` and can optionally enable the built-in local filesystem tools.
 - Added synthetic cancelled tool results for unfinished parallel tool calls after abort so `ContinueAsync(...)` sees a structurally complete transcript alongside any real results that already finished.
 - Removed the temporary max tool-round guard and its configuration surface so normal coding-agent exploration is not artificially capped by a low per-turn round limit.
@@ -111,6 +119,6 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while adding built-in read-only tools.
-- Verify containment rules, truncation behavior, and executor/runtime integration without regressing provider-boundary behavior.
+- Keep the completed `ChatSession` lifecycle contract stable while adding the next bounded mutation tool.
+- Verify containment rules, overwrite semantics, truncation behavior, and executor/runtime integration without regressing provider-boundary behavior or the landed process-tool seam.
 - Run broader `Mcp.Net.Tests.Agent` coverage after the focused pass is green.

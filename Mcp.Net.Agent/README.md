@@ -109,4 +109,4 @@ Transcript compaction runs automatically before each provider request via `IChat
 
 ## Status
 
-The core loop, tool executor seam, cancellation flow, resume path, awaited turn summaries, and bounded built-in local filesystem tools (`list_files`, `glob_files`, `read_file`) are in place. The next runtime slice is revisiting the `IMcpClient` seam around tool-call cancellation and async disposal without reopening provider-owned conversation state.
+The core loop, tool executor seam, cancellation flow, resume path, awaited turn summaries, and bounded built-in local tools (`list_files`, `glob_files`, `read_file`, `edit_file`, `grep_files`, `run_shell_command`) are in place. `read_file` now exposes content-hash and file-shape metadata for optimistic concurrency, `grep_files` appears automatically when ripgrep is available on the host, `run_shell_command` appears automatically when a supported shell is available on the host, and the next filesystem slice is a bounded `write_file` tool for new-file creation and explicit overwrite.

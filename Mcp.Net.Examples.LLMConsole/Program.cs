@@ -689,16 +689,51 @@ public class Program
         }
 
         _logger.LogInformation(
-            "Enabling local filesystem tools rooted at {RootPath}",
+            "Enabling local tools rooted at {RootPath}",
             rootPath
         );
 
-        var policy = new FileSystemToolPolicy(rootPath);
-        return new ILocalTool[]
+        var fileSystemPolicy = new FileSystemToolPolicy(rootPath);
+        var processPolicy = new ProcessToolPolicy(rootPath);
+        var localTools = new List<ILocalTool>
         {
-            new ListFilesTool(policy),
-            new ReadFileTool(policy),
+            new ListFilesTool(fileSystemPolicy),
+            new GlobTool(fileSystemPolicy),
+            new ReadFileTool(fileSystemPolicy),
+            new EditFileTool(fileSystemPolicy),
         };
+
+        if (GrepTool.TryCreate(fileSystemPolicy, out var grepTool, out var unavailableReason))
+        {
+            localTools.Add(grepTool!);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Skipping grep_files because ripgrep is unavailable: {Reason}",
+                unavailableReason
+            );
+        }
+
+        if (
+            RunShellCommandTool.TryCreate(
+                processPolicy,
+                out var runShellCommandTool,
+                out var shellUnavailableReason
+            )
+        )
+        {
+            localTools.Add(runShellCommandTool!);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Skipping run_shell_command because a supported shell is unavailable: {Reason}",
+                shellUnavailableReason
+            );
+        }
+
+        return localTools;
     }
 
     private static Core.Models.Tools.Tool[] CombineTools(

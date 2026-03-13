@@ -9,7 +9,7 @@ A console-based example application demonstrating how to integrate `Mcp.Net.Agen
 - Interactive provider selection when no provider is specified via CLI/env
 - `ChatSession`-driven chat loop in both MCP and non-MCP modes
 - Dynamic MCP tool discovery and registration
-- Optional built-in local filesystem tools (`list_files`, `read_file`) without any MCP server
+- Optional built-in local filesystem and shell tools without any MCP server
 - Tool selection interface
 - Real-time tool execution visualization
 - Event-based UI architecture
@@ -94,7 +94,7 @@ When no provider is supplied via CLI or environment variables, the client will p
 2. Present a tool selection interface (unless skipped)
 3. Start a `ChatSession` with your chosen LLM
 
-To exercise the built-in non-MCP tools only, skip the server entirely and root the local filesystem tools at the current directory:
+To exercise the built-in non-MCP tools only, skip the server entirely and root the local tools at the current directory:
 
 ```bash
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj -- --local-files
@@ -108,7 +108,9 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 
 That enables:
 - `list_files` for deterministic, bounded directory listings
-- `read_file` for bounded text-file reads with truncation metadata
+- `glob_files` and `grep_files` for bounded file discovery and content search
+- `read_file` and `edit_file` for bounded reads and optimistic-concurrency edits
+- `run_shell_command` for bounded host CLI workflows such as `git`, `dotnet`, `npm`, or `cargo`
 
 ### Command Line Options
 
@@ -128,10 +130,10 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 # Connect to a stdio server process
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio"
 
-# Use built-in local filesystem tools without MCP
+# Use built-in local tools without MCP
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --local-files
 
-# Combine MCP tools with built-in local filesystem tools
+# Combine MCP tools with built-in local tools
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --command "dotnet run --project ../Mcp.Net.Examples.SimpleServer/Mcp.Net.Examples.SimpleServer.csproj -- --stdio" --local-files-root ..
 
 # Disable authentication (for unsecured servers)
