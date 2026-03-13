@@ -34,9 +34,11 @@ public sealed class FileSystemToolPolicy
         bool followReparsePoints = false,
         IEnumerable<string>? skippedDirectoryNames = null,
         int maxEditableBytes = 128 * 1024,
+        int maxWritableBytes = 128 * 1024,
         int maxEditsPerRequest = 16,
         bool requireExpectedContentHashForEdits = true,
         bool allowMutationThroughReparsePoints = false,
+        bool allowCreateDirectories = true,
         int maxDiffPreviewLines = 24,
         int maxGrepMatches = 100,
         int maxGrepOutputBytes = 64 * 1024,
@@ -74,6 +76,11 @@ public sealed class FileSystemToolPolicy
         if (maxEditableBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(maxEditableBytes));
+        }
+
+        if (maxWritableBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxWritableBytes));
         }
 
         if (maxEditsPerRequest <= 0)
@@ -114,9 +121,11 @@ public sealed class FileSystemToolPolicy
         MaxGlobMatches = maxGlobMatches;
         MaxGlobDepth = maxGlobDepth;
         MaxEditableBytes = maxEditableBytes;
+        MaxWritableBytes = maxWritableBytes;
         MaxEditsPerRequest = maxEditsPerRequest;
         RequireExpectedContentHashForEdits = requireExpectedContentHashForEdits;
         AllowMutationThroughReparsePoints = allowMutationThroughReparsePoints;
+        AllowCreateDirectories = allowCreateDirectories;
         MaxDiffPreviewLines = maxDiffPreviewLines;
         MaxGrepMatches = maxGrepMatches;
         MaxGrepOutputBytes = maxGrepOutputBytes;
@@ -150,11 +159,15 @@ public sealed class FileSystemToolPolicy
 
     public int MaxEditableBytes { get; }
 
+    public int MaxWritableBytes { get; }
+
     public int MaxEditsPerRequest { get; }
 
     public bool RequireExpectedContentHashForEdits { get; }
 
     public bool AllowMutationThroughReparsePoints { get; }
+
+    public bool AllowCreateDirectories { get; }
 
     public int MaxDiffPreviewLines { get; }
 

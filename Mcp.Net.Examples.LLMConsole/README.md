@@ -109,7 +109,7 @@ dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csp
 That enables:
 - `list_files` for deterministic, bounded directory listings
 - `glob_files` and `grep_files` for bounded file discovery and content search
-- `read_file` and `edit_file` for bounded reads and optimistic-concurrency edits
+- `read_file`, `write_file`, and `edit_file` for bounded file reads, whole-file writes, and optimistic-concurrency edits
 - `run_shell_command` for bounded host CLI workflows such as `git`, `dotnet`, `npm`, or `cargo`
 
 ### Command Line Options

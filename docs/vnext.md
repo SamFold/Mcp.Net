@@ -14,7 +14,7 @@ Use it to see which component or system tracks are active and where each next sl
 ## Active Tracks
 
 - `Mcp.Net.Agent`: `docs/vnext/agent.md`
-  - Current slice: add `WriteFileTool` on top of the redesigned filesystem-scope seam.
+  - Current slice: revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal now that the local file/process tool stack is in place.
 - `Mcp.Net.WebUi`: `docs/vnext/webui.md`
   - Current slice: decide whether Web UI should compose sessions through `IChatSessionFactory` instead of constructing `ChatSession` inline.
 - `Mcp.Net.Server`: `docs/vnext/server.md`

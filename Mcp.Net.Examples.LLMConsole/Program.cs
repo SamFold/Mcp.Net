@@ -700,6 +700,7 @@ public class Program
             new ListFilesTool(fileSystemPolicy),
             new GlobTool(fileSystemPolicy),
             new ReadFileTool(fileSystemPolicy),
+            new WriteFileTool(fileSystemPolicy),
             new EditFileTool(fileSystemPolicy),
         };
 

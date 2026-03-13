@@ -24,11 +24,11 @@
 
 ## Goal
 
-- Add `WriteFileTool` on top of the redesigned filesystem-scope seam.
+- Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal now that the local file/process tool stack is in place.
 
 ## What
 
-- Add `WriteFileTool` as the whole-file creation and overwrite primitive on top of the redesigned filesystem seam.
+- Revisit the `IMcpClient` seam so callers can eventually get cleaner tool-call cancellation and ownership/disposal behavior.
 
 ## Why
 
@@ -39,15 +39,16 @@
 - Abort now appends synthetic cancelled tool results for unfinished parallel tool calls, so `ContinueAsync(...)` can resume from an aborted mixed-result turn with a structurally complete transcript tail.
 - The OpenAI provider path now matches the SDK's streaming tool-call assembly model, and the temporary tool-round guard has been removed so normal coding-agent exploration is no longer artificially capped.
 - `ReadFileTool` now returns mutation-oriented metadata including `contentHash`, encoding/BOM, and newline-style information.
+- `WriteFileTool` now enables bounded or unbounded whole-file creation with explicit overwrite intent on top of the redesigned filesystem scope seam.
 - `EditFileTool` now enables bounded edits to existing text files, and `run_shell_command` now enables bounded host CLI execution for real coding-agent flows.
 - `Mcp.Net.WebUi` is a legacy adapter layer and should not influence `Mcp.Net.Agent` design decisions; if needed, Web UI can be rebuilt around the runtime that the library actually wants.
 
 ## How
 
-### 1. Add `WriteFileTool`
+### 1. Revisit `IMcpClient`
 
-- Scope the first whole-file mutation tool to text writes that ride on top of the redesigned filesystem policy seam.
-- Keep parent-directory creation, overwrite semantics, and size limits explicit in policy rather than hidden in the tool body.
+- Decide how the client seam should expose cancellation for remote tool calls without reopening provider-owned conversation state.
+- Decide whether async disposal or ownership helpers belong on the session factory side, the client seam itself, or only on concrete host composition paths.
 
 ### 2. Keep the mutation and process seams coherent
 
@@ -57,7 +58,7 @@
 ## Scope
 
 - In scope:
-  - add `WriteFileTool` on top of the redesigned bounded-vs-unbounded filesystem seam
+  - revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal
   - preserve the completed `ChatSession` lifecycle, executor, factory, provider-boundary, and bounded process-tool behavior
 - Out of scope:
   - persistent shell sessions, PTY support, background jobs, or arbitrary process-session management
@@ -70,16 +71,15 @@
 
 ## Current slice
 
-1. Add `WriteFileTool` for whole-file creation and explicit overwrite on top of the redesigned filesystem seam.
+1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
 2. Keep the current tool, lifecycle, executor, and provider-boundary contracts stable.
 
 ## Next slices
 
-1. Add `WriteFileTool` for whole-file creation and explicit overwrite on top of the redesigned filesystem-scope seam.
-2. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
-3. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-4. Consider hook/extension or branching surfaces only after the core loop is more robust.
-5. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
+2. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+3. Consider hook/extension or branching surfaces only after the core loop is more robust.
+4. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
 
@@ -93,6 +93,7 @@
 - Added `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
 - Redesigned `FileSystemToolPolicy` so the built-in file tools can run either bounded to the configured base path or unbounded from that same base path while keeping traversal defaults anchored to the base path.
 - Extended `ReadFileTool` metadata with `contentHash`, encoding/BOM, and newline-style information so later mutation tools can use optimistic concurrency and preserve file shape.
+- Added `WriteFileTool` as the bounded-or-unbounded whole-file creation primitive, including explicit overwrite intent, parent-directory creation, encoded byte limits, encoding/BOM preservation on overwrite, and atomic sibling-temp commits.
 - Added `GlobTool` with compiled segment matching, literal-prefix search-root narrowing, deterministic bounded traversal, and policy-owned skip/depth/result limits on top of the same filesystem seam.
 - Added `EditFileTool` as the first bounded filesystem mutation primitive for existing text files, including optimistic concurrency, one-snapshot batch planning, newline-normalized fallback matching, and atomic temp-file-plus-replace commits.
 - Added `GrepTool` as a bounded local content-search tool backed by ripgrep when available on the host, including root-relative deterministic output, policy-owned truncation limits, and conditional sample registration when `rg` is discoverable.
@@ -120,7 +121,7 @@
 ## Verification checklist
 
 - Add failing regression tests before implementation when feasible.
-- Keep the completed `ChatSession` lifecycle contract stable while adding the next mutation tool.
-- Verify bounded mode remains behaviorally identical for the current file tools while `WriteFileTool` lands on top of the redesigned filesystem seam.
+- Keep the completed `ChatSession` lifecycle contract stable while revisiting the next client/runtime seam.
+- Keep the landed local file/process tool stack stable while revisiting `IMcpClient`.
 - Verify containment rules, overwrite semantics, truncation behavior, and executor/runtime integration without regressing provider-boundary behavior or the landed process-tool seam.
 - Run broader `Mcp.Net.Tests.Agent` coverage after the focused pass is green.

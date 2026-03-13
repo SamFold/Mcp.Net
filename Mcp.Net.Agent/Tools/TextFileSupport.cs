@@ -77,7 +77,7 @@ internal sealed class TextFileSnapshot
         if (length > maxBytes)
         {
             throw new InvalidOperationException(
-                $"File '{Path.GetFileName(fullPath)}' is {length} bytes, which exceeds the editable limit of {maxBytes} bytes."
+                $"File '{Path.GetFileName(fullPath)}' is {length} bytes, which exceeds the configured limit of {maxBytes} bytes."
             );
         }
 
@@ -186,6 +186,7 @@ internal static class TextFileUtilities
     private static readonly UnicodeEncoding Utf16Be = new(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: true);
     private static readonly UTF32Encoding Utf32Le = new(bigEndian: false, byteOrderMark: false, throwOnInvalidCharacters: true);
     private static readonly UTF32Encoding Utf32Be = new(bigEndian: true, byteOrderMark: false, throwOnInvalidCharacters: true);
+    private static readonly TextEncodingInfo Utf8NoBomEncodingInfo = new("utf-8", Utf8, false, 0, []);
 
     public static async Task<ReadFileInspection> InspectForReadAsync(
         string fullPath,
@@ -271,6 +272,8 @@ internal static class TextFileUtilities
 
     public static string ComputeContentHash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
+
+    public static TextEncodingInfo GetUtf8EncodingInfo() => Utf8NoBomEncodingInfo;
 
     public static TextEncodingInfo DetectEncoding(ReadOnlySpan<byte> bytes)
     {
@@ -431,5 +434,71 @@ internal static class TextFileUtilities
         }
 
         return lineNumber;
+    }
+}
+
+internal static class AtomicFileCommitter
+{
+    public static async Task WriteFileAsync(
+        string fullPath,
+        byte[] bytes,
+        bool overwriteExisting,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+        ArgumentNullException.ThrowIfNull(bytes);
+
+        var directory = Path.GetDirectoryName(fullPath)
+            ?? throw new InvalidOperationException(
+                $"File '{fullPath}' does not have a parent directory."
+            );
+        var tempPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():n}.tmp"
+        );
+
+        try
+        {
+            using (var handle = File.OpenHandle(
+                tempPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                FileOptions.Asynchronous | FileOptions.RandomAccess,
+                preallocationSize: bytes.Length
+            ))
+            {
+                await RandomAccess.WriteAsync(handle, bytes, 0, cancellationToken);
+                RandomAccess.FlushToDisk(handle);
+            }
+
+            if (overwriteExisting)
+            {
+                try
+                {
+                    File.Replace(tempPath, fullPath, destinationBackupFileName: null);
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    File.Move(tempPath, fullPath, overwrite: true);
+                }
+                catch (FileNotFoundException)
+                {
+                    File.Move(tempPath, fullPath, overwrite: true);
+                }
+            }
+            else
+            {
+                File.Move(tempPath, fullPath, overwrite: false);
+            }
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
     }
 }

@@ -2,13 +2,13 @@
 
 ## Current focus
 
-- Add `WriteFileTool` now that the filesystem-scope redesign has landed.
-- Keep the local filesystem and process surfaces coherent now that `ReadFileTool` metadata, `GrepTool`, `GlobTool`, `EditFileTool`, `run_shell_command`, and the bounded-vs-unbounded filesystem policy are in place.
+- Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
+- Keep the local filesystem and process surfaces coherent now that `ReadFileTool` metadata, `WriteFileTool`, `GrepTool`, `GlobTool`, `EditFileTool`, `run_shell_command`, and the bounded-vs-unbounded filesystem policy are in place.
 - Preserve the now-completed continue/resume, per-turn summary, guarded event-dispatch, async compaction, and transcript lifecycle-notification surfaces while tool coverage expands.
 
 ## What
 
-- Add `WriteFileTool` as the whole-file creation and overwrite primitive on top of the redesigned filesystem seam.
+- Revisit the `IMcpClient` seam so callers can eventually get cleaner cancellation and ownership/disposal behavior for remote tool execution.
 - Keep `run_shell_command` as the bounded local process tool for host CLI workflows, with host-shell resolution, root-bounded working directories, timeout caps, output truncation, and concurrency limits.
 - Later, replace the entry-count-only compaction trigger with token-aware context budgeting that can target provider max-context limits and reserve output budget explicitly.
 
@@ -22,15 +22,15 @@
 - Bounded filesystem discovery, content search, and surgical mutation tools are now in place.
 - `ReadFileTool` now exposes mutation-oriented metadata, `GlobTool` enables deterministic candidate discovery, `GrepTool` enables bounded content search, and `EditFileTool` enables bounded edits to existing text files.
 - The first bounded process seam is now in place for real CLI workflows (`git`, `dotnet`, `npm`, `cargo`).
-- Agents still cannot create new files or intentionally overwrite whole files without a write primitive, and the filesystem scope model is now ready for that next tool.
+- The local file/process tool stack now covers discovery, content search, reads, writes, edits, and bounded shell execution, so the next runtime gap is the remote-client seam.
 - The current entry-count compactor is a good MVP, but it does not track real context-window pressure or leave deliberate room for model output.
 
 ## How
 
-### Next filesystem slice
+### Next runtime slice
 
-- Add `WriteFileTool` on top of the redesigned filesystem seam.
-- Keep the landed `ReadFileTool` / `EditFileTool` / `GrepTool` / `GlobTool` / `ListFilesTool` / `RunShellCommandTool` surface stable while validating the next file-mutation step.
+- Revisit `IMcpClient` so tool-call cancellation and ownership/disposal behavior are explicit instead of leaking through host-specific composition.
+- Keep the landed `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GrepTool` / `GlobTool` / `ListFilesTool` / `RunShellCommandTool` surface stable while validating that next runtime seam.
 - Preserve the snapshot-based provider boundary and avoid inventing provider-specific escape hatches while the local-tool surface grows.
 
 ### Verification
@@ -41,11 +41,10 @@
 
 ## Near-term sequence
 
-1. Add `WriteFileTool` for whole-file creation and explicit overwrite.
-2. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
-3. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
-4. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
-5. Revisit context-window management with token-aware compaction driven by provider context limits, reserved output budget, and a stronger summarizer path once real conversation pressure justifies it.
+1. Revisit `IMcpClient` ergonomics when a real caller needs `CallTool` cancellation or async disposal.
+2. Revisit session-owned transcript persistence when non-Web UI consumers need durable session state.
+3. Consider hook/extension and conversation-branching surfaces only after the core loop is robust.
+4. Revisit context-window management with token-aware compaction driven by provider context limits, reserved output budget, and a stronger summarizer path once real conversation pressure justifies it.
 
 ## Recently completed
 
@@ -62,6 +61,7 @@
 - `Mcp.Net.Agent` now includes `FileSystemToolPolicy`, `ReadFileTool`, and `ListFilesTool` as the first bounded built-in local filesystem tools, including containment, truncation, and missing-path coverage.
 - `Mcp.Net.Agent` now supports bounded-vs-unbounded filesystem scope through `FileSystemToolPolicy`, while keeping the configured base path as the default traversal and relative-resolution anchor.
 - `ReadFileTool` now returns mutation-oriented metadata including `contentHash`, encoding/BOM, and newline-style information so later mutation tools can use optimistic concurrency and preserve file shape.
+- `Mcp.Net.Agent` now includes `WriteFileTool` as the whole-file creation primitive, including explicit overwrite intent, parent-directory creation, encoded byte limits, encoding/BOM preservation on overwrite, and atomic sibling-temp commits.
 - `Mcp.Net.Agent` now includes `GlobTool` with compiled segment matching, literal-prefix search-root narrowing, deterministic bounded traversal, and policy-owned skip/depth/result limits on top of the same bounded filesystem seam.
 - `Mcp.Net.Agent` now includes `EditFileTool` as the first bounded filesystem mutation primitive for existing text files, including optimistic concurrency, one-snapshot batch planning, newline-normalized fallback matching, and atomic temp-file-plus-replace commits.
 - `Mcp.Net.Agent` now includes `GrepTool` as a bounded local content-search tool backed by ripgrep when the host can provide it, including deterministic root-relative output and policy-owned match/output limits.

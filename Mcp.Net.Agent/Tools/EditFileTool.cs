@@ -148,7 +148,12 @@ public sealed class EditFileTool : LocalToolBase<EditFileTool.Arguments>
                 }
 
                 var bytes = TextFileUtilities.EncodeText(plan.UpdatedText, snapshot.EncodingInfo);
-                await AtomicFileCommitter.ReplaceFileAsync(path.FullPath, bytes, cancellationToken);
+                await AtomicFileCommitter.WriteFileAsync(
+                    path.FullPath,
+                    bytes,
+                    overwriteExisting: true,
+                    cancellationToken
+                );
                 contentHashAfter = TextFileUtilities.ComputeContentHash(bytes);
             }
 
@@ -583,55 +588,4 @@ public sealed class EditFileTool : LocalToolBase<EditFileTool.Arguments>
     }
 
     private readonly record struct DiffPreviewResult(string Preview, bool Truncated);
-
-    private static class AtomicFileCommitter
-    {
-        public static async Task ReplaceFileAsync(
-            string fullPath,
-            byte[] bytes,
-            CancellationToken cancellationToken
-        )
-        {
-            var directory = Path.GetDirectoryName(fullPath)
-                ?? throw new InvalidOperationException(
-                    $"File '{fullPath}' does not have a parent directory."
-                );
-            var tempPath = Path.Combine(
-                directory,
-                $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():n}.tmp"
-            );
-
-            try
-            {
-                using (var handle = File.OpenHandle(
-                    tempPath,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None,
-                    FileOptions.Asynchronous | FileOptions.RandomAccess,
-                    preallocationSize: bytes.Length
-                ))
-                {
-                    await RandomAccess.WriteAsync(handle, bytes, 0, cancellationToken);
-                    RandomAccess.FlushToDisk(handle);
-                }
-
-                try
-                {
-                    File.Replace(tempPath, fullPath, destinationBackupFileName: null);
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    File.Move(tempPath, fullPath, overwrite: true);
-                }
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-            }
-        }
-    }
 }
