@@ -51,10 +51,14 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
                 new
                 {
                     path = path.DisplayPath,
-                    sizeBytes = new FileInfo(path.FullPath).Length,
+                    sizeBytes = readResult.SizeBytes,
                     truncated = readResult.Truncated,
                     truncatedByBytes = readResult.TruncatedByBytes,
                     truncatedByLines = readResult.TruncatedByLines,
+                    contentHash = readResult.ContentHash,
+                    encoding = readResult.Encoding,
+                    bom = readResult.HasBom,
+                    newlineStyle = readResult.NewlineStyle,
                     byteLimit = _policy.MaxReadBytes,
                     lineLimit = _policy.MaxReadLines,
                 }
@@ -76,6 +80,7 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
                         or UnauthorizedAccessException
                         or InvalidOperationException
                         or ArgumentException
+                        or DecoderFallbackException
             )
         {
             return invocation.CreateErrorResult(ex.Message);
@@ -87,54 +92,24 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
         CancellationToken cancellationToken
     )
     {
-        var buffer = new byte[_policy.MaxReadBytes + 1];
-        var totalRead = 0;
-
-        await using var stream = new FileStream(
+        var inspection = await TextFileUtilities.InspectForReadAsync(
             fullPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 4096,
-            FileOptions.Asynchronous | FileOptions.SequentialScan
+            _policy.MaxReadBytes,
+            cancellationToken
         );
-
-        while (totalRead < buffer.Length)
-        {
-            var read = await stream.ReadAsync(
-                buffer.AsMemory(totalRead, buffer.Length - totalRead),
-                cancellationToken
-            );
-            if (read == 0)
-            {
-                break;
-            }
-
-            totalRead += read;
-        }
-
-        var truncatedByBytes = totalRead > _policy.MaxReadBytes;
-        var decoded = DecodeText(buffer, Math.Min(totalRead, _policy.MaxReadBytes));
-        var limited = ApplyLineLimit(decoded);
+        var limited = ApplyLineLimit(inspection.Text);
 
         return new ReadFileResult(
             limited.Text,
-            truncatedByBytes || limited.TruncatedByLines,
-            truncatedByBytes,
-            limited.TruncatedByLines
+            inspection.SizeBytes,
+            inspection.TruncatedByBytes || limited.TruncatedByLines,
+            inspection.TruncatedByBytes,
+            limited.TruncatedByLines,
+            inspection.ContentHash,
+            inspection.EncodingName,
+            inspection.HasBom,
+            inspection.NewlineStyle
         );
-    }
-
-    private static string DecodeText(byte[] buffer, int count)
-    {
-        using var memory = new MemoryStream(buffer, 0, count, writable: false);
-        using var reader = new StreamReader(
-            memory,
-            Encoding.UTF8,
-            detectEncodingFromByteOrderMarks: true
-        );
-
-        return reader.ReadToEnd();
     }
 
     private LineLimitedText ApplyLineLimit(string text)
@@ -164,9 +139,14 @@ public sealed class ReadFileTool : LocalToolBase<ReadFileTool.Arguments>
 
     private sealed record ReadFileResult(
         string Text,
+        long SizeBytes,
         bool Truncated,
         bool TruncatedByBytes,
-        bool TruncatedByLines
+        bool TruncatedByLines,
+        string ContentHash,
+        string Encoding,
+        bool HasBom,
+        string NewlineStyle
     );
 
     public sealed record Arguments(string Path);

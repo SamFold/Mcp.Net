@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using Mcp.Net.Agent.Tools;
@@ -146,6 +148,216 @@ public class ReadFileToolTests
         result.Metadata!.Value.GetProperty("truncatedByLines").GetBoolean().Should().BeTrue();
         result.Metadata!.Value.GetProperty("truncatedByBytes").GetBoolean().Should().BeFalse();
     }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldReturnMutationMetadataForOptimisticConcurrency()
+    {
+        using var root = new TemporaryDirectory();
+        var filePath = Path.Combine(root.Path, "notes.txt");
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        await File.WriteAllTextAsync(filePath, "alpha\r\nbeta\r\n", encoding);
+
+        var tool = new ReadFileTool(new FileSystemToolPolicy(root.Path));
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-1",
+                "read_file",
+                new Dictionary<string, object?> { ["path"] = "notes.txt" }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value.GetProperty("contentHash").GetString().Should().Be(
+            await FileSystemToolTestHelpers.GetContentHashAsync(filePath)
+        );
+        result.Metadata!.Value.GetProperty("encoding").GetString().Should().Be("utf-8");
+        result.Metadata!.Value.GetProperty("bom").GetBoolean().Should().BeTrue();
+        result.Metadata!.Value.GetProperty("newlineStyle").GetString().Should().Be("crlf");
+    }
+}
+
+public class EditFileToolTests
+{
+    [Fact]
+    public async Task ExecuteAsync_ShouldApplyExactEditAndReturnUpdatedHashes()
+    {
+        using var root = new TemporaryDirectory();
+        var filePath = Path.Combine(root.Path, "notes.txt");
+        await File.WriteAllTextAsync(filePath, "alpha\r\nbeta\r\n");
+
+        var policy = new FileSystemToolPolicy(root.Path);
+        var readTool = new ReadFileTool(policy);
+        var editTool = new EditFileTool(policy);
+        var contentHash = await FileSystemToolTestHelpers.ReadContentHashAsync(
+            readTool,
+            "notes.txt"
+        );
+
+        var result = await editTool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-2",
+                "edit_file",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "notes.txt",
+                    ["expectedContentHash"] = contentHash,
+                    ["edits"] = new object?[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["oldText"] = "beta",
+                            ["newText"] = "gamma",
+                        },
+                    },
+                }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value.GetProperty("appliedEditCount").GetInt32().Should().Be(1);
+        result.Metadata!.Value.GetProperty("contentHashBefore").GetString().Should().Be(contentHash);
+        result.Metadata!.Value.GetProperty("contentHashAfter").GetString().Should().NotBe(contentHash);
+        result.Metadata!.Value.GetProperty("firstChangedLine").GetInt32().Should().Be(2);
+        result.Metadata!.Value.GetProperty("usedNormalizedLineEndingMatch").GetBoolean().Should().BeFalse();
+        (await File.ReadAllTextAsync(filePath)).Should().Be("alpha\r\ngamma\r\n");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldUseNormalizedLineEndingMatchAndPreserveFileLineEndings()
+    {
+        using var root = new TemporaryDirectory();
+        var filePath = Path.Combine(root.Path, "notes.txt");
+        await File.WriteAllTextAsync(filePath, "alpha\r\nbeta\r\n");
+
+        var policy = new FileSystemToolPolicy(root.Path);
+        var readTool = new ReadFileTool(policy);
+        var editTool = new EditFileTool(policy);
+        var contentHash = await FileSystemToolTestHelpers.ReadContentHashAsync(
+            readTool,
+            "notes.txt"
+        );
+
+        var result = await editTool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-2",
+                "edit_file",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "notes.txt",
+                    ["expectedContentHash"] = contentHash,
+                    ["edits"] = new object?[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["oldText"] = "alpha\nbeta\n",
+                            ["newText"] = "alpha\ngamma\n",
+                        },
+                    },
+                }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Metadata.Should().NotBeNull();
+        result.Metadata!.Value.GetProperty("usedNormalizedLineEndingMatch").GetBoolean().Should().BeTrue();
+        (await File.ReadAllTextAsync(filePath)).Should().Be("alpha\r\ngamma\r\n");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldRejectStaleContentHash()
+    {
+        using var root = new TemporaryDirectory();
+        var filePath = Path.Combine(root.Path, "notes.txt");
+        await File.WriteAllTextAsync(filePath, "alpha\nbeta\n");
+
+        var tool = new EditFileTool(new FileSystemToolPolicy(root.Path));
+
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-2",
+                "edit_file",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "notes.txt",
+                    ["expectedContentHash"] = "sha256:deadbeef",
+                    ["edits"] = new object?[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["oldText"] = "beta",
+                            ["newText"] = "gamma",
+                        },
+                    },
+                }
+            )
+        );
+
+        result.IsError.Should().BeTrue();
+        result.Text.Should().ContainSingle().Which.Should().Contain("content hash");
+        (await File.ReadAllTextAsync(filePath)).Should().Be("alpha\nbeta\n");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldRejectAmbiguousMatches()
+    {
+        using var root = new TemporaryDirectory();
+        var filePath = Path.Combine(root.Path, "notes.txt");
+        await File.WriteAllTextAsync(filePath, "repeat\nrepeat\n");
+
+        var policy = new FileSystemToolPolicy(root.Path);
+        var readTool = new ReadFileTool(policy);
+        var editTool = new EditFileTool(policy);
+        var contentHash = await FileSystemToolTestHelpers.ReadContentHashAsync(
+            readTool,
+            "notes.txt"
+        );
+
+        var result = await editTool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-2",
+                "edit_file",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "notes.txt",
+                    ["expectedContentHash"] = contentHash,
+                    ["edits"] = new object?[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["oldText"] = "repeat",
+                            ["newText"] = "once",
+                        },
+                    },
+                }
+            )
+        );
+
+        result.IsError.Should().BeTrue();
+        result.Text.Should().ContainSingle().Which.Should().Contain("multiple");
+        (await File.ReadAllTextAsync(filePath)).Should().Be("repeat\nrepeat\n");
+    }
+
+    [Fact]
+    public void Descriptor_ShouldRequirePathHashAndEdits()
+    {
+        using var root = new TemporaryDirectory();
+        var tool = new EditFileTool(new FileSystemToolPolicy(root.Path));
+
+        var schema = tool.Descriptor.InputSchema;
+        schema.GetProperty("type").GetString().Should().Be("object");
+        schema.GetProperty("additionalProperties").GetBoolean().Should().BeFalse();
+
+        var required = schema.GetProperty("required").EnumerateArray().Select(v => v.GetString()).ToArray();
+        required.Should().Contain(new[] { "path", "expectedContentHash", "edits" });
+
+        var editsProperty = schema.GetProperty("properties").GetProperty("edits");
+        editsProperty.GetProperty("type").GetString().Should().Be("array");
+        editsProperty.GetProperty("items").GetProperty("type").GetString().Should().Be("object");
+        tool.Descriptor.Description.Should().Contain("optimistic concurrency");
+    }
 }
 
 public class ListFilesToolTests
@@ -286,5 +498,29 @@ internal sealed class TemporaryDirectory : IDisposable
         {
             Directory.Delete(Path, recursive: true);
         }
+    }
+}
+
+internal static class FileSystemToolTestHelpers
+{
+    public static async Task<string> ReadContentHashAsync(ReadFileTool tool, string path)
+    {
+        var result = await tool.ExecuteAsync(
+            new RuntimeToolInvocation(
+                "call-read",
+                "read_file",
+                new Dictionary<string, object?> { ["path"] = path }
+            )
+        );
+
+        result.IsError.Should().BeFalse();
+        result.Metadata.Should().NotBeNull();
+        return result.Metadata!.Value.GetProperty("contentHash").GetString()!;
+    }
+
+    public static async Task<string> GetContentHashAsync(string filePath)
+    {
+        var bytes = await File.ReadAllBytesAsync(filePath);
+        return $"sha256:{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
     }
 }

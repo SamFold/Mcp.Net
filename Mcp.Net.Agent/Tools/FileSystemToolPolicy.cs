@@ -31,7 +31,16 @@ public sealed class FileSystemToolPolicy
         int maxGlobDepth = 50,
         bool ignoreInaccessible = true,
         bool followReparsePoints = false,
-        IEnumerable<string>? skippedDirectoryNames = null
+        IEnumerable<string>? skippedDirectoryNames = null,
+        int maxEditableBytes = 128 * 1024,
+        int maxEditsPerRequest = 16,
+        bool requireExpectedContentHashForEdits = true,
+        bool allowMutationThroughReparsePoints = false,
+        int maxDiffPreviewLines = 24,
+        int maxGrepMatches = 100,
+        int maxGrepOutputBytes = 64 * 1024,
+        int maxGrepLineLength = 500,
+        int maxGrepContextLines = 3
     )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
@@ -61,12 +70,56 @@ public sealed class FileSystemToolPolicy
             throw new ArgumentOutOfRangeException(nameof(maxGlobDepth));
         }
 
+        if (maxEditableBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxEditableBytes));
+        }
+
+        if (maxEditsPerRequest <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxEditsPerRequest));
+        }
+
+        if (maxDiffPreviewLines <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxDiffPreviewLines));
+        }
+
+        if (maxGrepMatches <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGrepMatches));
+        }
+
+        if (maxGrepOutputBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGrepOutputBytes));
+        }
+
+        if (maxGrepLineLength <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGrepLineLength));
+        }
+
+        if (maxGrepContextLines < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxGrepContextLines));
+        }
+
         RootPath = Path.GetFullPath(rootPath);
         MaxReadBytes = maxReadBytes;
         MaxReadLines = maxReadLines;
         MaxDirectoryEntries = maxDirectoryEntries;
         MaxGlobMatches = maxGlobMatches;
         MaxGlobDepth = maxGlobDepth;
+        MaxEditableBytes = maxEditableBytes;
+        MaxEditsPerRequest = maxEditsPerRequest;
+        RequireExpectedContentHashForEdits = requireExpectedContentHashForEdits;
+        AllowMutationThroughReparsePoints = allowMutationThroughReparsePoints;
+        MaxDiffPreviewLines = maxDiffPreviewLines;
+        MaxGrepMatches = maxGrepMatches;
+        MaxGrepOutputBytes = maxGrepOutputBytes;
+        MaxGrepLineLength = maxGrepLineLength;
+        MaxGrepContextLines = maxGrepContextLines;
         IgnoreInaccessible = ignoreInaccessible;
         FollowReparsePoints = followReparsePoints;
 
@@ -88,6 +141,24 @@ public sealed class FileSystemToolPolicy
     public int MaxGlobMatches { get; }
 
     public int MaxGlobDepth { get; }
+
+    public int MaxEditableBytes { get; }
+
+    public int MaxEditsPerRequest { get; }
+
+    public bool RequireExpectedContentHashForEdits { get; }
+
+    public bool AllowMutationThroughReparsePoints { get; }
+
+    public int MaxDiffPreviewLines { get; }
+
+    public int MaxGrepMatches { get; }
+
+    public int MaxGrepOutputBytes { get; }
+
+    public int MaxGrepLineLength { get; }
+
+    public int MaxGrepContextLines { get; }
 
     public bool IgnoreInaccessible { get; }
 
