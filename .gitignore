@@ -188,3 +188,6 @@ simple_server_codex_config.toml
 # Firecrawl outputs
 .firecrawl/
 artifacts/
+
+# Benchmark test data snapshots
+scripts/*/testdata/
