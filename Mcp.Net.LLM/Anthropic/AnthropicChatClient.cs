@@ -336,6 +336,19 @@ public sealed class AnthropicChatClient : IChatClient
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.Options?.ImageGeneration != null)
+        {
+            return ChatCompletionStream.FromResult(
+                new ChatClientFailure(
+                    ChatErrorSource.Session,
+                    "Anthropic image generation is not supported by Mcp.Net.LLM yet.",
+                    Provider: "anthropic",
+                    Model: _model
+                ),
+                cancellationToken
+            );
+        }
+
         return ChatCompletionStream.Create(
             resultCancellationToken =>
                 GetTurnResultAsync(CreateMessageParameters(request), resultCancellationToken),
@@ -414,16 +427,7 @@ public sealed class AnthropicChatClient : IChatClient
             switch (entry)
             {
                 case UserChatEntry user:
-                    messages.Add(
-                        new Message
-                        {
-                            Role = RoleType.User,
-                            Content = new List<ContentBase>
-                            {
-                                new TextContent { Text = user.Content },
-                            },
-                        }
-                    );
+                    messages.Add(CreateUserMessage(user));
                     break;
                 case AssistantChatEntry assistant:
                     AppendAssistantReplayEntry(messages, assistant);
@@ -436,6 +440,31 @@ public sealed class AnthropicChatClient : IChatClient
 
         return messages;
     }
+
+    private static Message CreateUserMessage(UserChatEntry user) =>
+        new()
+        {
+            Role = RoleType.User,
+            Content = user.ContentParts.Select(ToAnthropicContent).ToList(),
+        };
+
+    private static ContentBase ToAnthropicContent(UserContentPart part) =>
+        part switch
+        {
+            TextUserContentPart text => new TextContent { Text = text.Text },
+            InlineImageUserContentPart image => new ImageContent
+            {
+                Source = new ImageSource
+                {
+                    Type = SourceType.base64,
+                    MediaType = image.MediaType,
+                    Data = Convert.ToBase64String(image.Data.ToArray()),
+                },
+            },
+            _ => throw new InvalidOperationException(
+                $"Unsupported user content part type '{part.GetType().Name}'."
+            ),
+        };
 
     private static void AppendToolResult(ICollection<Message> messages, ToolInvocationResult? result)
     {
@@ -809,6 +838,7 @@ public sealed class AnthropicChatClient : IChatClient
             ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
                 => new TextContent { Text = reasoning.Text! },
             ReasoningAssistantBlock => null,
+            ImageAssistantBlock => null,
             ToolCallAssistantBlock toolCall => new ToolUseContent
             {
                 Id = toolCall.ToolCallId,

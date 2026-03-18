@@ -10,9 +10,13 @@ using Mcp.Net.LLM.Replay;
 using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Chat;
+using OpenAI.Responses;
 using SharedChatToolChoiceKind = Mcp.Net.LLM.Models.ChatToolChoiceKind;
 
 namespace Mcp.Net.LLM.OpenAI;
+
+#pragma warning disable OPENAI001
+#pragma warning disable SCME0001
 
 internal interface IOpenAiChatCompletionInvoker
 {
@@ -60,12 +64,14 @@ public sealed class OpenAiChatClient : IChatClient
 {
     private readonly ILogger<OpenAiChatClient> _logger;
     private readonly ChatClient _chatClient;
+    private readonly ResponsesClient _responsesClient;
     private readonly IOpenAiChatCompletionInvoker _completionInvoker;
+    private readonly IOpenAiResponsesInvoker _responsesInvoker;
     private readonly IChatTranscriptReplayTransformer _replayTransformer;
     private readonly string _modelName;
 
     public OpenAiChatClient(ChatClientOptions options, ILogger<OpenAiChatClient> logger)
-        : this(options, logger, new OpenAiChatCompletionInvoker(), null)
+        : this(options, logger, new OpenAiChatCompletionInvoker(), null, null)
     {
     }
 
@@ -73,17 +79,21 @@ public sealed class OpenAiChatClient : IChatClient
         ChatClientOptions options,
         ILogger<OpenAiChatClient> logger,
         IOpenAiChatCompletionInvoker completionInvoker,
+        IOpenAiResponsesInvoker? responsesInvoker = null,
         IChatTranscriptReplayTransformer? replayTransformer = null
     )
     {
         _logger = logger;
         _completionInvoker =
             completionInvoker ?? throw new ArgumentNullException(nameof(completionInvoker));
+        _responsesInvoker = responsesInvoker ?? new OpenAiResponsesInvoker();
         _replayTransformer = replayTransformer ?? new ChatTranscriptReplayTransformer();
 
         _modelName = ResolveModelName(options);
         _logger.LogInformation("Using OpenAI model: {Model}", _modelName);
-        _chatClient = new OpenAIClient(options.ApiKey).GetChatClient(_modelName);
+        var openAiClient = new OpenAIClient(options.ApiKey);
+        _chatClient = openAiClient.GetChatClient(_modelName);
+        _responsesClient = openAiClient.GetResponsesClient();
     }
 
     private static string ResolveModelName(ChatClientOptions options) =>
@@ -190,6 +200,29 @@ public sealed class OpenAiChatClient : IChatClient
             usage.InputTokenDetails?.CachedTokenCount
         );
         AddAdditionalCount(additionalCounts, "audioOutputTokens", usage.OutputTokenDetails?.AudioTokenCount);
+        AddAdditionalCount(
+            additionalCounts,
+            "reasoningOutputTokens",
+            usage.OutputTokenDetails?.ReasoningTokenCount
+        );
+
+        return new ChatUsage(
+            usage.InputTokenCount,
+            usage.OutputTokenCount,
+            usage.TotalTokenCount,
+            additionalCounts
+        );
+    }
+
+    private static ChatUsage? ToChatUsage(ResponseTokenUsage? usage)
+    {
+        if (usage == null)
+        {
+            return null;
+        }
+
+        var additionalCounts = new Dictionary<string, int>();
+        AddAdditionalCount(additionalCounts, "cachedInputTokens", usage.InputTokenDetails?.CachedTokenCount);
         AddAdditionalCount(
             additionalCounts,
             "reasoningOutputTokens",
@@ -318,6 +351,353 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 
+    private async Task<ChatClientTurnResult> GetImageGenerationTurnResultAsync(
+        ChatClientRequest request,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (
+            !TryCreateImageGenerationRequest(
+                request,
+                out var responseOptions,
+                out var validationFailure
+            )
+        )
+        {
+            return validationFailure!;
+        }
+
+        try
+        {
+            var response = await _responsesInvoker.CreateResponseAsync(
+                _responsesClient,
+                responseOptions!,
+                cancellationToken
+            );
+
+            return BuildImageGenerationAssistantTurn(response, request.Options!.ImageGeneration!);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling OpenAI Responses API: {Message}", ex.Message);
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                $"Error communicating with OpenAI: {ex.Message}",
+                Details: ex.ToString(),
+                Provider: "openai",
+                Model: _modelName
+            );
+        }
+    }
+
+    private async Task<ChatClientTurnResult> GetStreamingImageGenerationTurnResultAsync(
+        ChatClientRequest request,
+        ChannelWriter<ChatClientAssistantTurn> assistantTurnUpdates,
+        CancellationToken cancellationToken
+    )
+    {
+        var result = await GetImageGenerationTurnResultAsync(request, cancellationToken);
+
+        if (result is ChatClientAssistantTurn assistantTurn)
+        {
+            await assistantTurnUpdates.WriteAsync(assistantTurn, cancellationToken);
+        }
+
+        return result;
+    }
+
+    private bool TryCreateImageGenerationRequest(
+        ChatClientRequest request,
+        out CreateResponseOptions? responseOptions,
+        out ChatClientFailure? validationFailure
+    )
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        responseOptions = null;
+        validationFailure = null;
+
+        if (request.Options?.ImageGeneration == null)
+        {
+            throw new InvalidOperationException("Image generation options are required.");
+        }
+
+        var imageGeneration = request.Options.ImageGeneration;
+
+        if (request.Tools.Count > 0)
+        {
+            validationFailure = CreateImageGenerationFailure(
+                "OpenAI image generation does not yet support tools in the same request."
+            );
+            return false;
+        }
+
+        var inputItems = new List<ResponseItem>();
+        if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
+        {
+            inputItems.Add(ResponseItem.CreateSystemMessageItem(request.SystemPrompt));
+        }
+
+        var replayTranscript = _replayTransformer.Transform(
+            request.Transcript,
+            new ReplayTarget("openai", _modelName)
+        );
+
+        foreach (var entry in replayTranscript.Entries)
+        {
+            switch (entry)
+            {
+                case UserChatEntry user:
+                    if (
+                        !TryCreateImageGenerationUserMessage(
+                            user,
+                            out var userMessage,
+                            out var errorMessage
+                        )
+                    )
+                    {
+                        validationFailure = CreateImageGenerationFailure(errorMessage!);
+                        return false;
+                    }
+
+                    inputItems.Add(userMessage!);
+                    break;
+
+                case AssistantChatEntry assistant:
+                    if (
+                        !TryCreateImageGenerationAssistantMessage(
+                            assistant,
+                            out var assistantMessage,
+                            out errorMessage
+                        )
+                    )
+                    {
+                        validationFailure = CreateImageGenerationFailure(errorMessage!);
+                        return false;
+                    }
+
+                    if (assistantMessage != null)
+                    {
+                        inputItems.Add(assistantMessage);
+                    }
+
+                    break;
+
+                case ToolResultChatEntry:
+                    validationFailure = CreateImageGenerationFailure(
+                        "OpenAI image generation does not yet support replaying tool results."
+                    );
+                    return false;
+            }
+        }
+
+        responseOptions = new CreateResponseOptions(_modelName, inputItems)
+        {
+            MaxOutputTokenCount = request.Options?.MaxOutputTokens,
+        };
+
+        if (request.Options?.Temperature is float temperature && IsTemperatureSupported(_modelName))
+        {
+            responseOptions.Temperature = temperature;
+        }
+
+        responseOptions.Tools.Add(
+            ResponseTool.CreateImageGenerationTool(
+                model: imageGeneration.Model ?? "gpt-image-1.5",
+                outputFileFormat: ToOpenAiOutputFileFormat(imageGeneration.OutputFormat)
+            )
+        );
+
+        return true;
+    }
+
+    private static bool TryCreateImageGenerationUserMessage(
+        UserChatEntry user,
+        out MessageResponseItem? userMessage,
+        out string? errorMessage
+    )
+    {
+        if (user.ContentParts.OfType<InlineImageUserContentPart>().Any())
+        {
+            userMessage = null;
+            errorMessage =
+                "OpenAI image generation does not yet support inline image input on the Responses route.";
+            return false;
+        }
+
+        var contentParts = user.ContentParts.OfType<TextUserContentPart>()
+            .Select(static part => ResponseContentPart.CreateInputTextPart(part.Text))
+            .ToArray();
+
+        if (contentParts.Length == 0)
+        {
+            userMessage = null;
+            errorMessage = "OpenAI image generation requires text input.";
+            return false;
+        }
+
+        userMessage = ResponseItem.CreateUserMessageItem(contentParts);
+        errorMessage = null;
+        return true;
+    }
+
+    private static bool TryCreateImageGenerationAssistantMessage(
+        AssistantChatEntry assistant,
+        out MessageResponseItem? assistantMessage,
+        out string? errorMessage
+    )
+    {
+        if (assistant.Blocks.OfType<ToolCallAssistantBlock>().Any())
+        {
+            assistantMessage = null;
+            errorMessage =
+                "OpenAI image generation does not yet support replaying assistant tool calls.";
+            return false;
+        }
+
+        var contentParts = assistant.Blocks
+            .SelectMany(ToImageGenerationAssistantContentParts)
+            .ToArray();
+
+        assistantMessage = contentParts.Length == 0
+            ? null
+            : ResponseItem.CreateAssistantMessageItem(contentParts);
+        errorMessage = null;
+        return true;
+    }
+
+    private static IEnumerable<ResponseContentPart> ToImageGenerationAssistantContentParts(
+        AssistantContentBlock block
+    )
+    {
+        switch (block)
+        {
+            case TextAssistantBlock text when !string.IsNullOrWhiteSpace(text.Text):
+                yield return ResponseContentPart.CreateOutputTextPart(
+                    text.Text,
+                    Array.Empty<ResponseMessageAnnotation>()
+                );
+                yield break;
+
+            case ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text):
+                yield return ResponseContentPart.CreateOutputTextPart(
+                    reasoning.Text!,
+                    Array.Empty<ResponseMessageAnnotation>()
+                );
+                yield break;
+        }
+    }
+
+    private ChatClientTurnResult BuildImageGenerationAssistantTurn(
+        ResponseResult response,
+        ChatImageGenerationOptions imageGenerationOptions
+    )
+    {
+        var blocks = new List<AssistantContentBlock>();
+
+        foreach (var outputItem in response.OutputItems)
+        {
+            switch (outputItem)
+            {
+                case MessageResponseItem message:
+                    AppendResponseMessageBlocks(blocks, message);
+                    break;
+
+                case ReasoningResponseItem reasoning:
+                    var summaryText = reasoning.GetSummaryText();
+                    if (!string.IsNullOrWhiteSpace(summaryText))
+                    {
+                        blocks.Add(
+                            new ReasoningAssistantBlock(
+                                Guid.NewGuid().ToString("n"),
+                                summaryText,
+                                ReasoningVisibility.Visible
+                            )
+                        );
+                    }
+
+                    break;
+
+                case ImageGenerationCallResponseItem image:
+                    blocks.Add(
+                        new ImageAssistantBlock(
+                            Guid.NewGuid().ToString("n"),
+                            image.ImageResultBytes,
+                            ResolveGeneratedImageMediaType(image, imageGenerationOptions.OutputFormat)
+                        )
+                    );
+                    break;
+            }
+        }
+
+        if (blocks.Count == 0)
+        {
+            return new ChatClientFailure(
+                ChatErrorSource.Provider,
+                "Unexpected OpenAI image-generation response: no assistant content",
+                Provider: "openai",
+                Model: _modelName
+            );
+        }
+
+        return new ChatClientAssistantTurn(
+            Guid.NewGuid().ToString("n"),
+            "openai",
+            _modelName,
+            blocks,
+            response.Status?.ToString()?.ToLowerInvariant(),
+            ToChatUsage(response.Usage)
+        );
+    }
+
+    private static void AppendResponseMessageBlocks(
+        ICollection<AssistantContentBlock> blocks,
+        MessageResponseItem message
+    )
+    {
+        foreach (var contentPart in message.Content)
+        {
+            if (
+                contentPart.Kind == ResponseContentPartKind.OutputText
+                && !string.IsNullOrWhiteSpace(contentPart.Text)
+            )
+            {
+                blocks.Add(new TextAssistantBlock(Guid.NewGuid().ToString("n"), contentPart.Text));
+            }
+        }
+    }
+
+    private ChatClientFailure CreateImageGenerationFailure(string message) =>
+        new(
+            ChatErrorSource.Session,
+            message,
+            Provider: "openai",
+            Model: _modelName
+        );
+
+    private static ImageGenerationToolOutputFileFormat ToOpenAiOutputFileFormat(
+        ChatImageOutputFormat outputFormat
+    ) =>
+        outputFormat switch
+        {
+            ChatImageOutputFormat.Png => ImageGenerationToolOutputFileFormat.Png,
+            ChatImageOutputFormat.Jpeg => ImageGenerationToolOutputFileFormat.Jpeg,
+            ChatImageOutputFormat.Webp => ImageGenerationToolOutputFileFormat.Webp,
+            _ => throw new ArgumentOutOfRangeException(nameof(outputFormat)),
+        };
+
+    private static string ResolveGeneratedImageMediaType(
+        ImageGenerationCallResponseItem image,
+        ChatImageOutputFormat fallbackFormat
+    ) =>
+        fallbackFormat switch
+        {
+            ChatImageOutputFormat.Png => "image/png",
+            ChatImageOutputFormat.Jpeg => "image/jpeg",
+            ChatImageOutputFormat.Webp => "image/webp",
+            _ => throw new ArgumentOutOfRangeException(nameof(fallbackFormat)),
+        };
+
     public IChatCompletionStream SendAsync(
         ChatClientRequest request,
         CancellationToken cancellationToken = default
@@ -325,6 +705,11 @@ public sealed class OpenAiChatClient : IChatClient
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (request.Options?.ImageGeneration != null)
+        {
+            return CreateImageGenerationStream(request, cancellationToken);
+        }
 
         var messages = BuildMessages(request);
         var completionOptions = CreateCompletionOptions(request);
@@ -342,6 +727,22 @@ public sealed class OpenAiChatClient : IChatClient
             cancellationToken
         );
     }
+
+    private IChatCompletionStream CreateImageGenerationStream(
+        ChatClientRequest request,
+        CancellationToken cancellationToken
+    ) =>
+        ChatCompletionStream.Create(
+            resultCancellationToken =>
+                GetImageGenerationTurnResultAsync(request, resultCancellationToken),
+            (writer, streamCancellationToken) =>
+                GetStreamingImageGenerationTurnResultAsync(
+                    request,
+                    writer,
+                    streamCancellationToken
+                ),
+            cancellationToken
+        );
 
     private IReadOnlyList<ChatMessage> BuildMessages(ChatClientRequest request)
     {
@@ -362,7 +763,7 @@ public sealed class OpenAiChatClient : IChatClient
             switch (entry)
             {
                 case UserChatEntry user:
-                    messages.Add(new UserChatMessage(user.Content));
+                    messages.Add(CreateUserMessage(user));
                     break;
                 case AssistantChatEntry assistant:
                     AppendAssistantReplayEntry(messages, assistant);
@@ -375,6 +776,28 @@ public sealed class OpenAiChatClient : IChatClient
 
         return messages;
     }
+
+    private static UserChatMessage CreateUserMessage(UserChatEntry user)
+    {
+        var contentParts = user.ContentParts.Select(ToChatMessageContentPart).ToArray();
+
+        return contentParts.Length == 1 && contentParts[0].Kind == ChatMessageContentPartKind.Text
+            ? new UserChatMessage(contentParts[0].Text)
+            : new UserChatMessage(contentParts);
+    }
+
+    private static ChatMessageContentPart ToChatMessageContentPart(UserContentPart part) =>
+        part switch
+        {
+            TextUserContentPart text => ChatMessageContentPart.CreateTextPart(text.Text),
+            InlineImageUserContentPart image => ChatMessageContentPart.CreateImagePart(
+                image.Data,
+                image.MediaType
+            ),
+            _ => throw new InvalidOperationException(
+                $"Unsupported user content part type '{part.GetType().Name}'."
+            ),
+        };
 
     private void AppendAssistantReplayEntry(ICollection<ChatMessage> history, AssistantChatEntry assistant)
     {
@@ -835,3 +1258,6 @@ public sealed class OpenAiChatClient : IChatClient
         }
     }
 }
+
+#pragma warning restore SCME0001
+#pragma warning restore OPENAI001

@@ -247,6 +247,68 @@ public class ChatTranscriptReplayTransformerTests
         toolResult.Result.Text[0].Should().Contain("Missing tool result");
     }
 
+    [Fact]
+    public void Transform_UserWithMultimodalContent_ShouldCloneContentParts()
+    {
+        var transformer = new ChatTranscriptReplayTransformer();
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new UserChatEntry(
+                "user-1",
+                Timestamp(0),
+                new UserContentPart[]
+                {
+                    new TextUserContentPart("describe"),
+                    new InlineImageUserContentPart(BinaryData.FromBytes([1, 2, 3]), "image/png"),
+                },
+                "turn-1"
+            ),
+        };
+
+        var replay = transformer.Transform(transcript, new ReplayTarget("openai", "gpt-5"));
+
+        var user = replay.Entries.OfType<UserChatEntry>().Single();
+        user.ContentParts.Should().HaveCount(2);
+        user.ContentParts.Should().NotBeSameAs(((UserChatEntry)transcript[0]).ContentParts);
+        user.ContentParts[0].Should().BeEquivalentTo(new TextUserContentPart("describe"));
+        user.ContentParts[0].Should().NotBeSameAs(((UserChatEntry)transcript[0]).ContentParts[0]);
+        var imagePart = user.ContentParts[1].Should().BeOfType<InlineImageUserContentPart>().Subject;
+        imagePart.MediaType.Should().Be("image/png");
+        imagePart.Data.ToArray().Should().Equal([1, 2, 3]);
+        imagePart.Should().NotBeSameAs(((UserChatEntry)transcript[0]).ContentParts[1]);
+    }
+
+    [Fact]
+    public void Transform_AssistantImageBlock_ShouldDropImageBlockFromReplay()
+    {
+        var transformer = new ChatTranscriptReplayTransformer();
+        var transcript = new ChatTranscriptEntry[]
+        {
+            new AssistantChatEntry(
+                "assistant-1",
+                Timestamp(0),
+                new AssistantContentBlock[]
+                {
+                    new TextAssistantBlock("text-1", "Here is the image."),
+                    new ImageAssistantBlock(
+                        "image-1",
+                        BinaryData.FromBytes([7, 8, 9]),
+                        "image/png"
+                    ),
+                },
+                "turn-1",
+                "openai",
+                "gpt-5"
+            ),
+        };
+
+        var replay = transformer.Transform(transcript, new ReplayTarget("openai", "gpt-5"));
+
+        var assistant = replay.Entries.OfType<AssistantChatEntry>().Single();
+        assistant.Blocks.Should().ContainSingle();
+        assistant.Blocks[0].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be("Here is the image.");
+    }
+
     private static DateTimeOffset Timestamp(int minutes) =>
         new(2026, 3, 9, 10, minutes, 0, TimeSpan.Zero);
 

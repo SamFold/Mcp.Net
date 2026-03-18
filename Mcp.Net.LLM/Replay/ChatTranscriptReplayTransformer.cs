@@ -102,6 +102,9 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
                     blocks.Add(Clone(toolCall));
                     break;
 
+                case ImageAssistantBlock:
+                    break;
+
                 case ReasoningAssistantBlock reasoning when sameModel:
                     blocks.Add(Clone(reasoning));
                     break;
@@ -144,7 +147,7 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
         && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     private static UserChatEntry Clone(UserChatEntry entry) =>
-        new(entry.Id, entry.Timestamp, entry.Content, entry.TurnId);
+        new(entry.Id, entry.Timestamp, entry.ContentParts.Select(Clone).ToArray(), entry.TurnId);
 
     private static AssistantChatEntry Clone(AssistantChatEntry entry) =>
         new(
@@ -177,8 +180,22 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
             TextAssistantBlock text => Clone(text),
             ReasoningAssistantBlock reasoning => Clone(reasoning),
             ToolCallAssistantBlock toolCall => Clone(toolCall),
+            ImageAssistantBlock image => Clone(image),
             _ => throw new InvalidOperationException(
                 $"Unsupported assistant content block type '{block.GetType().Name}'."
+            ),
+        };
+
+    private static UserContentPart Clone(UserContentPart part) =>
+        part switch
+        {
+            TextUserContentPart text => new TextUserContentPart(text.Text),
+            InlineImageUserContentPart image => new InlineImageUserContentPart(
+                BinaryData.FromBytes(image.Data.ToArray()),
+                image.MediaType
+            ),
+            _ => throw new InvalidOperationException(
+                $"Unsupported user content part type '{part.GetType().Name}'."
             ),
         };
 
@@ -189,6 +206,9 @@ public sealed class ChatTranscriptReplayTransformer : IChatTranscriptReplayTrans
 
     private static ToolCallAssistantBlock Clone(ToolCallAssistantBlock block) =>
         new(block.Id, block.ToolCallId, block.ToolName, new Dictionary<string, object?>(block.Arguments));
+
+    private static ImageAssistantBlock Clone(ImageAssistantBlock block) =>
+        new(block.Id, BinaryData.FromBytes(block.Data.ToArray()), block.MediaType);
 
     private static ToolResultChatEntry CreateMissingToolResultEntry(
         AssistantChatEntry assistant,

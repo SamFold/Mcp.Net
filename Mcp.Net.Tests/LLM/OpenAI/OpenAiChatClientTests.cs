@@ -1,3 +1,6 @@
+#pragma warning disable OPENAI001
+#pragma warning disable SCME0001
+
 using System;
 using System.Collections.Generic;
 using System.ClientModel.Primitives;
@@ -11,7 +14,9 @@ using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.LLM.OpenAI;
 using Microsoft.Extensions.Logging.Abstractions;
+using OpenAI;
 using OpenAI.Chat;
+using OpenAI.Responses;
 using SharedChatToolChoice = Mcp.Net.LLM.Models.ChatToolChoice;
 
 namespace Mcp.Net.Tests.LLM.OpenAI;
@@ -280,6 +285,106 @@ public class OpenAiChatClientTests
             .Select(t => t.FunctionName)
             .Should()
             .BeEquivalentTo("calculate", "weather");
+    }
+
+    [Fact]
+    public async Task SendAsync_WithImageUserContent_ShouldMapUserMessagePartsForChatCompletions()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker
+        );
+
+        try
+        {
+            await client.SendAsync(
+                CreateRequest(
+                    transcript:
+                    [
+                        new UserChatEntry(
+                            "user-1",
+                            DateTimeOffset.UtcNow,
+                            new UserContentPart[]
+                            {
+                                new TextUserContentPart("Describe this image."),
+                                new InlineImageUserContentPart(
+                                    BinaryData.FromBytes([1, 2, 3, 4]),
+                                    "image/png"
+                                ),
+                            },
+                            "turn-1"
+                        ),
+                    ]
+                )
+            ).GetResultAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        completionInvoker.CapturedMessages.Should().NotBeNull();
+        var userMessage = completionInvoker.CapturedMessages!.Single()
+            .Should()
+            .BeOfType<UserChatMessage>()
+            .Subject;
+
+        userMessage.Content.Should().HaveCount(2);
+        userMessage.Content[0].Kind.Should().Be(ChatMessageContentPartKind.Text);
+        userMessage.Content[0].Text.Should().Be("Describe this image.");
+        userMessage.Content[1].Kind.Should().Be(ChatMessageContentPartKind.Image);
+        userMessage.Content[1].ImageBytesMediaType.Should().Be("image/png");
+        userMessage.Content[1].ImageBytes.ToArray().Should().Equal([1, 2, 3, 4]);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithImageGenerationOptions_ShouldUseResponsesRouteAndReturnImageAssistantBlock()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = "gpt-5" };
+
+        var responsesInvoker = new ReturningOpenAiResponsesInvoker(
+            CreateResponseResult(
+                ResponseItem.CreateAssistantMessageItem("Here is the image."),
+                new ImageGenerationCallResponseItem(BinaryData.FromBytes([9, 8, 7]))
+            )
+        );
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker,
+            responsesInvoker
+        );
+
+        var result = await client.SendAsync(
+            CreateRequest(
+                transcript: CreateUserTranscript("Generate a launch poster."),
+                options: new ChatRequestOptions
+                {
+                    ImageGeneration = new ChatImageGenerationOptions
+                    {
+                        Model = "gpt-image-1.5",
+                        OutputFormat = ChatImageOutputFormat.Png,
+                    },
+                }
+            )
+        ).GetResultAsync();
+
+        responsesInvoker.CapturedOptions.Should().NotBeNull();
+        responsesInvoker.CapturedOptions!.Model.Should().Be("gpt-5");
+        responsesInvoker.CapturedOptions.Tools.Should().ContainSingle();
+        completionInvoker.CapturedMessages.Should().BeNull();
+
+        var assistantTurn = result.Should().BeOfType<ChatClientAssistantTurn>().Subject;
+        assistantTurn.Blocks.Should().HaveCount(2);
+        assistantTurn.Blocks[0].Should().BeOfType<TextAssistantBlock>().Which.Text.Should().Be("Here is the image.");
+
+        var imageBlock = assistantTurn.Blocks[1].Should().BeOfType<ImageAssistantBlock>().Subject;
+        imageBlock.MediaType.Should().Be("image/png");
+        imageBlock.Data.ToArray().Should().Equal([9, 8, 7]);
     }
 
     [Fact]
@@ -918,6 +1023,50 @@ public class OpenAiChatClientTests
         return (updates, result);
     }
 
+    private static ResponseResult CreateResponseResult(params ResponseItem[] outputItems)
+    {
+        var constructor = typeof(ResponseResult).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [
+                typeof(IDictionary<string, string>),
+                typeof(float?),
+                typeof(float?),
+                typeof(string),
+                typeof(string),
+                typeof(DateTimeOffset),
+                typeof(ResponseError),
+                typeof(ResponseIncompleteStatusDetails),
+                typeof(IEnumerable<ResponseItem>),
+                typeof(IEnumerable<ResponseItem>),
+                typeof(bool),
+            ],
+            modifiers: null
+        );
+
+        constructor.Should().NotBeNull();
+
+        var response = (ResponseResult)constructor!.Invoke(
+            [
+                new Dictionary<string, string>(),
+                null,
+                null,
+                null!,
+                "response-1",
+                DateTimeOffset.UtcNow,
+                null!,
+                null!,
+                outputItems,
+                Array.Empty<ResponseItem>(),
+                false,
+            ]
+        );
+
+        response.Model = "gpt-5";
+        response.Status = ResponseStatus.Completed;
+        return response;
+    }
+
     private sealed class CapturingChatCompletionInvoker : IOpenAiChatCompletionInvoker
     {
         public IReadOnlyList<ChatMessage>? CapturedMessages { get; private set; }
@@ -968,6 +1117,28 @@ public class OpenAiChatClientTests
             ChatCompletionOptions options,
             CancellationToken cancellationToken
         ) => throw new InvalidOperationException("Streaming completion not expected");
+    }
+
+    private sealed class ReturningOpenAiResponsesInvoker : IOpenAiResponsesInvoker
+    {
+        private readonly ResponseResult _response;
+
+        public ReturningOpenAiResponsesInvoker(ResponseResult response)
+        {
+            _response = response;
+        }
+
+        public CreateResponseOptions? CapturedOptions { get; private set; }
+
+        public Task<ResponseResult> CreateResponseAsync(
+            ResponsesClient client,
+            CreateResponseOptions options,
+            CancellationToken cancellationToken
+        )
+        {
+            CapturedOptions = options;
+            return Task.FromResult(_response);
+        }
     }
 
     private sealed class StreamingChatCompletionInvoker : IOpenAiChatCompletionInvoker
@@ -1072,3 +1243,6 @@ public class OpenAiChatClientTests
             usage!
         );
 }
+
+#pragma warning restore SCME0001
+#pragma warning restore OPENAI001

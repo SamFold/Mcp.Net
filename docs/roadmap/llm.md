@@ -2,7 +2,7 @@
 
 ## Current focus
 
-- `Mcp.Net.LLM` is effectively stable for current `Mcp.Net.Agent` and Web UI needs: the provider boundary, replay model, and request-time execution controls are in place.
+- `Mcp.Net.LLM` now has a multimodal baseline: typed user image input for OpenAI and Anthropic, plus OpenAI image-generation output through the Responses API.
 - Keep the block-based transcript, replay, and streaming-update baseline stable while narrowing `Mcp.Net.LLM` to provider execution concerns.
 - The stateless-executor boundary shift is now live: `ChatSession` owns prompt/tools/transcript state and `Mcp.Net.LLM` executes explicit request snapshots.
 - `Mcp.Net.LLM` is now a standalone provider library: MCP-facing prompt/resource catalog, completion, elicitation, and tool-result conversion all live outside the project.
@@ -14,10 +14,10 @@
 
 ## Near-term sequence
 
-1. No active implementation milestone; keep the current provider boundary stable.
-2. Add the next shared request-time control only when a concrete consumer justifies a portable shape across providers.
+1. Decide whether to add OpenAI upload/file-id support so multimodal input and image output can be combined in one turn.
+2. Decide whether Web UI/session transport should expose typed user multimodal content rather than only the plain-text compatibility projection.
 3. Centralize lightweight model capability helpers only if the current ad hoc checks become a maintenance problem.
-4. Revisit session cancellation only after the MCP client/tool-execution path exposes a clean contract for it.
+4. Revisit richer multimodal transport and cancellation only after the first slice remains stable in consumers.
 
 ## Completed boundary work
 
@@ -30,14 +30,15 @@
 
 ## Next milestone
 
-1. **No active milestone. Keep the provider boundary stable until a new consumer need appears.**
-   - Snapshot streaming stays as the long-term payload for the current baseline.
-   - New work in this lane should be triggered by an actual consumer need, not by speculative parity.
-   - Prefer adding any richer event model above the current snapshot stream rather than replacing the provider contract.
+1. **Typed multimodal transport beyond the current compatibility layer.**
+   - Keep snapshot streaming as the long-term payload for the current baseline.
+   - Keep the shared transcript/provider boundary provider-neutral even though only OpenAI currently emits assistant image output.
+   - Prefer small typed additions over provider-specific option bags or a wider transport rewrite.
 
 ## Recently completed
 
 - Earlier boundary/parity work is complete: typed transcript entries and persistence rehydration, replay degradation rules, durable in-flight assistant updates, OpenAI/Anthropic streaming snapshot support, usage/stop-reason propagation, shared option handling, tool replacement coverage, and agent store/registry hardening.
+- The first multimodal slice is now in place: `UserChatEntry` carries ordered text/image parts, replay drops assistant image blocks, OpenAI and Anthropic accept multimodal user input, and OpenAI image generation returns provider-neutral assistant image blocks.
 - `ToolChoice` is now implemented as the first new shared request-time control: `Auto`, `None`, `Required`, and `Specific` flow through `ChatRequestOptions`, `ChatSession`, and both provider adapters, with Anthropic suppressing tools on shared `None`.
 - Provider streaming now uses an async-stream wrapper rather than callback-based `IProgress<ChatClientAssistantTurn>`, with coverage for Anthropic mixed reasoning/text/tool-call streaming, `ChatSession` transcript upserts, and SignalR transcript update delivery.
 - The `Mcp.Net.Agent` extraction is complete, including the Web UI seam cleanup that removed raw `IChatClient` reach-through for prompt update, conversation reset, and tool refresh.
@@ -47,7 +48,7 @@
 ## Dependencies and risks
 
 - Session-level cancellation remains cross-project work because `IMcpClient.CallTool` currently exposes no `CancellationToken`; it stays out of scope until after the request-defaults cleanup and any later payload-shape work and only comes back when the seam is both needed and worth widening.
-- The next LLM slices should stay focused on request/API shape and avoid reopening another transcript or message-model rewrite now that the project boundary work is complete.
+- The multimodal slice intentionally reopens part of the transcript model; keep follow-on work constrained to typed user transport and OpenAI upload/reference support rather than a broader content-system rewrite.
 
 ## Open questions
 

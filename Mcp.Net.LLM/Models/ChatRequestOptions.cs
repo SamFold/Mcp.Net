@@ -7,4 +7,6 @@ public sealed record ChatRequestOptions
     public int? MaxOutputTokens { get; init; }
 
     public ChatToolChoice? ToolChoice { get; init; }
+
+    public ChatImageGenerationOptions? ImageGeneration { get; init; }
 }

@@ -158,6 +158,7 @@ public sealed record ErrorChatTranscriptEntryDto : ChatTranscriptEntryDto
 [JsonDerivedType(typeof(TextAssistantContentBlockDto), "text")]
 [JsonDerivedType(typeof(ReasoningAssistantContentBlockDto), "reasoning")]
 [JsonDerivedType(typeof(ToolCallAssistantContentBlockDto), "toolCall")]
+[JsonDerivedType(typeof(ImageAssistantContentBlockDto), "image")]
 public abstract record AssistantContentBlockDto
 {
     protected AssistantContentBlockDto(string id)
@@ -221,4 +222,18 @@ public sealed record ToolCallAssistantContentBlockDto : AssistantContentBlockDto
     public string ToolName { get; }
 
     public IReadOnlyDictionary<string, object?> Arguments { get; }
+}
+
+public sealed record ImageAssistantContentBlockDto : AssistantContentBlockDto
+{
+    public ImageAssistantContentBlockDto(string id, string mediaType, byte[] data)
+        : base(id)
+    {
+        MediaType = mediaType;
+        Data = data;
+    }
+
+    public string MediaType { get; }
+
+    public byte[] Data { get; }
 }

@@ -5,6 +5,7 @@ public enum AssistantContentBlockKind
     Text,
     Reasoning,
     ToolCall,
+    Image,
 }
 
 public enum ReasoningVisibility
@@ -32,3 +33,24 @@ public sealed record ToolCallAssistantBlock(
     string ToolName,
     IReadOnlyDictionary<string, object?> Arguments
 ) : AssistantContentBlock(Id, AssistantContentBlockKind.ToolCall);
+
+public sealed record ImageAssistantBlock : AssistantContentBlock
+{
+    public ImageAssistantBlock(string id, BinaryData data, string mediaType)
+        : base(id, AssistantContentBlockKind.Image)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+
+        if (string.IsNullOrWhiteSpace(mediaType))
+        {
+            throw new ArgumentException("Image media type is required.", nameof(mediaType));
+        }
+
+        Data = data;
+        MediaType = mediaType;
+    }
+
+    public BinaryData Data { get; }
+
+    public string MediaType { get; }
+}

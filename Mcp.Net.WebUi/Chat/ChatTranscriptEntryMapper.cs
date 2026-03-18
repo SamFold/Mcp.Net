@@ -94,6 +94,7 @@ internal static class ChatTranscriptEntryMapper
             ReasoningAssistantBlock reasoning when !string.IsNullOrWhiteSpace(reasoning.Text)
                 => reasoning.Text!,
             ToolCallAssistantBlock toolCall => $"Calling tool: {toolCall.ToolName}",
+            ImageAssistantBlock => "[image]",
             _ => string.Empty,
         };
 
@@ -112,6 +113,11 @@ internal static class ChatTranscriptEntryMapper
                 toolCall.ToolCallId,
                 toolCall.ToolName,
                 toolCall.Arguments
+            ),
+            ImageAssistantBlock image => new ImageAssistantContentBlockDto(
+                image.Id,
+                image.MediaType,
+                image.Data.ToArray()
             ),
             _ => throw new InvalidOperationException(
                 $"Unsupported assistant content block type '{block.GetType().Name}'."

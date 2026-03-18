@@ -17,12 +17,36 @@ public abstract record ChatTranscriptEntry(
     string? Model = null
 );
 
-public sealed record UserChatEntry(
-    string Id,
-    DateTimeOffset Timestamp,
-    string Content,
-    string? TurnId = null
-) : ChatTranscriptEntry(Id, ChatTranscriptEntryKind.User, Timestamp, TurnId);
+public sealed record UserChatEntry : ChatTranscriptEntry
+{
+    public UserChatEntry(
+        string Id,
+        DateTimeOffset Timestamp,
+        string Content,
+        string? TurnId = null
+    )
+        : this(Id, Timestamp, [new TextUserContentPart(Content)], TurnId) { }
+
+    public UserChatEntry(
+        string Id,
+        DateTimeOffset Timestamp,
+        IReadOnlyList<UserContentPart> ContentParts,
+        string? TurnId = null
+    )
+        : base(Id, ChatTranscriptEntryKind.User, Timestamp, TurnId)
+    {
+        ArgumentNullException.ThrowIfNull(ContentParts);
+
+        this.ContentParts = ContentParts.ToArray();
+        Content = string.Concat(
+            this.ContentParts.OfType<TextUserContentPart>().Select(static part => part.Text)
+        );
+    }
+
+    public IReadOnlyList<UserContentPart> ContentParts { get; }
+
+    public string Content { get; }
+}
 
 public sealed record AssistantChatEntry(
     string Id,

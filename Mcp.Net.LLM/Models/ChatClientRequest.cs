@@ -27,6 +27,13 @@ public sealed class ChatClientRequest
                 Temperature = options.Temperature,
                 MaxOutputTokens = options.MaxOutputTokens,
                 ToolChoice = options.ToolChoice,
+                ImageGeneration = options.ImageGeneration == null
+                    ? null
+                    : new ChatImageGenerationOptions
+                    {
+                        Model = options.ImageGeneration.Model,
+                        OutputFormat = options.ImageGeneration.OutputFormat,
+                    },
             };
     }
 }

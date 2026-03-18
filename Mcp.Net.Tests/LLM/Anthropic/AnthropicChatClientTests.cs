@@ -172,6 +172,86 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
+    public async Task SendAsync_WithImageUserContent_ShouldMapUserMessageParts()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                [
+                    new UserChatEntry(
+                        "user-1",
+                        DateTimeOffset.UtcNow,
+                        new UserContentPart[]
+                        {
+                            new TextUserContentPart("Describe this image."),
+                            new InlineImageUserContentPart(
+                                BinaryData.FromBytes([4, 5, 6]),
+                                "image/jpeg"
+                            ),
+                        },
+                        "turn-1"
+                    ),
+                ]
+            )
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Messages.Should().ContainSingle();
+
+        var userMessage = messageClient.LastParameters.Messages[0];
+        userMessage.Role.Should().Be(RoleType.User);
+        userMessage.Content.Should().HaveCount(2);
+        userMessage.Content[0].Should().BeOfType<TextContent>().Which.Text.Should().Be("Describe this image.");
+
+        var imageContent = userMessage.Content[1].Should().BeOfType<ImageContent>().Subject;
+        imageContent.Source.Type.Should().Be(SourceType.base64);
+        imageContent.Source.MediaType.Should().Be("image/jpeg");
+        Convert.FromBase64String(imageContent.Source.Data).Should().Equal([4, 5, 6]);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithImageGenerationOptions_ShouldReturnFailure()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = "claude-sonnet-4-5-20250929",
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(options, NullLogger<AnthropicChatClient>.Instance, messageClient);
+
+        var result = await client.SendAsync(
+            CreateRequest(
+                string.Empty,
+                CreateUserTranscript("Generate an image."),
+                options: new ChatRequestOptions
+                {
+                    ImageGeneration = new ChatImageGenerationOptions(),
+                }
+            )
+        ).GetResultAsync();
+
+        var failure = result.Should().BeOfType<ChatClientFailure>().Subject;
+        failure.Source.Should().Be(ChatErrorSource.Session);
+        failure.Message.Should().Contain("image generation");
+        messageClient.LastParameters.Should().BeNull();
+    }
+
+    [Fact]
     public async Task SendMessageAsync_ToolCall_ShouldParseToolInvocation()
     {
         // Arrange

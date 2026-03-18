@@ -4,9 +4,13 @@
 
 - The block-based transcript, replay, and streaming-update architecture is the current baseline:
   - transcript entries: `User`, `Assistant`, `ToolResult`, `Error`
-  - assistant blocks: `Text`, `Reasoning`, `ToolCall`
+  - assistant blocks: `Text`, `Reasoning`, `ToolCall`, `Image`
+  - user content: ordered `Text` and inline `Image` parts
   - typed replay/history transforms remain required architecture
 - Provider adapters preserve structured tool arguments, stream durable assistant updates keyed by stable transcript/block identifiers, and populate `Usage` / `StopReason` metadata on final assistant turns.
+- OpenAI chat-completions and Anthropic messages now accept multimodal user input (`text + image`) through the shared transcript model.
+- OpenAI image generation now routes through the Responses API and translates generated images back into provider-neutral assistant image blocks.
+- Anthropic assistant-image output remains unsupported in `Mcp.Net.LLM`; requests that opt into shared image generation fail fast with a session-side capability error.
 - `Mcp.Net.Agent` owns the agent/session runtime split: agent definitions, stores, session orchestration, tool inventory, and Web UI session-facing seams all live outside `Mcp.Net.LLM`.
 - `IChatClient` is now a request-based provider boundary with a single `SendAsync(ChatClientRequest, ...)` call.
 - Provider streaming now uses an async-stream wrapper: `IChatClient.SendAsync(...)` returns a stream that supports `await foreach` for `ChatClientAssistantTurn` snapshots plus `GetResultAsync()` for the final `ChatClientTurnResult`.
@@ -45,14 +49,13 @@
 
 ## Current slice
 
-No active implementation slice. `Mcp.Net.LLM` is now in a stable/on-demand state for current agent needs:
+No active implementation slice. The multimodal transcript and OpenAI image-generation slice is complete:
 
-1. `ChatClientAssistantTurn` snapshots remain the provider streaming contract.
-   - Current consumers (`ChatSession` transcript upserts and SignalR transcript change delivery) operate correctly on transcript snapshots rather than delta events.
-   - If a future consumer needs finer-grained text/thinking/tool-call events, derive them above `IChatCompletionStream` instead of replacing the provider boundary outright.
-
-2. Reopen this lane only when a concrete consumer forces additional shared provider behavior.
-   - Candidate follow-ups remain another shared request-time control, centralized model capability helpers, or cancellation-related work once the client seam exists.
+1. `UserChatEntry` now carries ordered content parts while preserving a plain-text compatibility projection for existing session/Web UI consumers.
+2. `AssistantContentBlock` now includes `ImageAssistantBlock`, and replay intentionally drops assistant images when rebuilding provider history.
+3. OpenAI chat-completions and Anthropic messages both accept shared text-plus-image user turns.
+4. OpenAI image generation now uses the Responses API, defaults its image tool model to `gpt-image-1.5`, and returns generated image bytes as assistant image blocks.
+5. Anthropic still does not expose native assistant-image output through this provider boundary.
 
 ## Completed background
 
@@ -188,9 +191,10 @@ No active implementation slice. `Mcp.Net.LLM` is now in a stable/on-demand state
 
 ## Next slices
 
-1. Add another shared request-time control only when a concrete consumer justifies a portable shape across providers.
-2. Centralize lightweight model capability checks only if the current ad hoc checks start to multiply.
-3. Revisit cancellation only after the MCP client/tool-execution path exposes a clean `CancellationToken` seam.
+1. Decide whether OpenAI image-generation requests need upload/file-id support so multimodal input and image output can be combined in one turn.
+2. Decide whether Web UI and persisted transcript DTOs should gain typed user-content transport rather than relying on the current plain-text compatibility projection.
+3. Centralize lightweight model capability checks only if the current ad hoc checks start to multiply.
+4. Revisit cancellation only after the MCP client/tool-execution path exposes a clean `CancellationToken` seam.
 
 ## Open decisions
 
@@ -198,6 +202,7 @@ No active implementation slice. `Mcp.Net.LLM` is now in a stable/on-demand state
 - What seam should the MCP client expose so agent/session orchestration can cancel tool execution without inventing provider-specific escape hatches? Note: `IMcpClient.CallTool` currently accepts no `CancellationToken`, so cancellation still requires an MCP client contract change, not just a session-layer parameter addition.
 - Should the LLM-local tool definition live directly in `Mcp.Net.LLM` or in a thinner shared contract package if other projects need to construct provider requests without taking an agent dependency?
 - Where should `ChatTranscriptEntry` live after the `Mcp.Net.Agent` extraction — it is the shared contract between replay (provider layer) and session persistence (agent layer)? Current plan keeps it in `Mcp.Net.LLM` since replay owns the type definitions.
+- Should the Web UI transcript DTO surface raw image bytes directly, or should session/history consumers introduce a derived transport shape for large multimodal payloads?
 
 ## Verification checklist
 
