@@ -66,6 +66,79 @@ public class ChatSessionTests
     }
 
     [Fact]
+    public async Task SendUserMessageAsync_WithUserContentParts_ShouldAppendMultimodalUserEntryAndBuildProviderRequest()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolRegistry = new Mock<IToolRegistry>();
+        var imageBytes = BinaryData.FromBytes([1, 2, 3, 4]);
+
+        llmClient
+            .Setup(c => c.SendAsync(
+                It.Is<ChatClientRequest>(request =>
+                    request.SystemPrompt == string.Empty
+                    && request.Tools.Count == 0
+                    && HasExpectedMultimodalUserInput(request, imageBytes.ToArray())
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(
+                CreateResultStream(
+                    new ChatClientAssistantTurn(
+                        "turn-1",
+                        "openai",
+                        "gpt-5",
+                        new AssistantContentBlock[] { new TextAssistantBlock("text-1", "done") }
+                    )
+                )
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object);
+
+        var summary = await session.SendUserMessageAsync(
+            new UserContentPart[]
+            {
+                new TextUserContentPart("Describe this image."),
+                new InlineImageUserContentPart(imageBytes, "image/png"),
+            }
+        );
+
+        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
+        summary.AddedEntries[0].Should().BeOfType<UserChatEntry>();
+
+        var userEntry = session.Transcript[0].Should().BeOfType<UserChatEntry>().Subject;
+        userEntry.Content.Should().Be("Describe this image.");
+        userEntry.ContentParts.Should().HaveCount(2);
+        userEntry.ContentParts[0].Should().BeOfType<TextUserContentPart>();
+
+        var imagePart = userEntry.ContentParts[1].Should().BeOfType<InlineImageUserContentPart>().Subject;
+        imagePart.MediaType.Should().Be("image/png");
+        imagePart.Data.ToArray().Should().Equal(1, 2, 3, 4);
+    }
+
+    private static bool HasExpectedMultimodalUserInput(
+        ChatClientRequest request,
+        byte[] expectedImageBytes
+    )
+    {
+        var userEntry = request.Transcript.OfType<UserChatEntry>().Single();
+        if (userEntry.Content != "Describe this image." || userEntry.ContentParts.Count != 2)
+        {
+            return false;
+        }
+
+        if (
+            userEntry.ContentParts[0] is not TextUserContentPart { Text: "Describe this image." }
+            || userEntry.ContentParts[1] is not InlineImageUserContentPart image
+        )
+        {
+            return false;
+        }
+
+        return image.MediaType == "image/png"
+            && image.Data.ToArray().SequenceEqual(expectedImageBytes);
+    }
+
+    [Fact]
     public async Task SendUserMessageAsync_ProviderAssistantTurn_ShouldAppendSingleAssistantEntryWithOrderedBlocks()
     {
         var llmClient = new Mock<IChatClient>();
@@ -1361,10 +1434,15 @@ public class ChatSessionTests
         var summary = await sendTask;
 
         var toolResults = session.Transcript.OfType<ToolResultChatEntry>().ToArray();
-        toolResults.Should().ContainSingle();
+        toolResults.Should().HaveCount(2);
         toolResults[0].ToolCallId.Should().Be("call-1");
         toolResults[0].ToolName.Should().Be("search");
         toolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
+        toolResults[0].Result.IsError.Should().BeFalse();
+        toolResults[1].ToolCallId.Should().Be("call-2");
+        toolResults[1].ToolName.Should().Be("calculate");
+        toolResults[1].Result.IsError.Should().BeTrue();
+        toolResults[1].Result.Text.Should().ContainSingle().Which.Should().Be("Tool execution canceled");
 
         toolActivities.Where(activity => activity.ToolCallId == "call-1").Select(activity => activity.ExecutionState)
             .Should()
@@ -1381,12 +1459,144 @@ public class ChatSessionTests
                 ToolCallExecutionState.Cancelled
             );
         summary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
-        summary.AddedEntries.Should().Contain(entry => entry is ToolResultChatEntry);
+        summary.AddedEntries.OfType<ToolResultChatEntry>().Select(entry => entry.ToolCallId)
+            .Should()
+            .Equal("call-1", "call-2");
 
         llmClient.Verify(
             c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()),
             Times.Once
         );
+    }
+
+    [Fact]
+    public async Task ContinueAsync_AfterAbortLeavesUnfinishedParallelToolCalls_ShouldAppendSyntheticCancelledResults()
+    {
+        var llmClient = new Mock<IChatClient>();
+        var toolExecutor = new Mock<IToolExecutor>();
+        var toolRegistry = new Mock<IToolRegistry>(MockBehavior.Strict);
+        var runningToolCalls = new ConcurrentDictionary<string, byte>();
+        var allToolsRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceledToolObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var capturedRequests = new ConcurrentQueue<ChatClientRequest>();
+
+        var completedTool = CreateToolDescriptor("search", "Searches documents");
+        var canceledTool = CreateToolDescriptor("calculate", "Performs calculations");
+        var completedToolResult = new TaskCompletionSource<ToolInvocationResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-1" && invocation.ToolName == "search"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(() => completedToolResult.Task);
+        toolExecutor
+            .Setup(e => e.ExecuteAsync(
+                It.Is<RuntimeToolInvocation>(invocation =>
+                    invocation.ToolCallId == "call-2" && invocation.ToolName == "calculate"
+                ),
+                It.IsAny<CancellationToken>()
+            ))
+            .Returns(
+                async (RuntimeToolInvocation _, CancellationToken cancellationToken) =>
+                {
+                    using var registration = cancellationToken.Register(() =>
+                        canceledToolObserved.TrySetResult()
+                    );
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return CreateToolResult("call-2", "calculate", "unreachable");
+                }
+            );
+
+        var providerCallCount = 0;
+        llmClient
+            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(
+                (ChatClientRequest request, CancellationToken _) =>
+                {
+                    capturedRequests.Enqueue(request);
+                    providerCallCount++;
+
+                    return providerCallCount == 1
+                        ? CreateResultStream(
+                            new ChatClientAssistantTurn(
+                                "turn-1",
+                                "openai",
+                                "gpt-5",
+                                new AssistantContentBlock[]
+                                {
+                                    new ToolCallAssistantBlock(
+                                        "tool-block-1",
+                                        "call-1",
+                                        "search",
+                                        new Dictionary<string, object?> { ["query"] = "weather" }
+                                    ),
+                                    new ToolCallAssistantBlock(
+                                        "tool-block-2",
+                                        "call-2",
+                                        "calculate",
+                                        new Dictionary<string, object?> { ["expression"] = "2+2" }
+                                    ),
+                                }
+                            )
+                        )
+                        : CreateResultStream(
+                            new ChatClientAssistantTurn(
+                                "turn-2",
+                                "openai",
+                                "gpt-5",
+                                new AssistantContentBlock[]
+                                {
+                                    new TextAssistantBlock("text-1", "resumed"),
+                                }
+                            )
+                        );
+                }
+            );
+
+        var session = CreateSession(llmClient.Object, toolRegistry.Object, toolExecutor: toolExecutor.Object);
+        session.RegisterTools(new[] { completedTool, canceledTool });
+        session.ToolCallActivityChanged += (_, args) =>
+        {
+            if (args.ExecutionState == ToolCallExecutionState.Running)
+            {
+                runningToolCalls.TryAdd(args.ToolCallId, 0);
+                if (runningToolCalls.Count == 2)
+                {
+                    allToolsRunning.TrySetResult();
+                }
+            }
+        };
+
+        var sendTask = session.SendUserMessageAsync("run both tools");
+
+        await allToolsRunning.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        completedToolResult.SetResult(CreateToolResult("call-1", "search", "sunny"));
+        session.AbortCurrentTurn();
+
+        await canceledToolObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var firstSummary = await sendTask;
+        var continuedSummary = await session.ContinueAsync();
+
+        firstSummary.Completion.Should().Be(ChatTurnCompletion.Cancelled);
+        continuedSummary.Completion.Should().Be(ChatTurnCompletion.Completed);
+
+        capturedRequests.Should().HaveCount(2);
+        var resumedRequest = capturedRequests.Last();
+        var resumedToolResults = resumedRequest.Transcript.OfType<ToolResultChatEntry>().ToArray();
+
+        resumedToolResults.Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
+        resumedToolResults[0].ToolName.Should().Be("search");
+        resumedToolResults[0].Result.IsError.Should().BeFalse();
+        resumedToolResults[0].Result.Text.Should().ContainSingle().Which.Should().Be("sunny");
+        resumedToolResults[1].ToolName.Should().Be("calculate");
+        resumedToolResults[1].Result.IsError.Should().BeTrue();
+        resumedToolResults[1].Result.Text.Should().ContainSingle().Which.Should().Be("Tool execution canceled");
     }
 
     [Fact]
@@ -1756,76 +1966,6 @@ public class ChatSessionTests
         capturedRequest.Should().NotBeNull();
         capturedRequest!.Options.Should().NotBeNull();
         capturedRequest.Options!.ToolChoice.Should().BeEquivalentTo(ChatToolChoice.ForTool("search"));
-    }
-
-    [Fact]
-    public async Task SendUserMessageAsync_WhenToolCallRoundsExceedLimit_ShouldAppendSessionErrorAndStopLoop()
-    {
-        var llmClient = new Mock<IChatClient>();
-        var toolRegistry = new Mock<IToolRegistry>();
-        var tool = CreateToolDescriptor("list_files", "Lists files");
-        var sendCount = 0;
-
-        llmClient
-            .Setup(c => c.SendAsync(It.IsAny<ChatClientRequest>(), It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                sendCount++;
-                var toolCallId = $"call-{sendCount}";
-                return CreateResultStream(
-                    new ChatClientAssistantTurn(
-                        $"assistant-{sendCount}",
-                        "openai",
-                        "gpt-5",
-                        new AssistantContentBlock[]
-                        {
-                            new ToolCallAssistantBlock(
-                                $"block-{sendCount}",
-                                toolCallId,
-                                "list_files",
-                                new Dictionary<string, object?>()
-                            ),
-                        },
-                        StopReason: "tool_calls"
-                    )
-                );
-            });
-
-        var toolExecutor = new Mock<IToolExecutor>();
-        toolExecutor
-            .Setup(executor => executor.ExecuteAsync(It.IsAny<RuntimeToolInvocation>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(
-                (RuntimeToolInvocation invocation, CancellationToken _) =>
-                    CreateToolResult(invocation.ToolCallId, invocation.ToolName, "ok")
-            );
-
-        var session = CreateSession(
-            llmClient.Object,
-            toolRegistry.Object,
-            toolExecutor: toolExecutor.Object,
-            configuration: new ChatSessionConfiguration
-            {
-                Tools = new[] { tool },
-                MaxToolCallRounds = 2,
-            }
-        );
-
-        var summary = await session.SendUserMessageAsync("loop");
-
-        sendCount.Should().Be(3);
-        toolExecutor.Verify(
-            executor => executor.ExecuteAsync(It.IsAny<RuntimeToolInvocation>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2)
-        );
-        summary.Completion.Should().Be(ChatTurnCompletion.Completed);
-        session.Transcript
-            .OfType<ErrorChatEntry>()
-            .Should()
-            .ContainSingle(error =>
-                error.Source == ChatErrorSource.Session
-                && error.Message.Contains("maximum tool-call rounds", StringComparison.Ordinal)
-            );
-        session.Transcript.OfType<ToolResultChatEntry>().Select(entry => entry.ToolCallId).Should().Equal("call-1", "call-2");
     }
 
     [Fact]

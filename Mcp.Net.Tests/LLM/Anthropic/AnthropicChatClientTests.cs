@@ -19,6 +19,32 @@ namespace Mcp.Net.Tests.LLM.Anthropic;
 public class AnthropicChatClientTests
 {
     [Fact]
+    public async Task SendAsync_WithMissingModel_ShouldUseLatestAnthropicDefault()
+    {
+        var options = new ChatClientOptions
+        {
+            ApiKey = "test",
+            Model = string.Empty,
+        };
+
+        var messageClient = new StubAnthropicMessageClient(
+            new ContentBase[] { new TextContent { Text = "ok" } }
+        );
+        var client = new AnthropicChatClient(
+            options,
+            NullLogger<AnthropicChatClient>.Instance,
+            messageClient
+        );
+
+        await client.SendAsync(
+            CreateRequest(string.Empty, CreateUserTranscript("hi"))
+        ).GetResultAsync();
+
+        messageClient.LastParameters.Should().NotBeNull();
+        messageClient.LastParameters!.Model.Should().Be("claude-sonnet-4-6");
+    }
+
+    [Fact]
     public async Task SendMessageAsync_ProbeReasoningResponse_ShouldReturnReasoningAndTextBlocksInOrder()
     {
         var fixture = AnthropicReasoningFixture.Load();

@@ -7,7 +7,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Anthropic.SDK;
 using Anthropic.SDK.Common;
-using Anthropic.SDK.Constants;
 using Anthropic.SDK.Messaging;
 using OpenAI;
 using OpenAI.Chat;
@@ -293,15 +292,15 @@ internal static class ProbePlanner
     private static string GetDefaultOpenAiModel(string scenario) =>
         scenario switch
         {
-            "reasoning" => "gpt-5.1",
-            _ => "gpt-5",
+            "reasoning" => "gpt-5.4",
+            _ => "gpt-5.4",
         };
 
     private static string GetDefaultAnthropicModel(string scenario) =>
         scenario switch
         {
-            "reasoning" => AnthropicModels.Claude46Sonnet,
-            _ => AnthropicModels.Claude45Sonnet,
+            "reasoning" => "claude-sonnet-4-6",
+            _ => "claude-sonnet-4-6",
         };
 
     private static string GetDefaultPrompt(string provider, string scenario) =>

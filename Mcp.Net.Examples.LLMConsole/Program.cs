@@ -511,16 +511,11 @@ public class Program
     }
 
     /// <summary>
-    /// Defaults to Claude Sonnet 4.5 for Anthropic and GPT-5 for OpenAI
+    /// Defaults to Claude Sonnet 4.6 for Anthropic and GPT-5.4 for OpenAI
     /// </summary>
     private static string GetDefaultModel(LlmProvider provider)
     {
-        return provider switch
-        {
-            LlmProvider.OpenAI => "gpt-5",
-            LlmProvider.Anthropic => "claude-sonnet-4-5-20250929",
-            _ => "gpt-5",
-        };
+        return ProviderModelDefaults.GetDefaultChatModel(provider);
     }
 
     private static async Task<IMcpClient> ConnectToMcpServer(

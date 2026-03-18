@@ -80,7 +80,6 @@ public class ChatSession : IChatSessionEvents
         StringComparer.OrdinalIgnoreCase
     );
     private ChatRequestOptions? _requestDefaults;
-    private int _maxToolCallRounds = ChatSessionConfiguration.DefaultMaxToolCallRounds;
     private string? _sessionId;
     private string _systemPrompt = string.Empty;
     private DateTime _createdAt;
@@ -195,7 +194,6 @@ public class ChatSession : IChatSessionEvents
             ThrowIfProcessingUnsafe();
             SetSystemPromptUnsafe(configuration.SystemPrompt);
             SetRequestDefaultsUnsafe(configuration.RequestDefaults);
-            SetMaxToolCallRoundsUnsafe(configuration.MaxToolCallRounds);
             RegisterToolsUnsafe(configuration.Tools);
         }
     }
@@ -258,12 +256,39 @@ public class ChatSession : IChatSessionEvents
         CancellationToken cancellationToken = default
     )
     {
+        ArgumentNullException.ThrowIfNull(message);
+
+        return await SendUserMessageAsync(
+            [new TextUserContentPart(message)],
+            cancellationToken
+        );
+    }
+
+    public async Task<ChatTurnSummary> SendUserMessageAsync(
+        IReadOnlyList<UserContentPart> contentParts,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(contentParts);
+
+        if (contentParts.Count == 0)
+        {
+            throw new ArgumentException(
+                "A user message must contain at least one content part.",
+                nameof(contentParts)
+            );
+        }
+
         var activeTurn = BeginTurn(cancellationToken);
         var turn = new TurnExecutionState();
 
         try
         {
-            return await SendUserMessageCoreAsync(message, turn, activeTurn.CancellationToken);
+            return await SendUserMessageCoreAsync(
+                CreateUserEntry(contentParts, turn.TurnId),
+                turn,
+                activeTurn.CancellationToken
+            );
         }
         catch (OperationCanceledException) when (activeTurn.CancellationToken.IsCancellationRequested)
         {
@@ -323,7 +348,7 @@ public class ChatSession : IChatSessionEvents
     }
 
     private async Task<ChatTurnSummary> SendUserMessageCoreAsync(
-        string message,
+        UserChatEntry userEntry,
         TurnExecutionState turn,
         CancellationToken cancellationToken
     )
@@ -331,18 +356,21 @@ public class ChatSession : IChatSessionEvents
         cancellationToken.ThrowIfCancellationRequested();
         _lastActivityAt = DateTime.UtcNow;
 
-        AppendTranscript(
-            new UserChatEntry(
-                Guid.NewGuid().ToString("n"),
-                DateTimeOffset.UtcNow,
-                message,
-                turn.TurnId
-            ),
-            turn
-        );
+        AppendTranscript(userEntry, turn);
 
         return await RunTurnLoopAsync(turn, cancellationToken);
     }
+
+    private static UserChatEntry CreateUserEntry(
+        IReadOnlyList<UserContentPart> contentParts,
+        string turnId
+    ) =>
+        new(
+            Guid.NewGuid().ToString("n"),
+            DateTimeOffset.UtcNow,
+            contentParts.ToArray(),
+            turnId
+        );
 
     private async Task<ChatTurnSummary> ContinueCoreAsync(
         TurnExecutionState turn,
@@ -361,8 +389,6 @@ public class ChatSession : IChatSessionEvents
         CancellationToken cancellationToken
     )
     {
-        var toolCallRoundCount = 0;
-
         try
         {
             var request = await BuildRequestAsync(cancellationToken);
@@ -379,22 +405,6 @@ public class ChatSession : IChatSessionEvents
                 var toolCalls = assistantTurn.Blocks.OfType<ToolCallAssistantBlock>().ToList();
                 if (toolCalls.Count == 0)
                 {
-                    break;
-                }
-
-                toolCallRoundCount++;
-                if (toolCallRoundCount > _maxToolCallRounds)
-                {
-                    AppendTranscript(
-                        ToErrorEntry(
-                            new ChatClientFailure(
-                                ChatErrorSource.Session,
-                                $"The assistant exceeded the maximum tool-call rounds for a single turn ({_maxToolCallRounds})."
-                            ),
-                            turn.TurnId
-                        ),
-                        turn
-                    );
                     break;
                 }
 
@@ -518,7 +528,7 @@ public class ChatSession : IChatSessionEvents
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                AppendCompletedToolResults(toolCalls, tasks, turn);
+                AppendResolvedToolResultsAfterCancellation(toolCalls, tasks, turn);
                 throw;
             }
 
@@ -656,7 +666,7 @@ public class ChatSession : IChatSessionEvents
         }
     }
 
-    private void AppendCompletedToolResults(
+    private void AppendResolvedToolResultsAfterCancellation(
         IReadOnlyList<ToolCallAssistantBlock> toolCalls,
         IReadOnlyList<Task<ToolInvocationResult>> tasks,
         TurnExecutionState turn
@@ -664,14 +674,31 @@ public class ChatSession : IChatSessionEvents
     {
         for (var index = 0; index < toolCalls.Count; index++)
         {
-            if (!tasks[index].IsCompletedSuccessfully)
+            if (tasks[index].IsCompletedSuccessfully)
             {
+                AppendToolResultTranscript(toolCalls[index], tasks[index].Result, turn);
                 continue;
             }
 
-            AppendToolResultTranscript(toolCalls[index], tasks[index].Result, turn);
+            if (tasks[index].IsCanceled)
+            {
+                AppendToolResultTranscript(
+                    toolCalls[index],
+                    CreateCancelledToolResult(toolCalls[index]),
+                    turn
+                );
+            }
         }
     }
+
+    private static ToolInvocationResult CreateCancelledToolResult(
+        ToolCallAssistantBlock toolCall
+    ) =>
+        ToolInvocationResults.Error(
+            toolCall.ToolCallId,
+            toolCall.ToolName,
+            "Tool execution canceled"
+        );
 
     private void AppendToolResultTranscript(
         ToolCallAssistantBlock toolCall,
@@ -733,16 +760,6 @@ public class ChatSession : IChatSessionEvents
 
     private void SetRequestDefaultsUnsafe(ChatRequestOptions? requestDefaults) =>
         _requestDefaults = requestDefaults;
-
-    private void SetMaxToolCallRoundsUnsafe(int maxToolCallRounds)
-    {
-        if (maxToolCallRounds <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maxToolCallRounds));
-        }
-
-        _maxToolCallRounds = maxToolCallRounds;
-    }
 
     private void RegisterToolsUnsafe(IEnumerable<Tool> tools)
     {

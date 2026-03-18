@@ -141,7 +141,7 @@ The SimpleServer includes the following example tools:
 
 - `model_catalog.list_models`: Calls the OpenAI and/or Anthropic model APIs and returns the latest model identifiers, summaries, and simple metadata. The tool accepts optional parameters for provider filtering (`openai`, `anthropic`, or both), substring matching (e.g., `"sonnet"`), maximum results per provider, and whether to include metadata.  
   - Set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` before launching the server so the tool can authenticate with the respective provider APIs.
-  - Useful for keeping the LLM console or other clients aware of the newest model variants (for example `gpt-5`, `o3-pro`, or `claude-sonnet-4-5-20250929`).
+  - Useful for keeping the LLM console or other clients aware of the newest model variants (for example `gpt-5.4`, `gpt-5.4-mini`, or `claude-sonnet-4-6`).
 
 ### C# Code Runner Tools
 

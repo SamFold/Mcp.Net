@@ -1,4 +1,3 @@
-using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
 using Mcp.Net.WebUi.LLM;
 
@@ -8,24 +7,24 @@ public static class LlmSettingsFactory
 {
     public static DefaultLlmSettings CreateDefaultSettings(
         IConfiguration configuration,
-        ILogger logger
-    )
+        ILogger logger)
     {
         var providerName =
             configuration["LlmProvider"]
             ?? Environment.GetEnvironmentVariable("LLM_PROVIDER")
             ?? "anthropic";
 
-        var provider =
-            providerName.ToLower() == "openai" ? LlmProvider.OpenAI : LlmProvider.Anthropic;
+        var provider = providerName.Equals("openai", StringComparison.OrdinalIgnoreCase)
+            ? LlmProvider.OpenAI
+            : LlmProvider.Anthropic;
 
         var modelName =
             configuration["LlmModel"]
             ?? Environment.GetEnvironmentVariable("LLM_MODEL")
-            ?? (provider == LlmProvider.OpenAI ? "gpt-5" : "claude-sonnet-4-5-20250929");
+            ?? ProviderModelDefaults.GetDefaultChatModel(provider);
 
         logger.LogInformation(
-            "Default LLM settings - provider: {Provider}, model: {Model}",
+            "Default LLM settings — provider: {Provider}, model: {Model}",
             provider,
             modelName
         );
@@ -34,8 +33,6 @@ public static class LlmSettingsFactory
         {
             Provider = provider,
             ModelName = modelName,
-            DefaultSystemPrompt =
-                "You are a helpful assistant with access to various tools including calculators and Warhammer 40k themed functions. Use these tools when appropriate.",
         };
     }
 }

@@ -24,6 +24,39 @@ namespace Mcp.Net.Tests.LLM.OpenAI;
 public class OpenAiChatClientTests
 {
     [Fact]
+    public async Task SendAsync_WithMissingModel_ShouldUseLatestOpenAiDefault()
+    {
+        var options = new ChatClientOptions { ApiKey = "test", Model = string.Empty };
+
+        var responsesInvoker = new ReturningOpenAiResponsesInvoker(
+            CreateResponseResult(ResponseItem.CreateAssistantMessageItem("ok"))
+        );
+        var completionInvoker = new CapturingChatCompletionInvoker();
+        var client = new OpenAiChatClient(
+            options,
+            NullLogger<OpenAiChatClient>.Instance,
+            completionInvoker,
+            responsesInvoker
+        );
+
+        await client.SendAsync(
+            CreateRequest(
+                transcript: CreateUserTranscript("Generate an icon."),
+                options: new ChatRequestOptions
+                {
+                    ImageGeneration = new ChatImageGenerationOptions
+                    {
+                        OutputFormat = ChatImageOutputFormat.Png,
+                    },
+                }
+            )
+        ).GetResultAsync();
+
+        responsesInvoker.CapturedOptions.Should().NotBeNull();
+        responsesInvoker.CapturedOptions!.Model.Should().Be("gpt-5.4");
+    }
+
+    [Fact]
     public async Task SendMessageAsync_ShouldPopulateUsageAndStopReasonOnAssistantTurn()
     {
         const string systemPrompt = "OpenAI configured prompt";

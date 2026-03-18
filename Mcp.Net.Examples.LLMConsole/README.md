@@ -5,7 +5,7 @@ A console-based example application demonstrating how to integrate `Mcp.Net.Agen
 ## Features
 
 - Interactive console-based chat UI
-- Support for OpenAI (GPT-5) and Anthropic (Claude Sonnet 4.5) models
+- Support for OpenAI (GPT-5.4 family) and Anthropic (Claude 4.6 / Haiku 4.5) models
 - Interactive provider selection when no provider is specified via CLI/env
 - `ChatSession`-driven chat loop in both MCP and non-MCP modes
 - Dynamic MCP tool discovery and registration
@@ -119,7 +119,7 @@ That enables:
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --provider=openai
 
 # Specify a different model
-dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --model=gpt-5
+dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --model=gpt-5.4
 
 # Connect to SSE with client-credentials auth (default)
 dotnet run --project Mcp.Net.Examples.LLMConsole/Mcp.Net.Examples.LLMConsole.csproj --url http://localhost:5000/mcp

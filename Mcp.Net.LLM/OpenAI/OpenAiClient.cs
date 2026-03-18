@@ -97,7 +97,7 @@ public sealed class OpenAiChatClient : IChatClient
     }
 
     private static string ResolveModelName(ChatClientOptions options) =>
-        string.IsNullOrWhiteSpace(options.Model) ? "gpt-5" : options.Model;
+        string.IsNullOrWhiteSpace(options.Model) ? ProviderModelDefaults.OpenAiChat : options.Model;
 
     private ChatCompletionOptions CreateCompletionOptions(ChatClientRequest request)
     {
@@ -503,7 +503,7 @@ public sealed class OpenAiChatClient : IChatClient
 
         responseOptions.Tools.Add(
             ResponseTool.CreateImageGenerationTool(
-                model: imageGeneration.Model ?? "gpt-image-1.5",
+                model: imageGeneration.Model ?? ProviderModelDefaults.OpenAiImageGeneration,
                 outputFileFormat: ToOpenAiOutputFileFormat(imageGeneration.OutputFormat)
             )
         );

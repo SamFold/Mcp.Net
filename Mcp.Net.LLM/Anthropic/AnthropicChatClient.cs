@@ -46,7 +46,7 @@ public sealed class AnthropicChatClient : IChatClient
         // Determine the model to use
         if (string.IsNullOrEmpty(options.Model) || !options.Model.StartsWith("claude"))
         {
-            _model = "claude-sonnet-4-5-20250929"; // Default
+            _model = ProviderModelDefaults.AnthropicChat;
             _logger.LogWarning(
                 "Invalid or missing model name '{ModelName}', using default model: {DefaultModel}",
                 options.Model,

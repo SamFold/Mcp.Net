@@ -49,13 +49,11 @@
 
 ## Current slice
 
-No active implementation slice. The multimodal transcript and OpenAI image-generation slice is complete:
+No active implementation slice. The provider/model baseline refresh is complete:
 
-1. `UserChatEntry` now carries ordered content parts while preserving a plain-text compatibility projection for existing session/Web UI consumers.
-2. `AssistantContentBlock` now includes `ImageAssistantBlock`, and replay intentionally drops assistant images when rebuilding provider history.
-3. OpenAI chat-completions and Anthropic messages both accept shared text-plus-image user turns.
-4. OpenAI image generation now uses the Responses API, defaults its image tool model to `gpt-image-1.5`, and returns generated image bytes as assistant image blocks.
-5. Anthropic still does not expose native assistant-image output through this provider boundary.
+1. Anthropic and OpenAI chat defaults now point at `claude-sonnet-4-6` and `gpt-5.4`.
+2. `ProviderModelDefaults` now centralizes the runtime default chat and image-generation model IDs.
+3. Web UI settings, examples, scripts, and readmes are aligned with the runtime defaults so the repo no longer advertises stale model IDs.
 
 ## Completed background
 
@@ -192,9 +190,15 @@ No active implementation slice. The multimodal transcript and OpenAI image-gener
 ## Next slices
 
 1. Decide whether OpenAI image-generation requests need upload/file-id support so multimodal input and image output can be combined in one turn.
-2. Decide whether Web UI and persisted transcript DTOs should gain typed user-content transport rather than relying on the current plain-text compatibility projection.
-3. Centralize lightweight model capability checks only if the current ad hoc checks start to multiply.
-4. Revisit cancellation only after the MCP client/tool-execution path exposes a clean `CancellationToken` seam.
+2. Centralize lightweight model capability checks only if the current ad hoc checks start to multiply.
+3. Revisit cancellation only after the MCP client/tool-execution path exposes a clean `CancellationToken` seam.
+
+## Recently completed
+
+- Refreshed the default Anthropic and OpenAI chat model IDs to `claude-sonnet-4-6` and `gpt-5.4` while keeping OpenAI image generation on `gpt-image-1.5`.
+- Added `ProviderModelDefaults` so provider adapters and callers share one runtime source of truth for default model selection.
+- Aligned Web UI defaults, example programs, probe/smoke scripts, and user-facing readmes with the refreshed runtime defaults.
+- Web UI transcript/history DTOs now preserve typed user content parts, so text-plus-image user turns no longer collapse to plain text when they cross the browser/session boundary.
 
 ## Open decisions
 

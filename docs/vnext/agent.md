@@ -72,16 +72,19 @@
 ## Current slice
 
 1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
-2. Keep the current tool, lifecycle, executor, and provider-boundary contracts stable.
+2. Keep the new multimodal `SendUserMessageAsync(IReadOnlyList<UserContentPart>, ...)` path stable while revisiting client ownership and cancellation seams.
+3. Avoid reopening provider-owned conversation state or muddying the session/runtime boundary while evolving the MCP client surface.
 
 ## Next slices
 
-1. Revisit `IMcpClient` ergonomics around tool-call cancellation and async disposal.
-2. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
-3. Consider hook/extension or branching surfaces only after the core loop is more robust.
-4. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
+1. Revisit session-owned transcript persistence when non-Web UI consumers need durable conversation state.
+2. Consider hook/extension or branching surfaces only after the core loop is more robust.
+3. Revisit context-window management with stronger token-aware triggers or summarizer-backed compaction only when real pressure justifies it.
 
 ## Recently completed
+
+- Added typed multimodal user-input support to `ChatSession`, including a `SendUserMessageAsync(IReadOnlyList<UserContentPart>, ...)` overload that preserves the existing string-based convenience path.
+- Preserved turn summaries, transcript lifecycle, tool execution, compaction, and provider-boundary behavior while carrying ordered text+image content into `ChatClientRequest`.
 
 - Added cancellation-token flow through `SendUserMessageAsync(...)`, provider requests, and tool execution in `ChatSession`.
 - Defined deterministic abort behavior for provider waits and tool execution, including partial tool-result persistence for work that finished before cancellation.

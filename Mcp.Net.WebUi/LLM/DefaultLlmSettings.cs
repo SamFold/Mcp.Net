@@ -8,6 +8,6 @@ namespace Mcp.Net.WebUi.LLM;
 public class DefaultLlmSettings
 {
     public LlmProvider Provider { get; set; } = LlmProvider.Anthropic;
-    public string ModelName { get; set; } = "claude-sonnet-4-5-20250929";
+    public string ModelName { get; set; } = ProviderModelDefaults.AnthropicChat;
     public string DefaultSystemPrompt { get; set; } = "You are a helpful assistant.";
 }

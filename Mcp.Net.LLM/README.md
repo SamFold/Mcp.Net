@@ -19,14 +19,14 @@ public interface IChatClient
 
 | Provider | Package | Models |
 |----------|---------|--------|
-| Anthropic | `Anthropic.SDK` | Claude Sonnet 4.5, Claude Opus 4, etc. |
-| OpenAI | `OpenAI` | GPT-5, o1, etc. |
+| Anthropic | `Anthropic.SDK` | Claude Sonnet 4.6, Claude Opus 4.6, Claude Haiku 4.5, etc. |
+| OpenAI | `OpenAI` | GPT-5.4, GPT-5.4-mini, GPT-5.4-nano, etc. |
 
 Create clients through the factory:
 
 ```csharp
 var factory = new ChatClientFactory(openAiLogger, anthropicLogger);
-IChatClient client = factory.Create(LlmProvider.Anthropic, new ChatClientOptions { Model = "claude-sonnet-4-5-20250929" });
+IChatClient client = factory.Create(LlmProvider.Anthropic, new ChatClientOptions { Model = "claude-sonnet-4-6" });
 ```
 
 ## Key types
