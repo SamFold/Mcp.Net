@@ -4,16 +4,14 @@ using Mcp.Net.Agent.Events;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Models;
 using Mcp.Net.Agent.Tools;
-using Mcp.Net.Client;
-using Mcp.Net.Client.Interfaces;
 using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.Models;
-using Mcp.Net.WebUi.Authentication;
 using Mcp.Net.WebUi.Chat;
 using Mcp.Net.WebUi.DTOs;
 using Mcp.Net.WebUi.Hubs;
 using Mcp.Net.WebUi.LLM;
 using Mcp.Net.WebUi.LLM.Factories;
+using Mcp.Net.WebUi.LLM.Services;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Mcp.Net.WebUi.Sessions;
@@ -31,8 +29,8 @@ public sealed class SessionHost : IHostedService, IDisposable
     private readonly ToolRegistry _toolRegistry;
     private readonly IChatHistoryManager _historyManager;
     private readonly DefaultLlmSettings _defaultSettings;
-    private readonly IConfiguration _configuration;
-    private readonly IMcpClientBuilderConfigurator _authConfigurator;
+    private readonly IReadOnlyList<ILocalTool> _localTools;
+    private readonly ITitleGenerationService _titleService;
     private readonly ILogger<SessionHost> _logger;
     private readonly TimeSpan _inactivityThreshold = TimeSpan.FromMinutes(30);
     private Timer? _cleanupTimer;
@@ -44,8 +42,8 @@ public sealed class SessionHost : IHostedService, IDisposable
         ToolRegistry toolRegistry,
         IChatHistoryManager historyManager,
         DefaultLlmSettings defaultSettings,
-        IConfiguration configuration,
-        IMcpClientBuilderConfigurator authConfigurator,
+        IReadOnlyList<ILocalTool> localTools,
+        ITitleGenerationService titleService,
         ILogger<SessionHost> logger)
     {
         _sessionFactory = sessionFactory;
@@ -54,13 +52,13 @@ public sealed class SessionHost : IHostedService, IDisposable
         _toolRegistry = toolRegistry;
         _historyManager = historyManager;
         _defaultSettings = defaultSettings;
-        _configuration = configuration;
-        _authConfigurator = authConfigurator;
+        _localTools = localTools;
+        _titleService = titleService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Creates a new managed session with a dedicated LLM client and optional MCP client.
+    /// Creates a new managed session with a dedicated LLM client and local tools.
     /// </summary>
     public async Task<ManagedSession> CreateAsync(
         string sessionId,
@@ -76,21 +74,15 @@ public sealed class SessionHost : IHostedService, IDisposable
         // Create per-session LLM client
         IChatClient chatClient = _llmClientProvider.Create(providerEnum, modelName);
 
-        // Create per-session MCP client (if configured)
-        IMcpClient? mcpClient = await CreateMcpClientAsync(cancellationToken);
-
-        // Create ChatSession via factory
+        // Create ChatSession via factory with local tools
         var options = new ChatSessionFactoryOptions
         {
             SystemPrompt = effectiveSystemPrompt,
-            McpClient = mcpClient,
+            LocalTools = _localTools,
         };
 
         var chatSession = await _sessionFactory.CreateAsync(chatClient, options, cancellationToken);
         chatSession.SessionId = sessionId;
-
-        // Register tools from the shared registry
-        chatSession.RegisterTools(_toolRegistry.EnabledTools);
 
         // Create metadata
         var metadata = new ChatSessionMetadata
@@ -108,7 +100,7 @@ public sealed class SessionHost : IHostedService, IDisposable
         await _historyManager.CreateSessionAsync("default", metadata);
 
         // Assemble managed session
-        var managed = new ManagedSession(sessionId, chatSession, metadata, mcpClient);
+        var managed = new ManagedSession(sessionId, chatSession, metadata);
 
         // Wire ChatSession events → SignalR broadcasts
         WireEvents(managed);
@@ -229,6 +221,14 @@ public sealed class SessionHost : IHostedService, IDisposable
                     else
                     {
                         await _historyManager.AddTranscriptEntryAsync(sessionId, args.Entry);
+
+                        // Auto-generate title from the first user message
+                        if (args.Entry is UserChatEntry userEntry
+                            && managed.Metadata.Title.StartsWith("New Chat", StringComparison.Ordinal)
+                            && !string.IsNullOrWhiteSpace(userEntry.Content))
+                        {
+                            _ = GenerateTitleAsync(managed, userEntry.Content);
+                        }
                     }
 
                     return;
@@ -237,6 +237,8 @@ public sealed class SessionHost : IHostedService, IDisposable
                 if (args.ChangeKind == ChatTranscriptChangeKind.Reset)
                 {
                     await _historyManager.ClearSessionTranscriptAsync(sessionId);
+                    await _hubContext.Clients.Group(sessionId)
+                        .SendAsync("ConversationReset", sessionId);
                     return;
                 }
 
@@ -303,12 +305,14 @@ public sealed class SessionHost : IHostedService, IDisposable
             h => chatSession.ActivityChanged -= h, activityHandler));
 
         // Tool registry updates → push to session + clients
-        EventHandler<IReadOnlyList<Core.Models.Tools.Tool>> toolsUpdatedHandler = async (_, tools) =>
+        EventHandler<IReadOnlyList<Core.Models.Tools.Tool>> toolsUpdatedHandler = async (_, _) =>
         {
             try
             {
                 chatSession.RegisterTools(_toolRegistry.EnabledTools);
-                var payload = tools.Select(t => new { t.Name, t.Title, t.Description }).ToArray();
+                var payload = _toolRegistry.EnabledTools
+                    .Select(t => new { t.Name, t.Title, t.Description })
+                    .ToArray();
                 await _hubContext.Clients.Group(sessionId).SendAsync("ToolsUpdated", payload);
             }
             catch (Exception ex)
@@ -323,23 +327,23 @@ public sealed class SessionHost : IHostedService, IDisposable
 
     // --- Helpers ---
 
-    private async Task<IMcpClient?> CreateMcpClientAsync(CancellationToken cancellationToken)
+    private async Task GenerateTitleAsync(ManagedSession managed, string firstMessage)
     {
-        var mcpServerUrl = _configuration["McpServer:Url"];
-        if (string.IsNullOrEmpty(mcpServerUrl))
-            return null;
-
         try
         {
-            var builder = new McpClientBuilder()
-                .UseSseTransport(mcpServerUrl);
-            await _authConfigurator.ConfigureAsync(builder, cancellationToken).ConfigureAwait(false);
-            return await builder.BuildAndInitializeAsync().ConfigureAwait(false);
+            var title = await _titleService.GenerateTitleAsync(firstMessage);
+            managed.Metadata.Title = title;
+            managed.Metadata.LastUpdatedAt = DateTime.UtcNow;
+            await _historyManager.UpdateSessionMetadataAsync(managed.Metadata);
+
+            await _hubContext.Clients.Group(managed.Id)
+                .SendAsync("SessionTitleChanged", managed.Id, title);
+
+            _logger.LogDebug("Auto-generated title for session {SessionId}: {Title}", managed.Id, title);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create MCP client for session");
-            throw;
+            _logger.LogWarning(ex, "Failed to auto-generate title for session {SessionId}", managed.Id);
         }
     }
 

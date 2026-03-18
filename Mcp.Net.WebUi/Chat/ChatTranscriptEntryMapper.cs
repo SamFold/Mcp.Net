@@ -16,6 +16,7 @@ internal static class ChatTranscriptEntryMapper
                 sessionId,
                 user.Timestamp.UtcDateTime,
                 user.Content,
+                user.ContentParts.Select(UserMessageContentPartDto.FromModel).ToArray(),
                 user.TurnId
             ),
             AssistantChatEntry assistant => new AssistantChatTranscriptEntryDto(

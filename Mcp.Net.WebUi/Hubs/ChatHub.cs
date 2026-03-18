@@ -1,4 +1,5 @@
 using Mcp.Net.WebUi.Sessions;
+using Mcp.Net.WebUi.DTOs;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Mcp.Net.WebUi.Hubs;
@@ -31,24 +32,22 @@ public class ChatHub : Hub
 
     public async Task SendMessage(string sessionId, string message)
     {
-        try
-        {
-            var managed = await _sessionHost.GetOrCreateAsync(sessionId, Context.ConnectionAborted);
-            if (managed == null)
-                throw new HubException($"Session {sessionId} not found.");
+        await SendMessageCoreAsync(
+            sessionId,
+            managed => managed.ChatSession.SendUserMessageAsync(message, Context.ConnectionAborted)
+        );
+    }
 
-            managed.Touch();
-            await managed.ChatSession.SendUserMessageAsync(message, Context.ConnectionAborted);
-        }
-        catch (HubException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing message for session {SessionId}", sessionId);
-            await Clients.Caller.SendAsync("ReceiveError", $"Error processing message: {ex.Message}");
-        }
+    public async Task SendMessageParts(string sessionId, IReadOnlyList<UserMessageContentPartDto> contentParts)
+    {
+        ArgumentNullException.ThrowIfNull(contentParts);
+
+        var parts = contentParts.Select(static part => part.ToModel()).ToArray();
+
+        await SendMessageCoreAsync(
+            sessionId,
+            managed => managed.ChatSession.SendUserMessageAsync(parts, Context.ConnectionAborted)
+        );
     }
 
     public void AbortTurn(string sessionId)
@@ -69,5 +68,34 @@ public class ChatHub : Hub
     {
         _logger.LogDebug("Client {ConnectionId} disconnected", Context.ConnectionId);
         return base.OnDisconnectedAsync(exception);
+    }
+
+    private async Task SendMessageCoreAsync(
+        string sessionId,
+        Func<ManagedSession, Task> sendMessage
+    )
+    {
+        try
+        {
+            var managed = await GetRequiredSessionAsync(sessionId);
+            managed.Touch();
+            await sendMessage(managed);
+        }
+        catch (HubException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing message for session {SessionId}", sessionId);
+            await Clients.Caller.SendAsync("ReceiveError", $"Error processing message: {ex.Message}");
+        }
+    }
+
+    private async Task<ManagedSession> GetRequiredSessionAsync(string sessionId)
+    {
+        var managed = await _sessionHost.GetOrCreateAsync(sessionId, Context.ConnectionAborted);
+
+        return managed ?? throw new HubException($"Session {sessionId} not found.");
     }
 }

@@ -1,18 +1,21 @@
 using Mcp.Net.Agent.Extensions;
 using Mcp.Net.Agent.Interfaces;
 using Mcp.Net.Agent.Tools;
+using Mcp.Net.LLM.ApiKeys;
 using Mcp.Net.LLM.Anthropic;
+using Mcp.Net.LLM.Interfaces;
 using Mcp.Net.LLM.OpenAI;
-using Mcp.Net.WebUi.Authentication;
+using Mcp.Net.LLM.Platform;
 using Mcp.Net.WebUi.LLM;
+using Mcp.Net.WebUi.Images;
 using Mcp.Net.WebUi.Hubs;
-using Mcp.Net.WebUi.Infrastructure.Notifications;
 using Mcp.Net.WebUi.Infrastructure.Persistence;
 using Mcp.Net.WebUi.LLM.Factories;
 using Mcp.Net.WebUi.LLM.Services;
 using Mcp.Net.WebUi.Sessions;
 using Mcp.Net.WebUi.Startup.Factories;
 using Mcp.Net.WebUi.Startup.Helpers;
+using Mcp.Net.WebUi.Tools;
 
 namespace Mcp.Net.WebUi.Startup;
 
@@ -20,17 +23,17 @@ public class WebUiStartup
 {
     private ILogger<WebUiStartup>? _logger;
 
-    public async Task<WebApplication> CreateApplicationAsync(string[] args)
+    public WebApplication CreateApplication(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
 
         ConfigureLogging(builder, args);
-        ConfigureServices(builder, args);
+        ConfigureServices(builder);
 
         var app = builder.Build();
         _logger = app.Services.GetRequiredService<ILogger<WebUiStartup>>();
 
-        await InitializeServicesAsync(app);
+        InitializeServices(app);
         ConfigurePipeline(app);
 
         return app;
@@ -61,20 +64,12 @@ public class WebUiStartup
         startupLogger.LogInformation("Log level set to: {LogLevel}", logLevel);
     }
 
-    private void ConfigureServices(WebApplicationBuilder builder, string[] args)
+    private void ConfigureServices(WebApplicationBuilder builder)
     {
         // Basic services
         builder.Services.AddControllers();
         builder.Services.AddSignalR();
         builder.Services.AddEndpointsApiExplorer();
-        builder.Services.AddHttpClient();
-        builder.Services.AddHttpClient("McpOAuthTokens");
-        builder.Services.AddHttpClient("McpOAuthRegistration");
-        builder.Services.AddHttpClient("McpOAuthInteraction")
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = false
-            });
 
         // CORS
         builder.Services.AddCors(options =>
@@ -89,9 +84,29 @@ public class WebUiStartup
             });
         });
 
-        // Agent runtime plus legacy tool-registry adapter surface.
+        // Agent runtime plus tool registry
         builder.Services.AddChatRuntimeServices();
         builder.Services.AddToolRegistry();
+
+        // Shared provider helpers
+        builder.Services.AddSingleton<IEnvironmentVariableProvider, EnvironmentVariableProvider>();
+        builder.Services.AddSingleton<IApiKeyProvider, DefaultApiKeyProvider>();
+
+        // Image generation
+        builder.Services.AddSingleton<GeneratedImageArtifactStore>();
+        builder.Services.AddSingleton<IImageGenerationService, OpenAiImageGenerationService>();
+
+        // Local tools
+        builder.Services.AddSingleton<IReadOnlyList<ILocalTool>>(sp =>
+        {
+            var configuration = sp.GetRequiredService<IConfiguration>();
+            return CreateLocalTools(
+                configuration,
+                sp.GetRequiredService<ILogger<WebUiStartup>>(),
+                sp.GetRequiredService<IImageGenerationService>(),
+                sp.GetRequiredService<GeneratedImageArtifactStore>()
+            );
+        });
 
         // LLM
         builder.Services.AddSingleton<LlmClientFactory>(sp => new LlmClientFactory(
@@ -113,72 +128,26 @@ public class WebUiStartup
         // Persistence
         builder.Services.AddSingleton<IChatHistoryManager, InMemoryChatHistoryManager>();
 
-        // Notifications
-        builder.Services.AddSingleton<SessionNotifier>();
-
         // LLM services
-        builder.Services.AddSingleton<IOneOffLlmService, OneOffLlmService>();
         builder.Services.AddSingleton<ITitleGenerationService, TitleGenerationService>();
-
-        // Auth
-        builder.Services.AddSingleton<IMcpClientBuilderConfigurator>(sp =>
-            new McpAuthenticationService(
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<ILogger<McpAuthenticationService>>(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                args
-            )
-        );
 
         // Session lifecycle
         builder.Services.AddSingleton<SessionHost>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHost>());
     }
 
-    private async Task InitializeServicesAsync(WebApplication app)
-    {
-        await InitializeToolRegistryAsync(app);
-    }
-
-    private async Task InitializeToolRegistryAsync(WebApplication app)
+    private void InitializeServices(WebApplication app)
     {
         var toolRegistry = app.Services.GetRequiredService<ToolRegistry>();
-        var configuration = app.Services.GetRequiredService<IConfiguration>();
+        var localTools = app.Services.GetRequiredService<IReadOnlyList<ILocalTool>>();
 
-        try
-        {
-            _logger!.LogInformation("Loading tools from MCP server...");
+        var descriptors = localTools.Select(t => t.Descriptor).ToList();
+        toolRegistry.RegisterTools(descriptors);
 
-            var authConfigurator = app.Services.GetRequiredService<IMcpClientBuilderConfigurator>();
-
-            var tempMcpClient = await McpClientFactory.CreateClientAsync(
-                configuration,
-                _logger!,
-                authConfigurator,
-                app.Lifetime.ApplicationStopping
-            );
-
-            var tools = await tempMcpClient.ListTools();
-            toolRegistry.RegisterTools(tools);
-
-            _logger!.LogInformation(
-                "Successfully registered {ToolCount} tools in ToolRegistry",
-                tools.Length
-            );
-
-            if (tempMcpClient is IDisposable disposableClient)
-            {
-                disposableClient.Dispose();
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger!.LogError(
-                ex,
-                "Failed to load tools from MCP server - ToolRegistry will remain empty"
-            );
-            _logger!.LogWarning("Application will continue with no tools available");
-        }
+        _logger!.LogInformation(
+            "Registered {ToolCount} local tools in ToolRegistry",
+            descriptors.Count
+        );
     }
 
     private void ConfigurePipeline(WebApplication app)
@@ -189,5 +158,55 @@ public class WebUiStartup
         app.MapControllers();
         app.MapHub<ChatHub>("/chatHub");
         app.MapGet("/", () => "Mcp.Net Web UI Server - API endpoints are available at /api");
+    }
+
+    private static IReadOnlyList<ILocalTool> CreateLocalTools(
+        IConfiguration configuration,
+        ILogger logger,
+        IImageGenerationService imageGenerationService,
+        GeneratedImageArtifactStore artifactStore)
+    {
+        var basePath = configuration["Agent:BasePath"]
+            ?? Environment.CurrentDirectory;
+
+        var fileSystemPolicy = new FileSystemToolPolicy(basePath);
+        var processPolicy = new ProcessToolPolicy(basePath);
+
+        var tools = new List<ILocalTool>
+        {
+            new GenerateImageTool(imageGenerationService, artifactStore),
+            new ListFilesTool(fileSystemPolicy),
+            new GlobTool(fileSystemPolicy),
+            new ReadFileTool(fileSystemPolicy),
+            new WriteFileTool(fileSystemPolicy),
+            new EditFileTool(fileSystemPolicy),
+        };
+
+        if (GrepTool.TryCreate(fileSystemPolicy, out var grepTool, out var grepUnavailableReason))
+        {
+            tools.Add(grepTool!);
+        }
+        else
+        {
+            logger.LogWarning(
+                "Skipping grep_files tool: {Reason}",
+                grepUnavailableReason
+            );
+        }
+
+        if (RunShellCommandTool.TryCreate(processPolicy, out var shellTool, out var shellUnavailableReason))
+        {
+            tools.Add(shellTool!);
+        }
+        else
+        {
+            logger.LogWarning(
+                "Skipping run_shell_command tool: {Reason}",
+                shellUnavailableReason
+            );
+        }
+
+        logger.LogInformation("Created {Count} local tools rooted at {BasePath}", tools.Count, basePath);
+        return tools;
     }
 }

@@ -4,67 +4,80 @@
 
 - The primary chat experience already works without `AgentDefinition` selection by using `DefaultLlmSettings`, per-session MCP clients, and `ChatSession`.
 - The legacy agent-driven endpoints, DTOs, startup wiring, and chat-factory branches have been removed.
-- Web UI still constructs `ChatSession` inline inside `ChatFactory` even though the shared runtime now exposes `IChatSessionFactory`.
 - The SignalR chat adapter now owns session-start notification directly after the `ChatSession` session-start seam was removed.
+- The standalone TypeScript demo client has been realigned with the surviving session/transcript/tool contract and no longer carries the dead agent-era browser shell.
 
 ## Goal
 
-- Decide whether Web UI should compose sessions through `IChatSessionFactory` instead of constructing `ChatSession` inline.
+- Harden the end-to-end Web UI smoke harness so it truly verifies the surviving REST, SignalR, transcript, and tool-update surface with real provider-backed sessions.
 
 ## What
 
-- Evaluate moving the remaining inline `new ChatSession(...)` composition in `ChatFactory` onto `IChatSessionFactory`.
-- Keep the existing non-agent chat flow, session history, prompt/resource catalog, completion, elicitation, and tool-refresh behavior intact.
-- Avoid introducing another Web UI-only composition abstraction if the shared runtime seam is already sufficient.
+- Tighten `scripts/SmokeTest` so it asserts the current Web UI contract instead of only observing best-effort behavior.
+- Verify abort, leave-session, and tools-updated flows against the live SignalR adapter behavior.
+- Keep the current non-agent chat flow, session history, transcript DTOs, and local-tool execution path green while hardening the harness.
 
 ## Why
 
-- The legacy agent path is gone, so the remaining question is whether Web UI should now consume the shared runtime seam more directly.
-- Using `IChatSessionFactory` would reduce duplicate session-construction logic and keep Web UI aligned with the library-first composition story.
-- This is a small follow-up slice now that the obsolete path is out of the way.
-- Web UI is an older adapter layer and should not constrain `Mcp.Net.Agent`; if the runtime wants a cleaner seam, Web UI should adapt or be rebuilt around it.
+- The browser realignment is only useful if the integration harness actually catches regressions in the surviving Web UI runtime surface.
+- The current smoke test passes while still treating some important flows as advisory, especially abort, group leave, and tool updates.
+- A trustworthy smoke harness is the fastest way to validate Web UI against real Anthropic/OpenAI-backed sessions while the backend seam decisions continue.
 
 ## How
 
-### 1. Compare the seams honestly
+### 1. Tighten the smoke assertions
 
-- Inspect what `ChatFactory` still does beyond session construction: per-session MCP client creation, tool-list refresh, prompt/resource catalogs, completion, and elicitation wiring.
-- Move only the `ChatSession` composition portion if the boundary stays clear.
-- Keep per-session MCP-client ownership in Web UI unless the shared runtime grows an explicit owning path.
+- Turn `ToolsUpdated`, `AbortTurn`, and `LeaveSession` from informational logging into real pass/fail assertions.
+- Assert the current transcript and tool-execution payload shape, not just message counts.
+- Keep provider-backed runs deterministic enough that failures point at real regressions rather than harness flakiness.
 
 ### 2. Keep the chat path stable
 
 - Preserve the existing metadata/history behavior and adapter lifecycle.
-- Keep the default-model flow green while changing the construction seam.
+- Keep the default-model flow and explicit `anthropic`/`openai` runs green while tightening assertions.
 - Avoid accidental behavior changes in tool refresh or prompt/resource/completion features.
-- Keep the adapter aligned with the current `ChatSession` event/runtime contract while the shared runtime keeps tightening its internals.
 
-### 3. Verify the reduced duplication
+### 3. Revisit factory composition after the harness is trustworthy
 
-- Add or update tests around the surviving chat construction path.
-- Keep SignalR adapter, chat factory, and tool-refresh behavior green.
+- Revisit whether `ChatFactory` should move onto `IChatSessionFactory` once the Web UI regression harness is stronger.
+- Keep SignalR adapter, session host, and tool-refresh behavior green.
 
 ## Scope
 
 - In scope:
-  - evaluate moving Web UI `ChatSession` construction onto `IChatSessionFactory`
-  - preserve the default-model chat path and shared chat-session runtime behavior
-  - reduce duplicated session-composition code where the seam is already stable
+  - tighten `scripts/SmokeTest` coverage for the current REST, SignalR, transcript, abort, leave, and tool-update surface
+  - preserve the default-model and explicit-provider chat paths while increasing assertion quality
+  - keep local tool execution and transcript DTO behavior covered by a real end-to-end harness
   - stay aligned with the current `ChatSession` runtime API while the shared runtime evolves
 - Out of scope:
   - redesigning the Web UI chat UX
   - reintroducing agent-definition concepts
-  - changing the MCP transport/auth flow beyond what deletion requires
-  - preserving legacy Web UI construction shapes if they conflict with the cleaner shared runtime surface
+  - changing the MCP transport/auth flow
+  - moving Web UI session construction onto `IChatSessionFactory` in this slice
 
 ## Current slice
 
-1. Evaluate whether `ChatFactory` should use `IChatSessionFactory` for `ChatSession` construction.
-2. Keep the direct chat-session path green while reducing duplicate composition logic.
-3. Preserve per-session MCP-client lifecycle, tool refresh, prompt/resource catalog, completion, and elicitation behavior.
+1. Move the browser model picker off its duplicated local catalog and onto a server-backed chat-model endpoint.
+2. Keep the React settings store, session creation flow, and session-config modal stable while model metadata starts loading asynchronously.
+3. Keep the current multimodal transcript and tool-produced image rendering path stable while the picker source-of-truth moves.
 
 ## Next slices
 
-1. Revisit session metadata defaults and naming now that agent-derived titles are gone.
-2. Revisit any remaining session-persistence cleanup once the runtime surface is narrower.
-3. Revisit whether chat/session history abstractions belong in `Mcp.Net.Agent` or should live closer to Web UI.
+1. Move the browser model picker off its duplicated local catalog and onto a server-backed chat-model endpoint.
+2. Tighten `scripts/SmokeTest` so `AbortTurn`, `LeaveSession`, and `ToolsUpdated` are real assertions.
+3. Add browser-level smoke coverage for multimodal input and tool-produced image output.
+4. Revisit whether chat/session history abstractions belong in `Mcp.Net.Agent` or should live closer to Web UI.
+
+## Recently completed
+
+- Added a local `generate_image` tool backed by OpenAI image generation so normal chat models can choose image creation through the existing tool-call loop.
+- Added a generated-image artifact store plus `/api/generated-images/{artifactId}` so tool results can return stable image resource links instead of raw inline bytes.
+- Updated the React transcript and tool-execution renderers to display tool-produced image resource links inline and resolve relative API paths correctly.
+- Refreshed the Web UI default provider/model settings to the current Anthropic and OpenAI baselines.
+- Aligned sample config, smoke-test inputs, and user-facing docs so the app no longer advertises stale model IDs.
+- Added typed user-content transport to Web UI transcript DTOs so history and live SignalR delivery preserve text-plus-image user turns.
+- Updated the React client store, transcript normalization, and SignalR service to send typed user content parts and render assistant image blocks.
+- Added browser-side image upload previews plus inline rendering for both user images and OpenAI-generated assistant images.
+- Added typed multimodal user-input DTOs plus `ChatHub.SendMessageParts(...)` so the surviving SignalR chat surface can forward ordered text+image input to `ChatSession`.
+- Kept existing text-only hub callers intact while adding DTO-to-domain conversion for `UserContentPart`.
+- Guarded session-title generation so image-only first turns do not trigger blank title requests.

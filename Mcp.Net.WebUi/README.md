@@ -8,6 +8,7 @@ This project demonstrates how to create a web-based interface for the Mcp.Net LL
 - Real-time communication using SignalR
 - Multiple concurrent chat sessions
 - Tool selection and execution
+- OpenAI-backed `generate_image` local tool with inline image rendering in the Web UI
 - Support for both Anthropic and OpenAI LLM providers
 - Event-based architecture for UI updates
 
@@ -31,7 +32,7 @@ export OPENAI_API_KEY=your-api-key
 # Optional - set provider (defaults to Anthropic)
 export LLM_PROVIDER=anthropic # or openai
 
-# Optional - set model (defaults to claude-sonnet-4-5-20250929 for Anthropic, gpt-5 for OpenAI)
+# Optional - set model (defaults to claude-sonnet-4-6 for Anthropic, gpt-5.4 for OpenAI)
 export LLM_MODEL=your-model-name
 ```
 
@@ -80,6 +81,7 @@ Authentication is controlled through the `McpServer` section in `appsettings.jso
 - `POST /api/chat/sessions` - Create a new chat session
 - `DELETE /api/chat/sessions/{sessionId}` - End a chat session
 - `POST /api/chat/sessions/{sessionId}/messages` - Send a user message to a chat session (`UserMessageRequestDto`)
+- `GET /api/generated-images/{artifactId}` - Retrieve a generated image artifact referenced by a tool result
 - `GET /api/tools` - Get all available tools
 - `GET /api/tools/enabled` - Get all enabled tools
 - `POST /api/tools/enabled` - Enable specific tools by name
@@ -92,11 +94,12 @@ The SignalR hub is available at `/chatHub` and provides the following methods:
 - `JoinSession(string sessionId)` - Join a specific chat session
 - `LeaveSession(string sessionId)` - Leave a specific chat session
 - `SendMessage(string sessionId, string message)` - Send a message to a specific chat session
+- `SendMessageParts(string sessionId, UserMessageContentPartDto[] contentParts)` - Send typed text/image content parts to a specific chat session
 - `CreateSession()` - Create a new chat session (returns sessionId)
 
 ### Server to Client
 - `SessionStarted(string sessionId)` - Notifies when a session has started
-- `ReceiveMessage(ChatTranscriptEntryDto entry)` - Delivers new transcript entries with typed assistant blocks and typed tool/error payloads
+- `ReceiveMessage(ChatTranscriptEntryDto entry)` - Delivers transcript entries with typed user content parts, typed assistant blocks (including image blocks), and typed tool/error payloads
 - `ToolExecutionUpdated(ToolExecutionDto toolExecution)` - Notifies about tool execution updates
 - `ThinkingStateChanged(bool isThinking, string context)` - Notifies when thinking state changes
 - `ReceiveError(string errorMessage)` - Delivers error messages
@@ -111,6 +114,10 @@ This application uses a clean architecture with separation of concerns:
 - **DTOs** - Transfer data between layers
 
 The core chat logic from the console application is reused through interfaces, with web-specific implementations for user input and UI updates.
+
+## Image generation
+
+When the `generate_image` local tool is enabled, chat models can decide to create images through the normal tool-call loop. The tool uses OpenAI image generation under the hood and returns a tool result with an image resource link served by the Web UI at `/api/generated-images/{artifactId}`. The browser client renders those image resource links inline in both the transcript and tool-execution views.
 
 ## Frontend Development
 

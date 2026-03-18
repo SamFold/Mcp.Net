@@ -47,14 +47,18 @@ public sealed record UserChatTranscriptEntryDto : ChatTranscriptEntryDto
         string sessionId,
         DateTime timestamp,
         string content,
+        IReadOnlyList<UserMessageContentPartDto> contentParts,
         string? turnId = null
     )
         : base(id, sessionId, timestamp, turnId)
     {
         Content = content;
+        ContentParts = contentParts;
     }
 
     public string Content { get; }
+
+    public IReadOnlyList<UserMessageContentPartDto> ContentParts { get; }
 }
 
 public sealed record AssistantChatTranscriptEntryDto : ChatTranscriptEntryDto
